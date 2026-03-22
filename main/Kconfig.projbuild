@@ -1,0 +1,20 @@
+menu "Rocket Launch Controller"
+
+    choice RLC_UNIT_TYPE
+        prompt "Unit type"
+        default RLC_UNIT_BASE
+        help
+            Select whether to build firmware for the Base unit or the Remote unit.
+
+        config RLC_UNIT_BASE
+            bool "Base Unit"
+            help
+                Build firmware for the base (launch pad) unit.
+
+        config RLC_UNIT_REMOTE
+            bool "Remote Unit"
+            help
+                Build firmware for the remote (operator) unit.
+    endchoice
+
+endmenu

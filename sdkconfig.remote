@@ -1,0 +1,3 @@
+# Remote unit build configuration
+# CONFIG_RLC_UNIT_BASE is not set
+CONFIG_RLC_UNIT_REMOTE=y

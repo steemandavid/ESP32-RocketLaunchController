@@ -1,0 +1,20 @@
+idf_component_register(
+    SRCS
+        "src/rlc_espnow.c"
+        "src/rlc_message.c"
+        "src/rlc_debounce.c"
+        "src/rlc_battery.c"
+        "src/rlc_rgb_led.c"
+        "src/rlc_watchdog.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_wifi
+        esp_event
+        esp_timer
+        esp_adc
+        driver
+        nvs_flash
+    PRIV_REQUIRES
+        esp_rom
+)
