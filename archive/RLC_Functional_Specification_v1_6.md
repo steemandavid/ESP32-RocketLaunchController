@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.8
-**Date:** 2026-03-23
+**Version:** 1.6
+**Date:** 2026-03-22
 **Author:** David (System Analyst)
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -21,8 +21,6 @@
 | 1.4 | 2026-03-22 | Changed continuity sensing from digital inputs to ADC1 analogue inputs with 4-band classification (SHORT/GOOD/MARGINAL/OPEN). Added per-channel 100 kΩ pull-down resistors for reliable open-circuit detection. 64-sample oversampling at 100 ms per channel. Replaced binary continuity_bitmask in STATUS_UPDATE with 2-bit-per-channel continuity_bands field. Reassigned continuity pins from digital GPIOs to ADC1 GPIO 2–9. Updated circuit topology, display indicators, thresholds, tests, and struct definitions. |
 | 1.5 | 2026-03-22 | External embedded software analyst review conducted. Findings documented in RLC_FSD_Review_v1_5. |
 | 1.6 | 2026-03-22 | Applied all accepted findings from v1.5 review (C1–C5, H1–H8, M1–M10, L1–L9). Key changes: reordered struct fields for natural alignment; added periodic relay feedback monitoring; blocked LINK_REQUEST session reset while ARMED/PRE_FIRE/FIRING; made fire-pulse-on-link-loss configurable; added MOSFET switch and fusible resistor note for continuity circuit; added PRE_FIRE to remote state enum; specified CRC32 polynomial and sequence overflow semantics; added arm switch guard to PRE_FIRE transitions; specified wrong-channel CMD_FIRE handling in PRE_FIRE/FIRING; added NACK for low remote battery; added Wi-Fi channel survey note; added display health check; reduced encoder lockout; added power supply section; fixed duplicate section numbering; added ESP-NOW send failure handling; added task priority table; specified update_sequence wrap-around; raised REMOTE_VBAT_CRITICAL_MV to 3.2V; added initial channel selection; added logging specification; extended CRC to cover header; noted colour-blind accessibility; swapped GPIO 3 for GPIO 10. |
-| 1.7 | 2026-03-22 | Applied 27 accepted findings from v1.6 review. Key changes: allocated GPIO 41 for shared continuity enable MOSFET; disabled continuity sensing in ARMED/PRE_FIRE/FIRING/ERROR states; specified ISR-safe signalling for fire pulse timer; added general ISR safety rule; dead-man timestamp captured in ESP-NOW receive callback; 50 ms relay dropout delay after FIRING; removed periodic relay feedback monitoring (check at arm-time only); added SIREN_ERROR and SIREN_CONTINUITY_LOST patterns; clarified channel relay stays open in ARMED; simplified LINK_REQUEST handling in POST_FIRE; 500 ms long-press to arm; ESP-NOW receive queue; boot sequence specification; removed boot-time Wi-Fi channel scan; encoder button 8-bit notation fix; TWDT per-task watchdog. |
-| 1.8 | 2026-03-23 | Applied accepted findings from v1.7 review (C1–C5, H1–H7, M1–M10, L1–L9). Key changes: removed stale continuity guards from ARMED→PRE_FIRE and continuity-loss disarm from ARMED/PRE_FIRE (sensing disabled — stale data); fire pulse timer ISR now only signals task via xTaskNotifyFromISR(), all relay control in task context; added ARM_TIMEOUT_MS (10s) auto-disarm; explicit independent GND for continuity circuit; HEARTBEAT_INTERVAL_MS reduced to 500 ms (link loss detection now 1.5s); PONG freshness at PRE_FIRE→FIRING uses HEARTBEAT_INTERVAL_MS + HEARTBEAT_TIMEOUT_MS; ERR_COMM_DEGRADED blocks IDLE→ARMED and PRE_FIRE→FIRING; remote treats multiple bits in channel_armed_bitmask as error; siren silenced immediately on link recovery; ESP-NOW receive queue depth raised to 16; long-press timer starts from debounced transition; continuity thresholds in microvolts; LINK_ACK header token clarification; CMD_DISARM in IDLE ACK'd as idempotent; Fire Complete screen layout added; strict version matching rationale note; compile-time keys noted as known limitation; test renumbering; backlight always 100%; SPI2_HOST naming fix. |
 
 ---
 
@@ -243,22 +241,11 @@ The version is defined in `rlc_common/include/rlc_version.h`:
 #define RLC_VERSION_STRING "1.0.0"
 ```
 
-The firmware version transmitted during link establishment uses MAJOR, MINOR, and PATCH (3 bytes: one byte each). **Both units must match on all three components** (major, minor, AND patch) to establish a link. If any component differs, the link is rejected. **Rationale:** strict MAJOR.MINOR.PATCH matching is an intentional safety decision — both units must run identical firmware to ensure consistent behaviour in a safety-critical system. The version string shall be displayed on the remote's splash screen and is incremented with every code change committed.
+The firmware version transmitted during link establishment uses MAJOR, MINOR, and PATCH (3 bytes: one byte each). **Both units must match on all three components** (major, minor, AND patch) to establish a link. If any component differs, the link is rejected. The version string shall be displayed on the remote's splash screen and is incremented with every code change committed.
 
 ### 4.3 Development Phases
 
 Development shall proceed in phases. Each phase produces a testable deliverable. The user will test each phase and provide feedback before the next phase begins.
-
-#### Pre-Requisite — Hardware Validation
-
-Before Phase 1 begins, all hardware peripherals on both units SHALL be validated using standalone test firmware. The hardware test projects are defined in separate specifications:
-
-- **Base unit:** `RLC_Base_Hardware_Test_Specification.md` — located in `rlc-hw-test-base/`
-- **Remote unit:** `RLC_Remote_Hardware_Test_Specification.md` — located in `rlc-hw-test-remote/`
-
-These are independent ESP-IDF projects with no shared code with the main RLC codebase. Their sole purpose is to exercise and validate each hardware peripheral in isolation before the main system is built. Issues found during hardware validation are far cheaper to fix than after the full system is integrated.
-
-Both hardware test projects SHALL be completed and all test criteria passed before Phase 1 development begins.
 
 #### Phase 1 — Foundation and Communication
 
@@ -271,13 +258,13 @@ Deliverables:
 - `rlc_common`: Watchdog setup.
 - `rlc_common`: Version header.
 - Link establishment: LINK_REQUEST / LINK_ACK handshake with firmware version check.
-- Heartbeat: PING / PONG at 500 ms intervals with RSSI capture.
+- Heartbeat: PING / PONG at 1-second intervals with RSSI capture.
 - Link loss detection (3 missed pings).
 - Base: boots, waits for link, responds to pings, RGB LED shows BOOT → IDLE → LINK_LOST.
 - Remote: boots, sends link requests, sends pings, tracks RSSI, detects link loss, RGB LED shows BOOT → LINKING → IDLE → LINK_LOST.
 - Unit tests for message serialisation, integrity CRC, sequence number validation.
 
-**Test criteria:** Both units power on, link within 10 seconds, display stable RSSI, detect link loss within 1.5 seconds when separated, recover when returned to range.
+**Test criteria:** Both units power on, link within 10 seconds, display stable RSSI, detect link loss within 3 seconds when separated, recover when returned to range.
 
 #### Phase 2 — Input/Output and Debouncing
 
@@ -461,27 +448,27 @@ Each output, when driven active, closes a relay that connects battery power thro
 | Quantity | 8 (one per channel, mapped 1:1 to channel outputs) |
 | Pins | GPIO 2, 10, 4, 5, 6, 7, 8, 9 (ADC1_CH1, ADC1_CH9, ADC1_CH3 through ADC1_CH8). GPIO 10 replaces GPIO 3 (strapping pin). |
 | ADC resolution | 12-bit |
-| Sampling interval | 100 ms per channel in round-robin sequence (ch1, ch2, ..., ch8, ch1, ...). Each sample consists of 64 rapid consecutive ADC readings averaged (burst sampling). Full-system update period: 800 ms. |
+| Sampling interval | 100 ms per channel (round-robin: each channel sampled every 100 ms) |
 | Oversampling | 64-sample moving average per channel for noise reduction |
 | Conversion | `adc_cali_raw_to_voltage()` calibration API (same as battery ADC, §5.4.8) |
 
-The continuity sensing circuit is external and **bypasses both the arm switch and the low-side relay**. The continuity circuit has its own independent GND return path, wired directly to battery negative / board ground, completely separate from the firing circuit's GND path through the low-side relay. This ensures continuity sensing functions in all states regardless of low-side relay position. Each channel has an independent sensing circuit:
+The continuity sensing circuit is external and **bypasses the arm switch**. Each channel has an independent sensing circuit:
 
 ```
-3.3V ── MOSFET sw (GPIO ctrl) ── R_ref (3.3kΩ, fusible) ──┬── igniter terminals ── GND (independent)
+3.3V ── MOSFET sw (GPIO ctrl) ── R_ref (3.3kΩ, fusible) ──┬── igniter terminals ── GND
                                                             │
-                                                            ├── R_pull (100kΩ) ── GND (independent)
+                                                            ├── R_pull (100kΩ) ── GND
                                                             │
                                                             └── ADC pin (GPIO 2, 10, 4–9)
 ```
 
 The current-limiting resistor R_ref (3.3 kΩ) ensures the test current through the igniter does not exceed **≤ 1 mA** at 3.3V (I_max = 3.3V / 3.3kΩ = 1.0 mA). This provides a massive safety margin against all commercial igniter types (most e-matches have no-fire thresholds around 50 mA).
 
-**Safety requirements for R_ref:** R_ref SHALL be a fusible or flame-retardant type resistor. If R_ref fails short (0 Ω), the full 3.3V supply is applied directly to the igniter terminals with current limited only by the igniter resistance and GPIO protection — for a 2 Ω e-match this would be ~1.65 A, well above the fire threshold. As additional defence-in-depth, all 8 continuity circuits SHALL share a single P-channel MOSFET switch on the 3.3V supply line, controlled by GPIO 41 (active LOW to enable continuity sensing). This switch SHALL be disabled (continuity circuit de-energised) during ARMED, PRE_FIRE, FIRING, and ERROR states. In ARMED and PRE_FIRE, the last-known continuity band for each channel is retained and used. In FIRING, continuity readings are meaningless (§7.2.5). In ERROR, the system is halted. The MOSFET gate SHALL have a pull-up resistor to ensure the continuity circuit is disabled by default at boot until explicitly enabled by firmware.
+**Safety requirements for R_ref:** R_ref SHALL be a fusible or flame-retardant type resistor. If R_ref fails short (0 Ω), the full 3.3V supply is applied directly to the igniter terminals with current limited only by the igniter resistance and GPIO protection — for a 2 Ω e-match this would be ~1.65 A, well above the fire threshold. As additional defence-in-depth, each continuity circuit SHALL include a software-controllable P-channel MOSFET switch on the 3.3V supply line, controlled by a dedicated GPIO (active LOW to enable continuity sensing). This switch SHALL be disabled (continuity circuit de-energised) during FIRING state (when continuity readings are meaningless per §7.2.5) and during ERROR state. The MOSFET gate SHALL have a pull-up resistor to ensure the continuity circuit is disabled by default at boot until explicitly enabled by firmware.
 
 The 100 kΩ pull-down resistor (R_pull) serves a critical function: **without it, an open circuit leaves the ADC pin floating**, producing undefined readings. With R_pull, an open circuit reads a defined voltage of 3.3 × 100k / (3.3k + 100k) ≈ **3.19V**, which is clearly distinguishable from any connected igniter. The pull-down draws negligible current (33 µA) and does not materially affect readings when an igniter is connected, since R_pull (100 kΩ) is vastly larger than any igniter resistance.
 
-**Component count per channel:** 2 resistors (R_ref fusible + R_pull). **Total additional components: 16 resistors** (8× R_ref 3.3 kΩ fusible + 8× R_pull 100 kΩ) + **1 shared P-channel MOSFET** (switches 3.3V supply for all 8 continuity circuits, controlled by GPIO 41) + **1 gate pull-up resistor**.
+**Component count per channel:** 2 resistors (R_ref fusible + R_pull) + 1 P-channel MOSFET + 1 pull-up resistor on MOSFET gate. **Total additional components: 16 resistors** (8× R_ref 3.3 kΩ fusible + 8× R_pull 100 kΩ) + **8 P-channel MOSFETs** + **8 gate pull-up resistors** + 1 shared GPIO for continuity enable (active LOW). Alternatively, a single MOSFET can switch the 3.3V supply for all 8 channels if per-channel isolation is not required.
 
 ##### Continuity Band Classification
 
@@ -489,16 +476,16 @@ The ADC voltage is converted to a continuity band using threshold comparison wit
 
 | Band | Enum | R_ign range | V_adc range | Meaning | Display | Arming |
 |---|---|---|---|---|---|---|
-| `CONT_OPEN` | 0 | > 500 Ω / ∞ | > `CONT_OPEN_UV` (default: 1500000 µV) | No igniter connected or broken wire. Pulled to ~3.19V by R_pull. | Red ○ | **Blocks arming** (NACK 0x04) |
-| `CONT_GOOD` | 1 | 0.5–20 Ω | `CONT_SHORT_UV` to `CONT_MARGINAL_UV` (default: 66000 µV) | Normal e-match or igniter connected. Safe to fire. | Green ● | Arming permitted |
-| `CONT_MARGINAL` | 2 | 20–500 Ω | `CONT_MARGINAL_UV` to `CONT_OPEN_UV` (default: 1500000 µV) | High resistance connection — corroded clips, loose contact, damaged leads. May fail to fire. | Yellow ▲ + "MARGINAL" | Warning, does not block arming |
-| `CONT_SHORT` | 3 | < 0.5 Ω | < `CONT_SHORT_UV` (default: 500 µV) | Terminals shorted — no igniter, just wire. Possible wiring fault. | Orange ◆ + "SHORT" | Info warning, does not block arming |
+| `CONT_OPEN` | 0 | > 500 Ω / ∞ | > `CONT_OPEN_MV` (default: 1500 mV) | No igniter connected or broken wire. Pulled to ~3.19V by R_pull. | Red ○ | **Blocks arming** (NACK 0x04) |
+| `CONT_GOOD` | 1 | 0.5–20 Ω | `CONT_SHORT_MV` to `CONT_MARGINAL_MV` (default: 66 mV) | Normal e-match or igniter connected. Safe to fire. | Green ● | Arming permitted |
+| `CONT_MARGINAL` | 2 | 20–500 Ω | `CONT_MARGINAL_MV` to `CONT_OPEN_MV` (default: 1500 mV) | High resistance connection — corroded clips, loose contact, damaged leads. May fail to fire. | Yellow ▲ + "MARGINAL" | Warning, does not block arming |
+| `CONT_SHORT` | 3 | < 0.5 Ω | < `CONT_SHORT_MV` (default: 0.5 mV) | Terminals shorted — no igniter, just wire. Possible wiring fault. | Orange ◆ + "SHORT" | Info warning, does not block arming |
 
 **Wire encoding alignment:** the enum values (CONT_OPEN=0, CONT_GOOD=1, CONT_MARGINAL=2, CONT_SHORT=3) are identical to the 2-bit wire encoding in the `continuity_bands` field of STATUS_UPDATE (00=OPEN, 01=GOOD, 10=MARGINAL, 11=SHORT). No mapping function is required — the enum value can be used directly as the wire value.
 
-**Hysteresis:** each threshold has a configurable hysteresis band (default: ±200 µV for SHORT boundary, ±5000 µV for MARGINAL boundary, ±50000 µV for OPEN boundary). A band transition is only registered when the averaged voltage crosses the threshold + hysteresis in the transition direction. This prevents oscillation at band boundaries.
+**Hysteresis:** each threshold has a configurable hysteresis band (default: ±5 mV for SHORT/MARGINAL boundaries, ±50 mV for OPEN boundary). A band transition is only registered when the averaged voltage crosses the threshold + hysteresis in the transition direction. This prevents oscillation at band boundaries.
 
-**SHORT band reliability:** the SHORT/GOOD boundary at ~500 µV is near the ESP32-S3 ADC noise floor. The 64-sample averaging provides approximately 3 additional effective bits of resolution (~100 µV), which is sufficient to reliably distinguish a true 0 Ω short (< 200 µV after averaging) from a 1 Ω e-match (~1000 µV). Occasional false classification between SHORT and GOOD is acceptable because SHORT is an informational warning only and does not block arming.
+**SHORT band reliability:** the SHORT/GOOD boundary at ~0.5 mV is near the ESP32-S3 ADC noise floor. The 64-sample averaging provides approximately 3 additional effective bits of resolution (~0.1 mV), which is sufficient to reliably distinguish a true 0 Ω short (< 0.2 mV after averaging) from a 1 Ω e-match (~1.0 mV). Occasional false classification between SHORT and GOOD is acceptable because SHORT is an informational warning only and does not block arming.
 
 **Implication:** continuity readings are valid and meaningful in all states, regardless of arm switch position. The display always shows which igniters are connected and their connection quality.
 
@@ -551,26 +538,23 @@ The following diagram shows the relationship between the arm switch, firing circ
         │                                           │
     BATTERY − ◄─────────────────────────────────────┘
 
-    CONTINUITY CIRCUIT (per channel, isolated, bypasses arm switch AND low-side relay):
+    CONTINUITY CIRCUIT (per channel, isolated, bypasses arm switch):
 
-    3.3V ── MOSFET sw (GPIO ctrl) ── R_ref (3.3kΩ, fusible) ──┬── igniter terminals ── GND (independent)
+    3.3V ── MOSFET sw (GPIO ctrl) ── R_ref (3.3kΩ, fusible) ──┬── igniter terminals ── GND
                                                                 │
-                                                                ├── R_pull (100kΩ) ── GND (independent)
+                                                                ├── R_pull (100kΩ) ── GND
                                                                 │
                                                                 └── ADC1 pin (GPIO 2–9)
 
-    MOSFET switch: single shared P-channel on GPIO 41, active LOW enable, pull-up on gate.
-    Disabled during ARMED, PRE_FIRE, FIRING, and ERROR states.
-    Last-known continuity bands retained while disabled.
-    GND is independent of the firing circuit — wired directly to battery negative / board ground,
-    NOT through the low-side relay.
+    MOSFET switch: P-channel, active LOW enable, pull-up on gate.
+    Disabled during FIRING and ERROR states.
 
     V_adc = 3.3 × R_ign / (R_ref + R_ign‖R_pull)
     R_pull >> R_ign for connected igniters, so R_pull is negligible.
     For open circuit: V_adc ≈ 3.3 × 100k / (3.3k + 100k) ≈ 3.19V
 ```
 
-The continuity circuit has its own isolated low-current supply wired around the arm switch, with an independent GND return path that does not pass through the low-side relay. R_ref = 3.3 kΩ limits the maximum current to 1 mA at 3.3V. R_pull = 100 kΩ provides a defined ADC reading for open circuits. Each of the 8 channels has an independent sensing circuit connected to a dedicated ADC1 pin.
+The continuity circuit has its own isolated low-current supply wired around the arm switch. R_ref = 3.3 kΩ limits the maximum current to 1 mA at 3.3V. R_pull = 100 kΩ provides a defined ADC reading for open circuits. Each of the 8 channels has an independent sensing circuit connected to a dedicated ADC1 pin.
 
 The firing current path requires BOTH the arm switch (hardware, high-side) AND the low-side relay (software-controlled, ground return) to be closed, in addition to the individual channel relay. This provides three independent break points.
 
@@ -586,9 +570,7 @@ The firing current path requires BOTH the arm switch (hardware, high-side) AND t
 
 This input detects whether any channel relay is stuck closed (welded contacts, shorted MOSFET). The base SHALL check this input before arming any channel. If the feedback indicates current on the firing bus when all relays should be open, arming is refused and `ERR_RELAY_FAULT` is set.
 
-**Relay feedback limitations:** The relay feedback circuit requires an energised firing path to detect current. In IDLE state, both the arm switch and low-side relay are open, so no current flows even if a channel relay is stuck closed. Therefore, relay feedback is only checked at arm time (§7.2.2 guard 9), when the arm switch is closed and the low-side relay is about to close. The pre-arm check is the primary defence against stuck relays.
-
-**Post-fire dropout delay:** The first relay feedback check after FIRING→POST_FIRE SHALL be delayed by at least 50 ms to allow for relay mechanical dropout time.
+**Periodic monitoring:** In addition to the pre-arm check, the base SHALL monitor the relay feedback input periodically (every 500 ms) while in IDLE and POST_FIRE states. If the feedback indicates current on the firing bus when no channel should be armed, the base SHALL immediately set `ERR_RELAY_FAULT` and transition to ERROR state. This detects relays that weld closed during or after firing.
 
 The external sensing circuit should detect current flow on the common bus shared by all channel relays (e.g., a low-value sense resistor with a comparator, or an optocoupler). The exact circuit design is a hardware concern; the firmware requires only a digital logic-level input.
 
@@ -639,7 +621,7 @@ The DIVIDER_RATIO constant must be defined in configuration to match the externa
 | A/B debounce | Interrupt-driven with 2 ms lockout (not shift-register). A proper Gray code quadrature state machine is recommended over simple edge-counting with lockout, as it eliminates the need for a lockout entirely and correctly handles fast rotation. If the simpler lockout approach is used, 2 ms provides sufficient noise filtering while allowing reliable detection at fast rotation speeds (~1 ms per detent on typical KY-040 encoders). |
 | Push button debounce | Shift-register, 10 ms polling, 160 ms debounce |
 | Rotation function | Select active channel (1–8), wrapping around |
-| Push button function | Context-dependent: ARM confirm via **500 ms long-press** (in IDLE with arm switch ON), DISARM (in ARMED). Short press in IDLE with arm switch ON shows "Hold to ARM" prompt. **The 500 ms long-press timer starts from the debounced stable-pressed transition (0xFFFF→0x0000), not from the raw physical press. Total operator hold time is approximately 660 ms (160 ms debounce + 500 ms long-press).** |
+| Push button function | Context-dependent: ARM confirm (in IDLE with arm switch ON), DISARM (in ARMED) |
 
 The direction of rotation determines increment (+1) or decrement (−1) of the selected channel. Channel selection wraps: incrementing past 8 returns to 1; decrementing past 1 returns to 8. **At boot, the selected channel SHALL default to channel 1.**
 
@@ -675,7 +657,7 @@ The software shall enforce **fresh press detection**: the button must transition
 |---|---|
 | Signal type | Analogue input (ADC1) |
 | Quantity | 1 |
-| Pin | GPIO 1 (ADC1_CH0) — same as base unit for code reuse |
+| Pin | Must be GPIO 1–10 (ADC1 only) |
 | Conversion | Same as Base Unit §5.4.7 — use `adc_cali_raw_to_voltage()` calibration API. DIVIDER_RATIO may differ. |
 
 #### 5.5.5 ILI9488 LCD Display
@@ -689,7 +671,7 @@ The software shall enforce **fresh press detection**: the button must transition
 | Touch | Not used in this design (pins 10–14 of module left unconnected) |
 | Pin count | 14-pin module (only pins 1–9 connected) |
 | SPI clock | Start at 20 MHz write / 6.67 MHz read; increase if stable |
-| Backlight | Always on at 100% — GPIO driven digital HIGH. No brightness control. |
+| Backlight | Controlled via GPIO (PWM or digital on/off) |
 | Refresh strategy | Partial updates (dirty-rectangle); full refresh only at state transitions |
 
 **Module pin usage:**
@@ -703,13 +685,13 @@ The software shall enforce **fresh press detection**: the button must transition
 | 5 | DC | Data/command select | ESP32-S3 GPIO |
 | 6 | SDI (MOSI) | SPI data in | ESP32-S3 GPIO |
 | 7 | SCK | SPI clock | ESP32-S3 GPIO |
-| 8 | LED | Backlight enable (active high) | ESP32-S3 GPIO (digital output, always HIGH) |
+| 8 | LED | Backlight enable (active high) | ESP32-S3 GPIO (PWM capable) |
 | 9 | SDO (MISO) | SPI data out | ESP32-S3 GPIO |
 | 10–14 | Touch | Not connected | N/C |
 
-SPI bus shall use SPI2_HOST on the ESP32-S3.
+SPI bus shall use SPI2_HOST (HSPI) on the ESP32-S3.
 
-**Display health check:** at boot, the firmware SHALL read back the ILI9488 display ID register (command 0x04, "Read Display Identification Information") via SPI. If the read-back value does not match the expected ILI9488 ID, or the SPI transaction fails, the remote SHALL transition to ERROR state (the operator cannot safely control the system without visual feedback). A periodic display health check (every 5000 ms) SHALL re-read the display ID register during IDLE state. **The display health check SHALL be performed within `display_task`, serialised with normal display writes.** It SHALL NOT be performed from a separate task or timer callback. Display failure during ARMED, PRE_FIRE, or FIRING SHALL trigger an immediate CMD_DISARM and transition to ERROR.
+**Display health check:** at boot, the firmware SHALL read back the ILI9488 display ID register (command 0x04, "Read Display Identification Information") via SPI. If the read-back value does not match the expected ILI9488 ID, or the SPI transaction fails, the remote SHALL transition to ERROR state (the operator cannot safely control the system without visual feedback). A periodic display health check (every 5000 ms) SHALL re-read the display ID register during IDLE state. Display failure during ARMED, PRE_FIRE, or FIRING SHALL trigger an immediate CMD_DISARM and transition to ERROR.
 
 #### 5.5.6 Buzzer Output
 
@@ -764,7 +746,7 @@ Same as Base Unit §5.4.9. On-board WS2812 on GPIO 47.
 | Data rate | 1 Mbps (ESP-NOW default) |
 | Max payload | 250 bytes per ESP-NOW frame |
 | Range | ~200 m LOS (subject to antenna and environment) |
-| Channel | Fixed Wi-Fi channel (configurable, default: **channel 11** — avoids the heavily congested channel 1 at launch events). **Note:** channels 1, 6, and 11 are the three non-overlapping 2.4 GHz channels and all three may be congested at well-attended events. The Wi-Fi channel SHOULD be surveyed at the field using an external Wi-Fi analyser tool and adjusted via `WIFI_CHANNEL` before the launch event. |
+| Channel | Fixed Wi-Fi channel (configurable, default: **channel 11** — avoids the heavily congested channel 1 at launch events). **Note:** channels 1, 6, and 11 are the three non-overlapping 2.4 GHz channels and all three may be congested at well-attended events. The Wi-Fi channel SHOULD be surveyed at the field and adjusted via `WIFI_CHANNEL` before the launch event. A boot-time channel scan (using `esp_wifi_scan_start()`) SHALL log the noise floor on each of the 13 channels to UART0, allowing the operator to select the least congested channel. |
 
 ### 6.2 Security
 
@@ -776,8 +758,6 @@ ESP-NOW provides built-in **AES-128-CCM** encryption per peer. This is the syste
 2. Derive or define a 16-byte Local Master Key (LMK) per peer.
 3. Register each peer with encryption enabled (`esp_now_peer_info_t.encrypt = true`).
 4. The PMK and LMK shall be identical on both units (symmetric).
-
-**Known limitation:** PMK and LMK are compile-time constants. Changing keys requires recompilation and reflashing both units. NVS-based key provisioning is a candidate for future enhancement.
 
 #### 6.2.2 Application-Layer Integrity and Replay Protection
 
@@ -847,8 +827,6 @@ Total header size: 12 bytes.
 | 4 | 3 | `base_firmware_version` | Base firmware version (byte 0 = major, byte 1 = minor, byte 2 = patch) |
 | 7 | 1 | `num_channels` | Number of supported channels (8) |
 
-**Note:** During link establishment, the `session_token` field in the common message header (§6.3.1) is `0x00000000`. The authoritative new session token is in the LINK_ACK **payload** `session_token` field above. All subsequent messages use the payload token value in the header field.
-
 **Firmware version enforcement:** the remote shall compare all three components (major, minor, patch) of the received `base_firmware_version` with its own version. If any component differs, the link shall be rejected. The remote shall display "FIRMWARE MISMATCH — Base vX.Y.Z / Remote vX.Y.Z — Reflash required" and shall NOT transition to IDLE. The remote stays in LINKING state but stops retrying, displaying the mismatch error until power cycle.
 
 **Immediately after sending LINK_ACK**, the base SHALL send a full STATUS_UPDATE message to provide the remote with initial system state.
@@ -910,10 +888,6 @@ Total header size: 12 bytes.
 | 11 | 1 | `error_flags` | Bit field of active errors (see §13) |
 | 12 | 2 | `update_sequence` | Monotonically increasing per status update (uint16). Remote can detect gaps. **Wrap-around from 65535 to 0 is expected and SHALL NOT be treated as a gap.** Gap detection SHALL use modular arithmetic: a gap is detected when `(received_seq - last_seq) > 2` using unsigned subtraction modulo 65536. |
 
-**Channel numbering convention:** Channels are numbered 1–8 in the user interface and wire protocol. In bitmask fields (`channel_armed_bitmask`, `channel_firing_bitmask`), channel N maps to bit (N-1). In the `continuity_bands` field, channel N occupies bits [(2N-1):(2N-2)]. For example: channel 1 = bits [1:0], channel 4 = bits [7:6], channel 8 = bits [15:14].
-
-**Multi-arm detection:** The remote SHALL verify that at most one bit is set in `channel_armed_bitmask` (since only single-channel arming is permitted per §9.3). If multiple bits are set, the remote SHALL send CMD_DISARM (channel 0xFF), display "MULTI-ARM ERROR", and transition to IDLE. This defends against a base firmware bug that could arm multiple channels simultaneously.
-
 ##### CMD_ACK (0x31) — 6 bytes
 
 | Offset | Size | Field | Description |
@@ -923,8 +897,6 @@ Total header size: 12 bytes.
 | 5 | 1 | `channel` | Channel the command applied to (1–8), or 0x00 for commands without a channel (CMD_CEASE_FIRE) |
 
 The remote SHALL verify that the `channel` in CMD_ACK matches the channel it requested before acting on the acknowledgement.
-
-**Alignment note:** Unlike command structs (which place `uint32_t integrity_crc` first for natural alignment), ACK/NACK structs do not carry an integrity CRC and are not alignment-optimised. The `__attribute__((packed))` directive handles unaligned field access.
 
 ##### CMD_NACK (0x32)
 
@@ -984,7 +956,7 @@ Remote                              Base
 
 The remote shall retry `LINK_REQUEST` every 2000 ms. If no `LINK_ACK` is received after 15 attempts (30 seconds), the remote shall display "NO LINK" and continue retrying indefinitely at a 5-second interval.
 
-If the base receives a `LINK_REQUEST` while already linked to the same remote MAC (e.g., after a remote reboot), it shall **atomically invalidate the previous session token**, reset both per-peer sequence counters to 0, generate a new session token, and respond normally. **However, the base SHALL reject LINK_REQUEST (silently ignore it) while in ARMED, PRE_FIRE, or FIRING state.** A session reset during these states would invalidate the active session and disrupt a safety-critical operation. **The base SHALL also silently ignore LINK_REQUEST while in POST_FIRE** — the remote's retry mechanism (every 2000 ms) will deliver a subsequent request after the base returns to IDLE. The base remains in its current state and continues processing the existing session. Once the base returns to IDLE (via disarm, fire completion, link-loss timeout, or POST_FIRE cooldown), it will accept LINK_REQUEST normally.
+If the base receives a `LINK_REQUEST` while already linked to the same remote MAC (e.g., after a remote reboot), it shall **atomically invalidate the previous session token**, reset both per-peer sequence counters to 0, generate a new session token, and respond normally. **However, the base SHALL reject LINK_REQUEST (silently ignore it) while in ARMED, PRE_FIRE, or FIRING state.** A session reset during these states would invalidate the active session and disrupt a safety-critical operation. The base remains in its current state and continues processing the existing session. Once the base returns to IDLE (via disarm, fire completion, or link-loss timeout), it will accept LINK_REQUEST normally.
 
 The base shall only accept link requests from the pre-configured remote MAC address. Requests from any other MAC shall be silently ignored.
 
@@ -998,22 +970,16 @@ ESP-NOW's `esp_now_send()` can fail at the MAC layer (no ACK from peer at the Wi
 - The send failure counter SHALL be reset on any successful send callback.
 - Send failures during repeated CMD_FIRE (fire-and-forget mode) SHALL increment the failure counter but do not individually trigger abort — the dead-man timeout (500 ms without CMD_FIRE receipt at the base) handles this case.
 
-#### 6.4.1b ESP-NOW Receive Processing
-
-The ESP-NOW receive callback (`esp_now_recv_cb_t`) SHALL post received frames to a FreeRTOS queue (depth >= 16) for processing by the appropriate task. The callback SHALL NOT perform message parsing or state machine operations directly — it SHALL only copy the frame data, sender MAC, and RSSI into a queue entry. If the queue is full, the frame is dropped and a warning is logged.
-
-**Exception:** the dead-man timestamp (last CMD_FIRE received time) SHALL be updated directly in the receive callback after matching `msg_type == CMD_FIRE` from the header (see §7.2.4). This is a single atomic timestamp write and does not require queue processing.
-
 #### 6.4.2 Heartbeat Protocol
 
-Once linked, the remote sends a `PING` message every 500 ms. The base responds with `PONG`.
+Once linked, the remote sends a `PING` message every 1000 ms. The base responds with `PONG`.
 
 | Parameter | Value |
 |---|---|
-| Ping interval | 500 ms |
+| Ping interval | 1000 ms |
 | Pong timeout | 500 ms (if no PONG received within 500 ms of PING send, that ping is a failure) |
 | Link quality window | Last 10 pings |
-| Link loss threshold | 3 consecutive failed pings (link loss detected within 1.5 seconds) |
+| Link loss threshold | 3 consecutive failed pings |
 | RSSI source | Captured from the ESP-NOW receive callback on each received frame |
 
 **RSSI tracking:** the remote shall record the RSSI from each received frame (PONG, STATUS_UPDATE, ACK, NACK). The display shall show the average RSSI of the 3 most recently received frames.
@@ -1029,8 +995,6 @@ Once linked, the remote sends a `PING` message every 500 ms. The base responds w
 **Remote battery at base:** the base receives the remote's battery voltage via the PING message. If the remote battery is below `REMOTE_VBAT_MIN_OPERATE_MV`, the base should log an advisory warning. **Additionally, if the remote battery (as reported in PING) is below `REMOTE_VBAT_MIN_ARM_MV`, the base SHALL refuse ARM commands with NACK reason 0x0C ("REMOTE BATTERY LOW").** This provides defence-in-depth against a remote firmware bug that ignores its own battery threshold.
 
 **Link recovery:** when a valid PONG is received after link loss, both units transition to IDLE (not armed — arming must be re-initiated by the operator).
-
-**Base reboot detection:** if the base reboots mid-session (e.g., watchdog reset, brown-out recovery), the remote's existing session token becomes invalid. The base silently discards PINGs with invalid session tokens. The remote detects this via 3 consecutive heartbeat failures (1.5 seconds) and transitions to LINK_LOST, then re-links via LINK_REQUEST. This latency is acceptable — no special mechanism is required.
 
 #### 6.4.3 Status Update Transmission
 
@@ -1129,7 +1093,7 @@ For the initial command:
 | `FIRING` | Igniter relay active. Fire pulse timer running. | Red solid | Continuous |
 | `POST_FIRE` | Fire complete. All relays off. Cooldown. | Yellow solid | Off |
 | `LINK_LOST` | Comms lost. All relays off. | Yellow fast blink (200/200) | 500 on / 500 off, 4 cycles on entry |
-| `ERROR` | Unrecoverable error. All relays off. Requires power cycle. | Red triple flash | 3 blasts on entry |
+| `ERROR` | Unrecoverable error. All relays off. Requires power cycle. | Red triple flash | Off |
 
 ### 7.2 State Transition Rules
 
@@ -1159,23 +1123,18 @@ For the initial command:
   7. Sequence number is valid (not a replay).
   8. Base battery voltage is above `VBAT_MIN_ARM_MV` threshold.
   9. **Relay feedback check passes** — the relay feedback input confirms no current on the firing bus (all relays verified open).
-  10. **Link quality is acceptable** — `ERR_COMM_DEGRADED` is NOT set (ping failure rate ≤ 30% in last 10 pings). Arming on a degraded link risks dead-man timeout false aborts during firing.
 - Actions on successful transition:
   1. Close the low-side relay (set active).
   2. Record armed channel number.
   3. Start siren pulsing (500 ms on / 500 ms off).
-  4. Start arm timeout timer (`ARM_TIMEOUT_MS`, default: 10000 ms). If no CMD_FIRE is received before this timer expires, auto-disarm and return to IDLE.
-  5. Send `CMD_ACK` (with channel field) to remote.
-  6. Send `STATUS_UPDATE` with updated bitmasks.
-  7. RGB LED → red slow blink.
-  8. Disable continuity enable MOSFET (GPIO 41) — continuity sensing is suspended while armed. Last-known continuity bands are retained.
-- **Note:** Only the low-side relay is closed in ARMED state. The individual channel relay remains open until the FIRING state (§7.4.2), ensuring no current path to the igniter exists until fire command execution.
+  4. Send `CMD_ACK` (with channel field) to remote.
+  5. Send `STATUS_UPDATE` with updated bitmasks.
+  6. RGB LED → red slow blink.
 - If any guard fails: send `CMD_NACK` with appropriate reason code (including 0x0B for relay fault). Remain in IDLE.
 - Exceptions:
   - CMD_ARM for wrong channel (e.g., 0 or 9+) → NACK reason 0x03.
   - CMD_ARM while another channel armed → NACK reason 0x0A.
   - CMD_FIRE received while in IDLE → NACK reason 0x05.
-  - CMD_DISARM received while in IDLE → ACK (idempotent, already safe).
   - CMD_CEASE_FIRE received while in IDLE → ACK (idempotent, already safe).
   - Multiple rapid CMD_ARM for different channels → first is processed, subsequent NACK'd.
 
@@ -1185,19 +1144,20 @@ For the initial command:
 - Guard conditions:
   1. Channel in the FIRE command matches the currently armed channel.
   2. Message integrity CRC is valid.
-  3. **Base arm switch is still in ARMED position** (defence-in-depth re-verification).
+  3. Continuity is still present on the armed channel.
+  4. **Base arm switch is still in ARMED position** (defence-in-depth re-verification).
 - Actions on transition:
   1. Switch siren from pulsing to continuous.
   2. Start pre-fire countdown timer (`PRE_FIRE_DELAY_MS`, default: 5000 ms).
-  3. Cancel arm timeout timer.
-  4. Send `CMD_ACK` (with channel field) to remote.
-  5. Send `STATUS_UPDATE`.
-  6. RGB LED → red fast blink.
-- **Note:** Continuity is NOT re-checked at this transition. The continuity enable MOSFET is disabled during ARMED state, so only stale data is available. Continuity was verified at arm time (§7.2.2 guard 2). The window between arming and firing is expected to be short (≤ ARM_TIMEOUT_MS).
+  3. Send `CMD_ACK` (with channel field) to remote.
+  4. Send `STATUS_UPDATE`.
+  5. RGB LED → red fast blink.
 - Exceptions:
   - CMD_FIRE for wrong channel → NACK reason 0x05. Remain ARMED.
   - CMD_ARM for a different channel while armed → NACK reason 0x0A. Remain ARMED.
+  - Continuity → OPEN on armed channel → immediate disarm (§7.2.7).
   - Base arm switch → DISARM → immediate disarm (§7.2.7).
+  - Continuity band change on a NON-armed channel → update continuity_bands, send STATUS_UPDATE, remain ARMED (not a safety issue).
 
 **Wrong-channel CMD_FIRE during PRE_FIRE or FIRING:** CMD_FIRE received during PRE_FIRE or FIRING for a channel other than the armed channel SHALL be silently discarded (not NACK'd, since repeated CMD_FIRE messages are fire-and-forget during these states). This prevents a remote firmware bug from disrupting an active firing sequence.
 
@@ -1205,31 +1165,31 @@ For the initial command:
 
 - Trigger: Pre-fire countdown timer elapsed.
 - Guard (ALL must be true):
-  1. The base must have received at least one `CMD_FIRE` message within the last `FIRE_AUTHORIZATION_TIMEOUT_MS` (500 ms). **Implementation note:** The last-CMD_FIRE-received timestamp SHALL be updated in the ESP-NOW receive callback (see §6.4.1b), not deferred to the state machine task. This ensures the timestamp is not delayed by lower-priority task scheduling.
-  2. **Link health: the last PONG was received within `HEARTBEAT_INTERVAL_MS + HEARTBEAT_TIMEOUT_MS` (1000 ms).** This uses the sum of the ping interval and pong timeout to allow for scheduling jitter while ensuring the link has not missed a full heartbeat cycle. This prevents energising the igniter at the exact moment the link dies.
+  1. The base must have received at least one `CMD_FIRE` message within the last `FIRE_AUTHORIZATION_TIMEOUT_MS` (500 ms).
+  2. **Link health: the last PONG was received within `HEARTBEAT_TIMEOUT_MS` (500 ms).** This prevents energising the igniter at the exact moment the link dies.
   3. **Base arm switch is still in ARMED position** (defence-in-depth re-verification).
-  4. **Link quality is acceptable** — `ERR_COMM_DEGRADED` is NOT set (ping failure rate ≤ 30% in last 10 pings). A degraded link risks dead-man timeout false aborts during firing.
 - Actions on transition:
   1. Drive the armed channel's igniter relay output active.
-  2. Start fire pulse timer (`FIRE_PULSE_DURATION_MS`, default: 2000 ms). **The channel number SHALL be passed to the timer callback as a context argument**, not read from a global variable inside the ISR. The callback SHALL only signal the state machine task via `xTaskNotifyFromISR()` — it SHALL NOT drive any GPIO or acquire any mutex. The state machine task, upon receiving the notification, SHALL call `relay_all_safe()` and transition to POST_FIRE.
+  2. Start fire pulse timer (`FIRE_PULSE_DURATION_MS`, default: 2000 ms). **The channel number SHALL be passed to the timer callback as a context argument**, not read from a global variable inside the ISR. The callback SHALL assert that the passed channel matches the currently armed channel before deactivating the relay.
   3. Keep siren continuous.
   4. Send `STATUS_UPDATE` with firing bitmask set.
   5. RGB LED → red solid.
 - Exceptions:
   - **Pre-fire timer expires but no CMD_FIRE received within last 500 ms (dead-man timeout):** abort. `relay_all_safe()`, siren off, return to IDLE. Send STATUS_UPDATE.
   - **Pre-fire timer expires but link health check fails:** abort. `relay_all_safe()`, siren off, transition to LINK_LOST.
-  - **Pre-fire timer expires but ERR_COMM_DEGRADED is set:** abort. `relay_all_safe()`, siren off, return to IDLE. Send STATUS_UPDATE.
   - CMD_CEASE_FIRE during PRE_FIRE → immediate abort. `relay_all_safe()`, siren off, return to IDLE. ACK the command.
   - Base arm switch → DISARM during PRE_FIRE → immediate abort. `relay_all_safe()`, siren off, return to IDLE.
+  - Continuity → OPEN during PRE_FIRE → immediate abort. `relay_all_safe()`, siren off, return to IDLE. Set ERR_CONTINUITY_LOST_WHILE_ARMED.
   - Link lost during PRE_FIRE → immediate abort (igniter not yet energised, safe to abort). `relay_all_safe()`, siren for 4000 ms, LINK_LOST.
   - Battery drops critical during PRE_FIRE → immediate abort → ERROR.
 
 #### 7.2.5 FIRING → POST_FIRE
 
-- Trigger: Fire pulse timer elapsed (signalled to state machine task via `xTaskNotifyFromISR()` from the hardware timer callback).
-- Actions on transition (executed by state machine task):
-  1. Call `relay_all_safe()` (deactivates channel relay, opens low-side relay).
-  2. Deactivate siren.
+- Trigger: Fire pulse timer elapsed.
+- Actions on transition:
+  1. Drive the channel's igniter relay output inactive.
+  2. Open low-side relay (set inactive).
+  3. Deactivate siren.
   4. Clear armed channel.
   5. Start post-fire cooldown timer (`POST_FIRE_COOLDOWN_MS`, default: 2000 ms).
   6. Send `STATUS_UPDATE` (all bitmasks cleared).
@@ -1249,7 +1209,7 @@ For the initial command:
 - Exceptions:
   - CMD_ARM received during cooldown → NACK reason 0x05. Must wait for IDLE.
   - Link lost during POST_FIRE → relays are already safe. Transition to LINK_LOST immediately (safe either way).
-  - **LINK_REQUEST received during POST_FIRE:** the base SHALL silently ignore LINK_REQUEST while in POST_FIRE. The remote's retry mechanism (every 2000 ms) will deliver a subsequent request after the base returns to IDLE. The cooldown is not interrupted — relays are already safe and the timer ensures a minimum delay before the next arming sequence.
+  - **LINK_REQUEST received during POST_FIRE:** the base SHALL complete the cooldown timer normally, transition to IDLE, then process the LINK_REQUEST (generate new session token, respond with LINK_ACK). The cooldown is not interrupted — relays are already safe and the timer ensures a minimum delay before the next arming sequence.
 
 #### 7.2.7 Any State → IDLE (Disarm)
 
@@ -1259,29 +1219,25 @@ This transition can be triggered from ARMED, PRE_FIRE, or FIRING (with caveats f
 - Base arm switch moved to DISARM position.
 - Repeated `CMD_FIRE` not received for 500 ms during PRE_FIRE (dead-man timeout).
 - Base battery voltage drops below `VBAT_CRITICAL_MV`.
-- Arm timeout elapsed (`ARM_TIMEOUT_MS`, default: 10000 ms) — no CMD_FIRE received within the timeout period after entering ARMED state.
-
-**Note:** Continuity band transitions are NOT monitored during ARMED or PRE_FIRE states. The continuity enable MOSFET is disabled during these states, so only stale data is available. Continuity is verified at arm time (§7.2.2 guard 2).
+- Continuity band transitions to OPEN on the armed channel (except during FIRING).
 
 Actions:
-1. All channel relay outputs → inactive (call `relay_all_safe()`).
+1. All channel relay outputs → inactive.
 2. Low-side relay output → inactive.
 3. Deactivate siren.
 4. Clear armed channel.
-5. Cancel arm timeout timer (if running).
-6. Re-enable continuity enable MOSFET (GPIO 41) — resume continuity sensing.
-7. Send `CMD_ACK` (if triggered by command) or `STATUS_UPDATE`.
-8. RGB LED → green solid.
+5. Send `CMD_ACK` (if triggered by command) or `STATUS_UPDATE`.
+6. RGB LED → green solid.
 
 #### 7.2.8 Any State → LINK_LOST
 
-- Trigger: 3 consecutive heartbeat failures (no PING received for 1.5 seconds).
+- Trigger: 3 consecutive heartbeat failures (no PING received for 3 seconds).
 - Actions:
   1. Execute full disarm (§7.2.7 actions 1–4).
   2. Activate siren for 4000 ms (500 on / 500 off, 4 cycles).
   3. Send STATUS_UPDATE (if possible — link may be partially functional).
   4. RGB LED → yellow fast blink.
-- Recovery: when a valid PING is received, respond with PONG, transition to IDLE (not ARMED). **Siren is silenced immediately on transition to IDLE**, even if the SIREN_LINK_LOST pattern has not completed its 4-cycle duration.
+- Recovery: when a valid PING is received, respond with PONG, transition to IDLE (not ARMED).
 - Exceptions:
   - LINK_LOST persists for extended time → base stays in LINK_LOST. System is safe (all relays off). No automatic shutdown. Operator must physically intervene.
   - Arm switch toggled while in LINK_LOST → no effect on relays (already off). State is updated for when link recovers.
@@ -1294,8 +1250,7 @@ Actions:
   2. Set `ERR_INTERNAL` or `ERR_VBAT_CRITICAL` flag.
   3. Send one final `STATUS_UPDATE` if possible.
   4. RGB LED → red triple flash pattern.
-  5. Activate siren: 3 short blasts (200 ms on / 200 ms off), then silence (`SIREN_ERROR`).
-  6. **ERROR state is intentionally unrecoverable** to prevent operation with a potentially compromised unit. System halted. Requires power cycle.
+  5. System halted. Requires power cycle.
 
 ### 7.3 Input Processing
 
@@ -1305,12 +1260,11 @@ A dedicated FreeRTOS task (`continuity_task`) shall sample all 8 continuity ADC 
 
 When a band change is detected on any channel:
 1. Update the internal `continuity_bands` field.
-2. If a channel that is currently armed transitions to SHORT: log an advisory warning (informational only — does not trigger disarm).
-3. Trigger an event-driven `STATUS_UPDATE` to the remote.
+2. If a channel that is currently armed transitions to OPEN (and state is not FIRING): immediately trigger disarm (§7.2.7).
+3. If a channel that is currently armed transitions to SHORT: log an advisory warning (informational only — does not trigger disarm).
+4. Trigger an event-driven `STATUS_UPDATE` to the remote.
 
-**Note:** Continuity-loss disarm during ARMED/PRE_FIRE states is not implemented. The continuity enable MOSFET is disabled during these states, so only stale data is available. Continuity is verified at arm time (§7.2.2 guard 2). The brief window between arming and firing (bounded by ARM_TIMEOUT_MS) makes mid-arm igniter disconnection an accepted low-probability risk.
-
-Since the continuity circuit bypasses the arm switch, continuity readings are always valid and meaningful regardless of arm switch position. **However, the continuity enable MOSFET is disabled during ARMED, PRE_FIRE, FIRING, and ERROR states (§5.4.2).** During these states, the last-known continuity band for each channel is retained. The continuity task continues to run but skips ADC sampling while the MOSFET is disabled. Continuity monitoring resumes automatically on return to IDLE.
+Since the continuity circuit bypasses the arm switch, continuity readings are always valid and meaningful regardless of arm switch position.
 
 #### 7.3.2 Arm Switch Monitoring
 
@@ -1351,13 +1305,11 @@ The exact sequence within the FIRING state:
 2. Assert: exactly one channel relay is about to be driven.
 3. Drive channel relay active.
 4. Start **hardware timer** for `FIRE_PULSE_DURATION_MS`. **The channel number SHALL be passed to the timer callback as a context argument**, not read from a global variable inside the ISR. The callback SHALL:
-   - Signal the state machine task via `xTaskNotifyFromISR()`. The callback SHALL NOT drive any GPIO, call any state machine function, or acquire any mutex.
-5. The state machine task, upon receiving the notification:
-   - Asserts that the passed channel matches the currently armed channel.
-   - Calls `relay_all_safe()` (deactivates channel relay, opens low-side relay).
-   - Transitions to POST_FIRE.
-
-**Design rationale:** All relay control is performed in task context, never in ISR context. This keeps safety-critical GPIO operations in a single execution context, simplifying safety reasoning and avoiding concurrent relay access between ISR and task. The fire pulse duration may exceed `FIRE_PULSE_DURATION_MS` by a few hundred microseconds (task scheduling latency), which is negligible against the 2000 ms default pulse.
+   - Assert that the passed channel matches the currently armed channel.
+   - Drive channel relay inactive.
+   - Set low-side relay inactive.
+   - Signal the state machine to transition to POST_FIRE.
+5. Transition to POST_FIRE on callback completion.
 
 The fire pulse shall be driven by a hardware timer interrupt, NOT a software delay, to guarantee precise timing even under software load.
 
@@ -1419,7 +1371,7 @@ The fire pulse shall be driven by a hardware timer interrupt, NOT a software del
 | `PRE_FIRE` | Fire button held. Pre-fire countdown active. CMD_FIRE sent at 200 ms intervals. | Red fast blink (100/100) |
 | `FIRING` | Local countdown elapsed. Ignition assumed active. CMD_FIRE continues at 200 ms intervals. | Red solid |
 | `LINK_LOST` | Heartbeat lost. Buzzer alarm. All commands disabled. | Yellow fast blink (200/200) |
-| `ERROR` | Unrecoverable error. Intentionally unrecoverable to prevent operation with a compromised unit. Requires power cycle. | Red triple flash |
+| `ERROR` | Unrecoverable error. Requires power cycle. | Red triple flash |
 
 ### 8.2 State Transition Rules
 
@@ -1435,14 +1387,14 @@ The fire pulse shall be driven by a hardware timer interrupt, NOT a software del
 - Actions: store session token, reset sequence counters, start heartbeat timer, update display to main status view.
 - Exceptions:
   - Firmware version mismatch (any of major/minor/patch) → display "FIRMWARE MISMATCH — Base vX.Y.Z / Remote vX.Y.Z — Reflash required". Stop retrying. Stay in LINKING. Require power cycle.
-  - Unexpected `num_channels` in LINK_ACK → store and adapt. If `num_channels` > 8, cap at 8 (protocol limitation). If `num_channels` < 8, channels above the reported count SHALL be hidden on the display and ARM commands for those channels SHALL be blocked locally. Display only the reported number of channels.
+  - Unexpected `num_channels` in LINK_ACK → store and adapt. Display only the reported number of channels.
 
 #### 8.2.3 IDLE → ARMED
 
 - Trigger: operator action sequence:
   1. Arm switch is in ARMED position (local check, debounced, stable).
   2. Operator has selected a channel via the rotary encoder.
-  3. Operator presses and holds encoder button for **500 ms** (long-press) to confirm arming. A short press (< 500 ms) displays "Hold to ARM" prompt without sending a command.
+  3. Operator presses encoder button to confirm arming.
 - Local guard conditions (ALL must be true before sending CMD_ARM):
   1. Local arm switch is ARMED.
   2. **Remote battery voltage is above `REMOTE_VBAT_MIN_ARM_MV`.** If below, display "REMOTE BATTERY LOW — CANNOT ARM". Do not send command.
@@ -1483,7 +1435,7 @@ The fire pulse shall be driven by a hardware timer interrupt, NOT a software del
 
 - Trigger (any of):
   1. Fire button released → send `CMD_CEASE_FIRE`, transition to IDLE.
-  2. `STATUS_UPDATE` showing fire complete (base in POST_FIRE or IDLE) → display "FIRE COMPLETE" for `POST_FIRE_COOLDOWN_MS` (2000 ms), then transition to IDLE.
+  2. `STATUS_UPDATE` showing fire complete (base in POST_FIRE or IDLE) → transition to IDLE, display "FIRE COMPLETE".
   3. Arm switch moved to DISARM → send `CMD_CEASE_FIRE`, transition to IDLE.
   4. Link lost → transition to LINK_LOST.
 - Actions: update display, clear firing indicators, stop sending repeated CMD_FIRE.
@@ -1511,7 +1463,7 @@ The fire pulse shall be driven by a hardware timer interrupt, NOT a software del
   1. If in ARMED or FIRING: mark as disarmed locally (base will also disarm).
   2. Display "LINK LOST" prominently.
   3. Buzzer: continuous alarm pattern (200 ms on / 200 ms off).
-  4. Continue sending PINGs at 500 ms.
+  4. Continue sending PINGs at 1000 ms.
   5. RGB LED → yellow fast blink.
 - Recovery: on first successful PONG, transition to IDLE (never directly to ARMED).
 
@@ -1533,7 +1485,7 @@ The fire pulse shall be driven by a hardware timer interrupt, NOT a software del
 - Shift-register debounce, 10 ms polling.
 - **Fresh press detection:** must transition from 0xFF (released) to 0x00 (pressed). A button that is 0x00 at boot or at state entry does not count.
 - While held in FIRING state: `CMD_FIRE` sent every 200 ms with fresh sequence numbers.
-- On release (0x00 → 0xFF): `CMD_CEASE_FIRE` sent immediately.
+- On release (0x0000 → 0xFFFF): `CMD_CEASE_FIRE` sent immediately.
 
 #### 8.3.3 Arm Switch
 
@@ -1546,7 +1498,7 @@ The fire pulse shall be driven by a hardware timer interrupt, NOT a software del
 Same calibrated ADC approach as base (§7.3.3). Three thresholds:
 - `REMOTE_VBAT_MIN_ARM_MV`: minimum voltage to allow arming. Below this, the remote SHALL NOT send CMD_ARM. Display "REMOTE BATTERY LOW — CANNOT ARM".
 - `REMOTE_VBAT_MIN_OPERATE_MV`: minimum voltage for normal operation. Below this: display warning, continue operating.
-- `REMOTE_VBAT_CRITICAL_MV`: critical low. Display warning, refuse to arm, buzzer alarm, RGB LED error. **If remote battery drops critical during FIRING, the remote transitions to ERROR, ceasing all CMD_FIRE transmissions. The base will abort via dead-man timeout within 500 ms.**
+- `REMOTE_VBAT_CRITICAL_MV`: critical low. Display warning, refuse to arm, buzzer alarm, RGB LED error.
 
 ### 8.4 Repeated FIRE Transmission
 
@@ -1576,7 +1528,7 @@ These requirements are non-negotiable and shall take precedence over all other f
 | Software crash / watchdog reset | ESP32-S3 GPIO default state ensures relays inactive (hardware fail-safe) |
 | Unknown / corrupt message received | Silently discard (never act on unvalidated data) |
 | Channel change while armed (encoder rotation) | Immediate disarm, return to IDLE |
-| Relay feedback fault detected at arm time | Refuse to arm (NACK 0x0B) |
+| Relay feedback fault detected | Refuse to arm (NACK 0x0B); if detected in IDLE, transition to ERROR |
 
 ### 9.2 Dual-Key Arming
 
@@ -1607,8 +1559,6 @@ After a fire pulse completes, the base automatically disarms the channel and ope
 
 Both units shall enable the ESP32-S3 hardware watchdog timer with a 2-second timeout. The main loop and all critical tasks must feed the watchdog. A watchdog reset results in a clean boot with all outputs in safe state.
 
-**Task Watchdog Timer (TWDT):** Each critical task (arm switch, fire button, continuity, heartbeat, state machine) SHALL register with the ESP-IDF Task Watchdog Timer via `esp_task_wdt_add()`. The TWDT timeout SHALL be 2 seconds. Unlike the hardware watchdog (which detects total system lock), TWDT detects individual task starvation — if any registered task fails to call `esp_task_wdt_reset()` within the timeout, the TWDT triggers a panic or reset.
-
 ### 9.7 GPIO Initialisation Order
 
 At boot, before any other peripheral is initialised, the firmware shall:
@@ -1634,7 +1584,8 @@ All FreeRTOS tasks SHALL be assigned priorities according to the following table
 
 | Task | Priority | Core | Stack (bytes) | Description |
 |---|---|---|---|---|
-| `arm_switch_task` | 7 (highest) | 0 | 2048 | Arm switch debounce polling (10 ms) |
+| `relay_feedback_task` | 7 (highest) | 0 | 2048 | Periodic relay feedback monitoring (500 ms) |
+| `arm_switch_task` | 6 | 0 | 2048 | Arm switch debounce polling (10 ms) |
 | `continuity_task` | 5 | 0 | 4096 | ADC continuity sampling, band classification |
 | `heartbeat_task` | 5 | 0 | 4096 | PING/PONG response, link-loss detection |
 | `state_machine_task` | 4 | 0 | 8192 | Base FSM, command processing, relay control |
@@ -1658,7 +1609,7 @@ All FreeRTOS tasks SHALL be assigned priorities according to the following table
 | `buzzer_task` | 1 | 1 | 2048 | Buzzer pattern player |
 | `rgb_led_task` | 1 (lowest) | 1 | 2048 | RGB LED pattern engine |
 
-Priority values are relative (FreeRTOS: higher number = higher priority). Exact values may be adjusted during implementation, but the relative ordering SHALL be preserved. Safety-critical tasks (arm switch, fire button, heartbeat) SHALL always run at higher priority than UI tasks (display, buzzer, LED).
+Priority values are relative (FreeRTOS: higher number = higher priority). Exact values may be adjusted during implementation, but the relative ordering SHALL be preserved. Safety-critical tasks (relay feedback, arm switch, fire button, heartbeat) SHALL always run at higher priority than UI tasks (display, buzzer, LED).
 
 ### 9.11 Runtime Logging
 
@@ -1671,28 +1622,6 @@ Both units SHALL output structured log messages on UART0 at **115200 baud** (8N1
 Where `timestamp_ms` is `esp_timer_get_time() / 1000`, `LEVEL` is one of `E` (error), `W` (warning), `I` (info), `D` (debug), and `module` is the component name (e.g., `FSM`, `COMMS`, `RELAY`, `CONT`, `ADC`).
 
 Log levels SHALL be compile-time configurable via Kconfig (`CONFIG_RLC_LOG_LEVEL`). Default: `I` (info) for release builds, `D` (debug) for development builds. Safety-critical events (state transitions, relay operations, disarm events, errors) SHALL always be logged at `I` or higher and cannot be suppressed below `W`.
-
-### 9.12 ISR Safety Rules
-
-All hardware timer callbacks and interrupt service routines SHALL use only ISR-safe FreeRTOS API variants (e.g., `xTaskNotifyFromISR()`, `xQueueSendFromISR()`, `xSemaphoreGiveFromISR()`). No mutexes, blocking calls, or direct function calls to state machine logic are permitted in ISR context. GPIO reads and writes are ISR-safe on ESP32-S3.
-
-### 9.13 Boot Sequence
-
-Both units SHALL execute the following initialisation sequence in order. If any step marked as mandatory fails (after retries where specified), the unit transitions to ERROR state.
-
-| Step | Action | Mandatory | Notes |
-|------|--------|-----------|-------|
-| 1 | Configure all relay/output GPIOs to safe (inactive) state | Yes | §9.7 — before any other peripheral |
-| 2 | Verify packed struct field offsets (`offsetof()` checks) | Yes | §9.9 |
-| 3 | Verify CRC32-C test vector | Yes | §6.2.2 |
-| 4 | Initialise ADC calibration | Yes | §5.4.7, §5.4.2 |
-| 5 | Initialise ESP-NOW, set PMK, register peer | Yes | §6.2.1, §6.2.3 — retry 3× on failure |
-| 6 | Initialise display, read-back display ID | Yes (remote only) | §5.5.5 |
-| 7 | Configure all input GPIOs, start debounce engine | Yes | §5.3 |
-| 8 | Enable continuity MOSFET (GPIO 41, active LOW) | Yes (base only) | §5.4.2 |
-| 9 | Configure hardware watchdog and TWDT | Yes | §9.6 |
-| 10 | Start FreeRTOS tasks | Yes | §9.10 |
-| 11 | Begin link establishment (LINK_REQUEST / wait for link) | Yes | §6.4.1 |
 
 ---
 
@@ -1747,8 +1676,8 @@ If a firmware version mismatch is detected:
 │                                                  │
 │          ⚠  FIRMWARE MISMATCH  ⚠                 │
 │                                                  │
-│          Base:   v1.1.0                          │
-│          Remote: v1.0.0                          │
+│          Base:   v1.1                            │
+│          Remote: v1.0                            │
 │                                                  │
 │          Reflash both units with                 │
 │          matching firmware.                      │
@@ -1842,28 +1771,6 @@ Red border, pulsing/flashing. Large channel number.
 ```
 
 Full red background or large red indicator. Shows pre-fire countdown (decrementing) or "IGNITION ACTIVE" during fire pulse.
-
-#### 10.2.4a Fire Complete Screen
-
-```
-┌──────────────────────────────────────────────────┐
-│ RSSI: -48 dBm  ████       BATT: 12.2V  ████    │
-├──────────────────────────────────────────────────┤
-│                                                  │
-│            ╔══════════════════════╗               │
-│            ║                     ║               │
-│            ║   FIRE COMPLETE     ║               │
-│            ║   CHANNEL 3         ║               │
-│            ║                     ║               │
-│            ║   Returning to      ║               │
-│            ║   IDLE in 1.8s      ║               │
-│            ║                     ║               │
-│            ╚══════════════════════╝               │
-│                                                  │
-└──────────────────────────────────────────────────┘
-```
-
-Green/yellow border. Displayed for `POST_FIRE_COOLDOWN_MS` (2000 ms) after STATUS_UPDATE confirms base in POST_FIRE or IDLE, then auto-transitions to main status screen.
 
 #### 10.2.5 Link Lost Screen
 
@@ -1978,8 +1885,6 @@ The remote uses an active buzzer for audible feedback. Patterns are implemented 
 | `SIREN_PRE_FIRE` | Continuous ON | Pre-fire countdown — clear the pad |
 | `SIREN_FIRING` | Continuous ON | Active ignition |
 | `SIREN_LINK_LOST` | 500 ms on, 500 ms off, 4 cycles | Link lost alert |
-| `SIREN_ERROR` | 200 ms on, 200 ms off, 3 cycles, then silence | ERROR state entry — audible pad alert |
-| `SIREN_CONTINUITY_LOST` | 200 ms on, 200 ms off, 3 cycles, then silence | Continuity-loss disarm — distinctive alert |
 
 ### 12.3 Implementation
 
@@ -2000,7 +1905,7 @@ The `error_flags` field in `STATUS_UPDATE` is a bitmask:
 | 0 | `ERR_VBAT_LOW` | Base battery below `VBAT_MIN_ARM_MV` |
 | 1 | `ERR_VBAT_CRITICAL` | Base battery below `VBAT_CRITICAL_MV` |
 | 2 | `ERR_RELAY_FAULT` | Relay feedback input detects current on firing bus when all relays should be open (§5.4.6) |
-| 3 | Reserved (was `ERR_CONTINUITY_LOST_WHILE_ARMED`) | Previously: continuity band transitioned to OPEN on the armed channel. Removed in v1.8 — continuity sensing is disabled during ARMED/PRE_FIRE/FIRING states, so this condition cannot be detected. |
+| 3 | `ERR_CONTINUITY_LOST_WHILE_ARMED` | Continuity band transitioned to OPEN on the armed channel |
 | 4 | `ERR_COMM_DEGRADED` | > 30% ping failure rate in last 10 pings |
 | 5 | `ERR_WATCHDOG_RESET` | Set if last boot was from watchdog reset |
 | 6 | `ERR_INTERNAL` | Software assertion failure |
@@ -2013,12 +1918,10 @@ The `error_flags` field in `STATUS_UPDATE` is a bitmask:
 | `ERR_VBAT_LOW` | Warning | Display warning on remote. NACK arm commands (reason 0x09). |
 | `ERR_VBAT_CRITICAL` | Critical | Immediate disarm (complete fire pulse if FIRING). Transition to ERROR. |
 | `ERR_RELAY_FAULT` | Critical | Immediate disarm. Transition to ERROR. |
-| *(Bit 3 reserved — see §13.1)* | — | — |
+| `ERR_CONTINUITY_LOST_WHILE_ARMED` | Critical | Immediate disarm of affected channel. Return to IDLE. |
 | `ERR_COMM_DEGRADED` | Warning | Display warning on remote (yellow indicator). |
 | `ERR_WATCHDOG_RESET` | Info | Set flag in first STATUS_UPDATE so remote can display "Base rebooted". |
 | `ERR_INTERNAL` | Critical | Immediate disarm. Transition to ERROR. |
-
-**Multiple simultaneous errors:** When multiple error flags are active simultaneously, the most severe error determines the system state transition (Critical > Warning > Info). All active error flags SHALL be displayed on the remote (stacked if needed) and logged to UART.
 
 ### 13.3 Assertions
 
@@ -2039,7 +1942,7 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 
 | Constant | Default Value | Description |
 |---|---|---|
-| `HEARTBEAT_INTERVAL_MS` | 500 | Ping send interval |
+| `HEARTBEAT_INTERVAL_MS` | 1000 | Ping send interval |
 | `HEARTBEAT_TIMEOUT_MS` | 500 | Time to wait for PONG |
 | `HEARTBEAT_FAIL_THRESHOLD` | 3 | Consecutive failures before link loss |
 | `HEARTBEAT_WINDOW_SIZE` | 10 | Rolling window for link quality calculation |
@@ -2060,7 +1963,6 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `SIREN_LINK_LOST_DURATION_MS` | 4000 | Siren duration on link loss (4 × 500on/500off) |
 | `NACK_DISPLAY_DURATION_MS` | 3000 | How long NACK reason text is shown on display |
 | `WATCHDOG_TIMEOUT_S` | 2 | Hardware watchdog timeout |
-| `ARM_TIMEOUT_MS` | 10000 | Maximum time in ARMED state without CMD_FIRE before auto-disarm |
 | `DEBOUNCE_POLL_INTERVAL_MS` | 10 | Default shift-register poll interval |
 
 ### 14.2 Voltage Thresholds
@@ -2106,16 +2008,12 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `CONT_R_PULL_OHM` | 100000 | Pull-down resistor per channel (Ω). Defines open-circuit ADC voltage. |
 | `CONT_SAMPLE_INTERVAL_MS` | 100 | ADC sampling interval per channel (ms) |
 | `CONT_OVERSAMPLE_COUNT` | 64 | Number of ADC samples averaged per reading |
-| `CONT_SHORT_UV` | 500 | Threshold: below this = SHORT band (µV). With hysteresis ±200 µV. |
-| `CONT_MARGINAL_UV` | 66000 | Threshold: above this = MARGINAL band (µV). Corresponds to ~20 Ω. With hysteresis ±5000 µV. |
-| `CONT_OPEN_UV` | 1500000 | Threshold: above this = OPEN band (µV). With hysteresis ±50000 µV. |
-| `CONT_HYSTERESIS_SHORT_UV` | 200 | Hysteresis band for SHORT/GOOD boundary (µV) |
-| `CONT_HYSTERESIS_MARGINAL_UV` | 5000 | Hysteresis band for GOOD/MARGINAL boundary (µV) |
-| `CONT_HYSTERESIS_OPEN_UV` | 50000 | Hysteresis band for MARGINAL/OPEN boundary (µV) |
-
-**Units note:** All continuity thresholds use microvolts (µV) as integer constants to avoid floating-point comparison and sub-millivolt precision issues. The ADC calibration API returns millivolts — multiply by 1000 before threshold comparison.
-
-**ADC noise floor note:** `CONT_SHORT_UV` (500 µV) and `CONT_HYSTERESIS_SHORT_UV` (200 µV) are near the ESP32-S3 ADC noise floor (~760 µV per LSB at 12-bit). The 64-sample averaging provides sufficient resolution for reliable SHORT detection in most cases. If field testing shows unreliable SHORT/GOOD boundary classification, consider raising `CONT_SHORT_UV` to 2000–5000 µV and `CONT_HYSTERESIS_SHORT_UV` to 1000–2000 µV.
+| `CONT_SHORT_MV` | 0.5 | Threshold: below this = SHORT band (mV). With hysteresis ±0.2 mV. |
+| `CONT_MARGINAL_MV` | 66 | Threshold: above this = MARGINAL band (mV). Corresponds to ~20 Ω. With hysteresis ±5 mV. |
+| `CONT_OPEN_MV` | 1500 | Threshold: above this = OPEN band (mV). With hysteresis ±50 mV. |
+| `CONT_HYSTERESIS_SHORT_MV` | 0.2 | Hysteresis band for SHORT/GOOD boundary (mV) |
+| `CONT_HYSTERESIS_MARGINAL_MV` | 5 | Hysteresis band for GOOD/MARGINAL boundary (mV) |
+| `CONT_HYSTERESIS_OPEN_MV` | 50 | Hysteresis band for MARGINAL/OPEN boundary (mV) |
 
 ---
 
@@ -2129,7 +2027,7 @@ The developer shall implement and document tests for the following scenarios. Te
 |---|---|---|
 | T-C01 | Power on remote with base off | Remote displays "Connecting..." and retries. No crash. RGB LED blue pulse. |
 | T-C02 | Power on both units | Link established within 10 seconds. RSSI displayed. RGB LEDs green. |
-| T-C03 | Separate units beyond range | Link lost detected within 1.5 seconds. Both units disarm. Siren/buzzer. RGB LEDs yellow. |
+| T-C03 | Separate units beyond range | Link lost detected within 3 seconds. Both units disarm. Siren/buzzer. RGB LEDs yellow. |
 | T-C04 | Return units to range after T-C03 | Link re-established. Both units in IDLE (not armed). RGB LEDs green. |
 | T-C05 | Send 1000 pings, measure loss rate | < 1% loss at 10 m LOS, < 5% loss at 100 m LOS. |
 | T-C06 | Replay a captured ARM command | Base rejects (sequence number or session token invalid). NACK reason 0x08. |
@@ -2164,10 +2062,10 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-F02 | Release fire button during pre-fire delay | Fire aborted. Return to IDLE. Siren off. |
 | T-F03 | Release fire button during active fire | Cease fire. Channel relay deactivates. Return to IDLE. |
 | T-F04 | Fire command on non-armed channel | NACK with reason 0x05. |
-| T-F05 | Continuity sensing disabled while armed | Verify that removing igniter jumper during ARMED state does NOT trigger disarm (continuity MOSFET is disabled; stale data retained). Continuity updates resume after disarm. |
+| T-F05 | Continuity → OPEN during armed state (remove igniter jumper) | Immediate disarm. Error displayed. BEEP_CONTINUITY_LOST buzzer. |
 | T-F06 | Link lost during firing | Base completes current fire pulse, then disarms. |
 | T-F07 | Pre-fire timer expires without fire button held | Base aborts to IDLE (dead-man timeout). |
-| T-F08 | Verify fire pulse timing | Measure relay ON duration with oscilloscope or logic analyser. Must match FIRE_PULSE_DURATION_MS within +500 µs (task scheduling latency for relay deactivation in task context). |
+| T-F08 | Verify fire pulse timing | Measure relay ON duration with oscilloscope or logic analyser. Must match FIRE_PULSE_DURATION_MS ± 10 ms. |
 | T-F09 | Verify link-health guard at PRE_FIRE→FIRING | If PONG missed at transition boundary, base aborts instead of firing. |
 
 ### 15.4 Safety Tests
@@ -2175,21 +2073,20 @@ The developer shall implement and document tests for the following scenarios. Te
 | ID | Test | Expected Result |
 |---|---|---|
 | T-S01 | Power cycle base while armed | Boots to safe state. All relays inactive. |
-| T-S02 | Power cycle remote while base armed | Base detects link loss within 1.5 seconds. Disarms. |
+| T-S02 | Power cycle remote while base armed | Base detects link loss within 3 seconds. Disarms. |
 | T-S03 | Reduce base battery below VBAT_CRITICAL_MV | Base disarms and enters ERROR state. |
 | T-S04 | Hold fire button at boot, then arm | Fire does not trigger (fresh press required). |
 | T-S05 | Corrupt a message (bit flip simulation) | Message rejected (CRC integrity check or ESP-NOW decrypt failure). |
 | T-S06 | Verify GPIO init order | Measure relay outputs with logic analyser during boot. Must be inactive before ESP-NOW init. |
 | T-S07 | Watchdog test: infinite loop in main task | Unit reboots within 2 seconds. All relays inactive after reboot. |
 | T-S08 | Hold fire button, then arm (button already pressed at ARMED entry) | Fire does not trigger — fresh press detection requires 0xFF→0x00 transition after entering ARMED state. |
-| T-S09 | LINK_REQUEST while ARMED | Send LINK_REQUEST while base is ARMED. Base silently ignores it; session and armed state are unaffected. |
-| T-S10 | Display SPI failure at boot | Disconnect display MOSI. Remote fails display ID read-back and transitions to ERROR. |
-| T-S11 | ESP-NOW 5 consecutive send failures | Simulate 5 consecutive send callback failures. System transitions to LINK_LOST immediately without waiting for 3 missed heartbeats. |
-| T-S12 | Fire pulse on link loss (COMPLETE_PULSE_ON_LINK_LOSS=true) | Lose link during FIRING. Base completes fire pulse, then transitions POST_FIRE → LINK_LOST. |
-| T-S13 | Fire pulse on link loss (COMPLETE_PULSE_ON_LINK_LOSS=false) | Set constant to false. Lose link during FIRING. Base immediately cuts fire pulse and transitions to LINK_LOST. |
-| T-S14 | Arm timeout | Arm a channel, do not press fire. After 10 seconds, base auto-disarms and returns to IDLE. |
-| T-S15 | ERR_COMM_DEGRADED blocks arming | Induce >30% ping failure rate. Attempt to arm. Base NACK's due to degraded link. |
-| T-S16 | ERR_COMM_DEGRADED blocks firing | Arm channel, press fire, induce >30% ping failure during PRE_FIRE. Base aborts instead of transitioning to FIRING. |
+| T-S09 | Relay feedback monitoring in IDLE | Simulate a stuck relay (drive feedback pin LOW) while in IDLE. Base detects fault within 500 ms and transitions to ERROR. |
+| T-S10 | Relay feedback monitoring in POST_FIRE | After a fire sequence completes, simulate stuck relay. Base detects fault within 500 ms and transitions to ERROR. |
+| T-S11 | LINK_REQUEST while ARMED | Send LINK_REQUEST while base is ARMED. Base silently ignores it; session and armed state are unaffected. |
+| T-S12 | Display SPI failure at boot | Disconnect display MOSI. Remote fails display ID read-back and transitions to ERROR. |
+| T-S13 | ESP-NOW 5 consecutive send failures | Simulate 5 consecutive send callback failures. System transitions to LINK_LOST immediately without waiting for 3 missed heartbeats. |
+| T-S14 | Fire pulse on link loss (COMPLETE_PULSE_ON_LINK_LOSS=true) | Lose link during FIRING. Base completes fire pulse, then transitions POST_FIRE → LINK_LOST. |
+| T-S15 | Fire pulse on link loss (COMPLETE_PULSE_ON_LINK_LOSS=false) | Set constant to false. Lose link during FIRING. Base immediately cuts fire pulse and transitions to LINK_LOST. |
 
 ### 15.5 Unit Tests (Host-Compilable)
 
@@ -2204,7 +2101,7 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-U07 | Battery threshold | Feed ADC values. Verify all three remote thresholds (MIN_ARM, MIN_OPERATE, CRITICAL). |
 | T-U08 | Version comparison | Verify strict MAJOR.MINOR.PATCH matching logic. |
 | T-U09 | Update sequence gap | Feed update_sequence numbers with gaps. Verify warning at gap > 2. |
-| T-U10 | Continuity band classification | Feed known microvolt values: 0, 300, 500, 1000, 30000, 66000, 100000, 500000, 1500000, 2000000, 3190000. Verify correct band assignment (SHORT, GOOD, MARGINAL, OPEN) at each threshold. |
+| T-U10 | Continuity band classification | Feed known millivolt values: 0.0, 0.3, 0.5, 1.0, 30, 66, 100, 500, 1500, 2000, 3190. Verify correct band assignment (SHORT, GOOD, MARGINAL, OPEN) at each threshold. |
 | T-U11 | Continuity hysteresis | Feed voltage sequence oscillating near each threshold boundary. Verify no spurious band transitions within the hysteresis band. |
 | T-U12 | Continuity bands encoding | Verify 2-bit-per-channel packing into uint16: ch1 in bits 1:0 through ch8 in bits 15:14. Verify extraction for all band combinations. Verify that enum values (CONT_OPEN=0, CONT_GOOD=1, CONT_MARGINAL=2, CONT_SHORT=3) match wire encoding directly (00=OPEN, 01=GOOD, 10=MARGINAL, 11=SHORT) with no mapping required. |
 | T-U13 | Struct field offset verification | Verify `offsetof()` for all packed message structs matches expected byte offsets from §6.3.3. Specifically: `rlc_payload_cmd_arm_t.integrity_crc` at offset 0, `.channel` at offset 4. Same for cmd_disarm_t and cmd_fire_t. Verify with both `#pragma pack` and `__attribute__((packed))`. |
@@ -2338,24 +2235,24 @@ _Static_assert(sizeof(rlc_payload_cmd_nack_t) == 6, "CMD_NACK size mismatch");
 | IDLE | CMD_ARM(ch) | All §7.2.2 guards (incl. relay feedback) | ARMED | Close low-side relay, record channel, siren pulse, ACK(ch), STATUS_UPDATE |
 | IDLE | CMD_ARM(ch) | Any guard fails | IDLE | NACK with reason |
 | IDLE | CMD_FIRE(ch) | — | IDLE | NACK reason 0x05 (wrong state) |
-| IDLE | CMD_DISARM | — | IDLE | ACK (idempotent, already safe) |
 | IDLE | CMD_CEASE_FIRE | — | IDLE | ACK (idempotent) |
-| ARMED | CMD_FIRE(ch) | ch == armed_ch, CRC OK, arm switch ARMED | PRE_FIRE | Siren continuous, start pre-fire timer, cancel arm timeout, ACK, STATUS_UPDATE |
+| ARMED | CMD_FIRE(ch) | ch == armed_ch, CRC OK, continuity not OPEN, arm switch ARMED | PRE_FIRE | Siren continuous, start pre-fire timer, ACK, STATUS_UPDATE |
 | ARMED | CMD_FIRE(ch) | ch != armed_ch | ARMED | NACK reason 0x05 |
 | ARMED | CMD_ARM(ch2) | ch2 != armed_ch | ARMED | NACK reason 0x0A |
 | ARMED | CMD_DISARM | — | IDLE | relay_all_safe(), siren off, ACK, STATUS_UPDATE |
 | ARMED | Arm switch → DISARM | — | IDLE | relay_all_safe(), siren off, STATUS_UPDATE |
-| ARMED | Arm timeout (10s) | — | IDLE | relay_all_safe(), siren off, STATUS_UPDATE |
+| ARMED | Continuity → OPEN on armed ch | — | IDLE | relay_all_safe(), siren off, STATUS_UPDATE, set ERR flag |
+| ARMED | Continuity band change on other ch | — | ARMED | Update continuity_bands, STATUS_UPDATE (not a safety issue) |
 | ARMED | Link lost | — | LINK_LOST | relay_all_safe(), siren link-lost pattern |
 | ARMED | VBAT < critical | — | ERROR | relay_all_safe(), siren off |
-| PRE_FIRE | Timer elapsed | CMD_FIRE in last 500 ms AND last PONG within (HEARTBEAT_INTERVAL_MS + HEARTBEAT_TIMEOUT_MS) AND arm switch ARMED AND ERR_COMM_DEGRADED not set | FIRING | Channel relay active, start fire pulse timer, STATUS_UPDATE |
+| PRE_FIRE | Timer elapsed | CMD_FIRE in last 500 ms AND last PONG within HEARTBEAT_TIMEOUT_MS AND arm switch ARMED | FIRING | Channel relay active, start fire pulse timer, STATUS_UPDATE |
 | PRE_FIRE | Timer elapsed | No CMD_FIRE in last 500 ms | IDLE | relay_all_safe(), siren off, STATUS_UPDATE (dead-man abort) |
-| PRE_FIRE | Timer elapsed | ERR_COMM_DEGRADED set | IDLE | relay_all_safe(), siren off, STATUS_UPDATE (link quality abort) |
 | PRE_FIRE | CMD_CEASE_FIRE | — | IDLE | relay_all_safe(), siren off, ACK, STATUS_UPDATE |
 | PRE_FIRE | Arm switch → DISARM | — | IDLE | relay_all_safe(), siren off, STATUS_UPDATE |
+| PRE_FIRE | Continuity → OPEN (armed ch) | — | IDLE | relay_all_safe(), siren off, STATUS_UPDATE, ERR flag |
 | PRE_FIRE | Link lost | — | LINK_LOST | relay_all_safe(), siren link-lost pattern |
 | PRE_FIRE | VBAT < critical | — | ERROR | relay_all_safe(), siren off |
-| FIRING | Fire pulse timer elapsed | — | POST_FIRE | relay_all_safe(), siren off, STATUS_UPDATE (relay control in task context) |
+| FIRING | Fire pulse timer elapsed | — | POST_FIRE | Channel relay inactive, low-side inactive, siren off, STATUS_UPDATE |
 | FIRING | CMD_CEASE_FIRE | — | IDLE | relay_all_safe(), siren off, ACK, STATUS_UPDATE |
 | FIRING | Arm switch → DISARM | — | IDLE | relay_all_safe(), siren off, STATUS_UPDATE |
 | FIRING | Link lost | — | *(special)* | Complete fire pulse → POST_FIRE → LINK_LOST |
@@ -2364,7 +2261,7 @@ _Static_assert(sizeof(rlc_payload_cmd_nack_t) == 6, "CMD_NACK size mismatch");
 | POST_FIRE | Cooldown elapsed | — | IDLE | — |
 | POST_FIRE | CMD_ARM | — | POST_FIRE | NACK reason 0x05 |
 | POST_FIRE | Link lost | — | LINK_LOST | Relays already safe |
-| LINK_LOST | Valid PING received | — | IDLE | Respond PONG, resume heartbeat, silence siren immediately |
+| LINK_LOST | Valid PING received | — | IDLE | Respond PONG, resume heartbeat |
 | ANY | Assertion failure | — | ERROR | relay_all_safe() |
 
 ### B.2 Remote Unit State Transitions
@@ -2374,7 +2271,7 @@ _Static_assert(sizeof(rlc_payload_cmd_nack_t) == 6, "CMD_NACK size mismatch");
 | BOOT | Init + peer reg OK | — | LINKING | Start LINK_REQUEST, splash |
 | LINKING | LINK_ACK | Version match | IDLE | Store token, reset seq, heartbeat, display |
 | LINKING | LINK_ACK | Version mismatch | LINKING | "FIRMWARE MISMATCH", stop |
-| IDLE | Encoder press (500ms hold) | Arm ON, batt OK, data fresh, link OK, not degraded | *(wait ACK)* | CMD_ARM, wait ACK |
+| IDLE | Encoder press | Arm ON, batt OK, data fresh, link OK | *(wait ACK)* | CMD_ARM, wait ACK |
 | IDLE | ACK'd (ch match) | — | ARMED | Display, buzzer double |
 | IDLE | ACK'd (ch mismatch) | — | IDLE | "CHANNEL MISMATCH", CMD_DISARM |
 | IDLE | NACK'd | — | IDLE | Display reason 3s, buzzer triple |
@@ -2393,6 +2290,7 @@ _Static_assert(sizeof(rlc_payload_cmd_nack_t) == 6, "CMD_NACK size mismatch");
 | ARMED | Encoder press | — | IDLE | CMD_DISARM |
 | ARMED | Encoder rotate | — | IDLE | CMD_DISARM, update channel |
 | ARMED | STATUS: base disarmed | — | IDLE | Buzzer long |
+| ARMED | STATUS: continuity → OPEN | — | IDLE | Buzzer CONTINUITY_LOST |
 | ARMED | Stale data (5s) | — | IDLE | CMD_DISARM, "STALE DATA" |
 | ARMED | Link lost | — | LINK_LOST | Alarm |
 | PRE_FIRE | Local countdown elapsed | — | FIRING | Display "IGNITION ACTIVE" |
@@ -2438,19 +2336,19 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels + relay feedback. All 
 | Relay feedback input | 38 | Digital input, pull-up (safety verification) |
 | Arm/disarm switch input | 39 | Digital input, pull-up |
 | Siren output | 40 | Digital output |
-| Continuity enable MOSFET | 41 | Digital output, active LOW — shared MOSFET switch for all 8 continuity circuits |
 | RGB LED (status) | 47 | WS2812 via RMT (on-board, fixed) |
 
-**Total: 23 GPIOs + 1 on-board LED = 24 pins used. 1 spare GPIO (42). GPIO 3 deliberately unused (strapping pin).**
+**Total: 22 GPIOs + 1 on-board LED = 23 pins used. 2 spare GPIOs (41, 42). GPIO 3 deliberately unused (strapping pin).**
 
 **Notes:**
 - GPIO 1–9 plus GPIO 10 are allocated to ADC1 (1 battery + 8 continuity). All 10 ADC1 pins are used; no spare ADC1 pins remain.
 - GPIO 3 is a strapping pin (JTAG signal select) and is deliberately not used. Channel 2 continuity is assigned to GPIO 10 (ADC1_CH9) instead.
 - Continuity inputs use ADC1 GPIOs (2, 10, 4–9) for analogue band classification. Each requires an external 3.3 kΩ series resistor (fusible type) and 100 kΩ pull-down resistor (16 resistors total), plus one P-channel MOSFET switch per channel on the 3.3V supply (see §5.4.2).
+- Continuity inputs moved from digital GPIOs (11–14, 21, 38–40) to ADC1 GPIOs (2–9) for analogue band classification. Each requires an external 3.3 kΩ series resistor and 100 kΩ pull-down resistor (16 resistors total).
 - Relay outputs moved to GPIO 11–18 (previously used by continuity). These are digital outputs and do not require ADC.
 - ADC2 (GPIO 11–20) is unreliable with ESP-NOW active, but GPIO 11–18 are used as digital outputs only — ADC2 conflict does not apply to digital I/O.
 - GPIO 47 has the on-board WS2812 RGB LED — no external wiring needed.
-- Spare GPIO 42 available for future expansion. GPIO 41 allocated to continuity enable MOSFET.
+- Spare GPIOs 41, 42 available for future expansion.
 
 ### C.2 Remote Unit Pin Assignment
 
@@ -2468,7 +2366,7 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels + relay feedback. All 
 | Display CS | 10 | Chip select |
 | Display DC | 13 | Data/command |
 | Display RST | 14 | Reset |
-| Display backlight | 21 | Digital output, always HIGH (100% brightness) |
+| Display backlight | 21 | PWM capable |
 | Display MISO | 9 | SPI2 MISO |
 | RGB LED (status) | 47 | WS2812 via RMT (on-board, fixed) |
 
@@ -2495,7 +2393,7 @@ This appendix provides a comprehensive reference of all protocol exceptions and 
 | LINK_ACK from unknown MAC | Different base responds | Remote silently ignores (only accepts configured MAC). |
 | LINK_REQUEST from unknown MAC | Rogue remote | Base silently ignores (only accepts configured MAC). |
 | Firmware version mismatch | Different code versions | Remote displays "FIRMWARE MISMATCH" with both versions. Stops retrying. Requires power cycle and reflash. |
-| LINK_REQUEST while already linked (same MAC) | Remote rebooted | If base is in IDLE or LINK_LOST: base generates new session token, responds normally (session reset). Not an error. **If base is in ARMED, PRE_FIRE, FIRING, or POST_FIRE: LINK_REQUEST is silently ignored.** Session reset during safety-critical or cooldown states is blocked to prevent disruption. The remote's retry mechanism will deliver a subsequent request after the base returns to IDLE. |
+| LINK_REQUEST while already linked (same MAC) | Remote rebooted | If base is in IDLE, POST_FIRE (after cooldown), or LINK_LOST: base generates new session token, responds normally (session reset). Not an error. **If base is in ARMED, PRE_FIRE, or FIRING: LINK_REQUEST is silently ignored.** Session reset during safety-critical states is blocked to prevent disruption of active operations. |
 | Duplicate LINK_ACK received | Network duplicate | Remote ignores if already in IDLE. If token differs, accept new token (session reset). |
 
 ### D.2 Heartbeat Exceptions
@@ -2530,10 +2428,10 @@ This appendix provides a comprehensive reference of all protocol exceptions and 
 |---|---|---|
 | No STATUS_UPDATE for 5000 ms | Link degraded or base stuck | Remote: display "STALE DATA". If ARMED: send CMD_DISARM → IDLE. If IDLE: warning only. |
 | STATUS_UPDATE shows unexpected state | State desync | Remote syncs to base state. Base is authoritative. |
-| STATUS_UPDATE shows continuity → OPEN (armed ch) | Igniter disconnected | Continuity sensing is disabled during ARMED/PRE_FIRE/FIRING states (stale data). No disarm triggered. If base returns to IDLE and resumes sensing, live data updates normally. |
+| STATUS_UPDATE shows continuity → OPEN (armed ch) | Igniter disconnected | Remote follows base (base will have already disarmed). |
 | STATUS_UPDATE shows continuity SHORT or MARGINAL | Connection quality change | Remote updates display indicators. Informational only — does not trigger disarm. |
 | STATUS_UPDATE shows base in ERROR | Base fault | Remote displays "BASE ERROR". Refuses ARM commands. |
 
 ---
 
-*End of Functional Specification — RLC-FSPEC-001 v1.8*
+*End of Functional Specification — RLC-FSPEC-001 v1.6*
