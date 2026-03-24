@@ -116,7 +116,7 @@ void hw_rgb_led_init(void)
     rmt_tx_channel_config_t tx_cfg = {
         .gpio_num            = PIN_RGB_LED,
         .clk_src             = RMT_CLK_SRC_DEFAULT,
-        .resolution_hz       = 10 * 1000 * 1000, /* 10 MHz → 100 ns per tick */
+        .resolution_hz       = 10 * 1000 * 1000, /* 10 MHz -> 100 ns per tick */
         .mem_block_symbols   = 64,
         .trans_queue_depth   = 4,
     };
@@ -155,36 +155,67 @@ void led_set_brightness(uint8_t brightness)
 
 void led_test(void)
 {
-    /* FSD §11.1 status patterns — 2 s each */
-    printf("Blue pulse (DISARMED)...\r\n");
-    for (int i = 0; i < 4; i++) {
-        led_set(0, 0, 255);
-        vTaskDelay(pdMS_TO_TICKS(250));
-        led_off();
-        vTaskDelay(pdMS_TO_TICKS(250));
+    /* FSD v1.10 §11.1 — all base unit status patterns, 2s each */
+
+    printf("BOOT: Blue slow pulse (2s cycle)...\r\n");
+    for (int cycle = 0; cycle < 2; cycle++) {
+        /* Fade in */
+        for (int i = 0; i <= 255; i += 5) {
+            led_set(0, 0, (uint8_t)i);
+            vTaskDelay(pdMS_TO_TICKS(4));
+        }
+        /* Fade out */
+        for (int i = 255; i >= 0; i -= 5) {
+            led_set(0, 0, (uint8_t)i);
+            vTaskDelay(pdMS_TO_TICKS(4));
+        }
     }
 
-    printf("Green solid (LINK_OK)...\r\n");
+    printf("IDLE (arm OFF): Green solid...\r\n");
     led_set(0, 255, 0);
     vTaskDelay(pdMS_TO_TICKS(2000));
 
-    printf("Red blink (ARMED)...\r\n");
+    printf("IDLE (arm ON): Green fast blink (250ms)...\r\n");
     for (int i = 0; i < 4; i++) {
+        led_set(0, 255, 0);
+        vTaskDelay(pdMS_TO_TICKS(250));
+        led_off();
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+
+    printf("ARMED: Red slow blink (500ms)...\r\n");
+    for (int i = 0; i < 2; i++) {
         led_set(255, 0, 0);
-        vTaskDelay(pdMS_TO_TICKS(250));
+        vTaskDelay(pdMS_TO_TICKS(500));
         led_off();
-        vTaskDelay(pdMS_TO_TICKS(250));
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 
-    printf("Yellow blink (LINK_LOST)...\r\n");
-    for (int i = 0; i < 4; i++) {
-        led_set(255, 255, 0);
-        vTaskDelay(pdMS_TO_TICKS(250));
+    printf("PRE_FIRE: Red fast blink (100ms)...\r\n");
+    for (int i = 0; i < 10; i++) {
+        led_set(255, 0, 0);
+        vTaskDelay(pdMS_TO_TICKS(100));
         led_off();
-        vTaskDelay(pdMS_TO_TICKS(250));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    printf("Red triple flash (ERROR)...\r\n");
+    printf("FIRING: Red solid...\r\n");
+    led_set(255, 0, 0);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    printf("POST_FIRE: Yellow solid...\r\n");
+    led_set(255, 180, 0);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    printf("LINK_LOST: Yellow fast blink (200ms)...\r\n");
+    for (int i = 0; i < 5; i++) {
+        led_set(255, 180, 0);
+        vTaskDelay(pdMS_TO_TICKS(200));
+        led_off();
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    printf("ERROR: Red triple flash (100on/100off x3, 700off)...\r\n");
     for (int rep = 0; rep < 2; rep++) {
         for (int i = 0; i < 3; i++) {
             led_set(255, 0, 0);
@@ -192,7 +223,7 @@ void led_test(void)
             led_off();
             vTaskDelay(pdMS_TO_TICKS(100));
         }
-        vTaskDelay(pdMS_TO_TICKS(600));
+        vTaskDelay(pdMS_TO_TICKS(700));
     }
 
     led_off();

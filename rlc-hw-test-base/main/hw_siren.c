@@ -18,7 +18,7 @@ void hw_siren_init(void)
     };
     gpio_config(&cfg);
     gpio_set_level(PIN_SIREN, PIN_SIREN_ACTIVE ? 0 : 1);  /* inactive */
-    ESP_LOGI(TAG, "Siren GPIO initialised");
+    ESP_LOGI(TAG, "Siren GPIO initialised (via ULN2003A IC2)");
 }
 
 void siren_set(int active)
@@ -40,7 +40,7 @@ void siren_pulse(uint32_t on_ms, uint32_t off_ms, int count)
 
 void siren_test(void)
 {
-    printf("ARMED pattern: 500/500 × 3\r\n");
+    printf("ARMED pattern: 500/500 x 3\r\n");
     siren_pulse(500, 500, 3);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
@@ -50,10 +50,22 @@ void siren_test(void)
     siren_set(0);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    printf("LINK_LOST pattern: 500/500 × 4\r\n");
+    printf("FIRING pattern: continuous 2s\r\n");
+    siren_set(1);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    siren_set(0);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    printf("LINK_LOST pattern: 500/500 x 4\r\n");
     siren_pulse(500, 500, 4);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    printf("ERROR pattern: 200/200 × 3\r\n");
+    printf("ERROR pattern: 200/200 x 3\r\n");
     siren_pulse(200, 200, 3);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    printf("CONTINUITY_LOST pattern: 200/200 x 3\r\n");
+    siren_pulse(200, 200, 3);
+
+    printf("Siren test complete.\r\n");
 }

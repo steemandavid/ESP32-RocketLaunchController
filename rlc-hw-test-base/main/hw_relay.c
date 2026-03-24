@@ -32,12 +32,12 @@ static void gpio_out_init(int pin, int inactive_level)
 
 void hw_relay_init(void)
 {
-    /* Drive all outputs inactive before configuring anything else */
+    /* Drive all SPDT relay outputs inactive (de-energised / NC position)
+     * before configuring anything else — FSD §9.7 boot safety. */
     for (int i = 0; i < 8; i++) {
         gpio_out_init(s_relay_pins[i], !s_relay_active[i]);
     }
-    gpio_out_init(PIN_LOWSIDE_RELAY, !PIN_LOWSIDE_ACTIVE);
-    ESP_LOGI(TAG, "Relay GPIOs initialised — all inactive");
+    ESP_LOGI(TAG, "SPDT relay GPIOs initialised — all de-energised (NC)");
 }
 
 void relay_set(int ch, int active)
@@ -55,16 +55,10 @@ void relay_all_off(void)
     }
 }
 
-void lowside_set(int active)
-{
-    gpio_set_level(PIN_LOWSIDE_RELAY, active ? PIN_LOWSIDE_ACTIVE : !PIN_LOWSIDE_ACTIVE);
-}
-
 void relay_all_safe(void)
 {
     relay_all_off();
-    lowside_set(0);
-    ESP_LOGI(TAG, "relay_all_safe() called — all outputs inactive");
+    ESP_LOGI(TAG, "relay_all_safe() — all SPDT relays de-energised (NC)");
 }
 
 void relay_sweep(void)
@@ -74,9 +68,4 @@ void relay_sweep(void)
         vTaskDelay(pdMS_TO_TICKS(500));
         relay_set(ch, 0);
     }
-}
-
-int relay_feedback_read(void)
-{
-    return gpio_get_level(PIN_RELAY_FEEDBACK);
 }

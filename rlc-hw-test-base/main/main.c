@@ -16,21 +16,21 @@ static const char *TAG = "main";
 void app_main(void)
 {
     /* ---------------------------------------------------------------
-     * Boot safety: drive all relay outputs inactive FIRST.
+     * Boot safety: drive all SPDT relay outputs inactive FIRST.
      * Matches FSD §9.7 boot safety requirement.
      * --------------------------------------------------------------- */
-    ESP_LOGI(TAG, "GPIO init — driving all relay outputs inactive");
-    hw_relay_init();   /* relay GPIOs + low-side, all inactive */
+    ESP_LOGI(TAG, "GPIO init — driving all SPDT relay outputs inactive (NC)");
+    hw_relay_init();   /* all 8 channel SPDT relays de-energised */
 
     /* Siren inactive */
     hw_siren_init();
 
-    /* Continuity MOSFET disabled */
+    /* ADC init — battery creates shared ADC1 unit, continuity shares it */
     ESP_LOGI(TAG, "ADC init");
-    hw_battery_init();    /* creates shared ADC1 unit + calibration */
-    hw_continuity_init(); /* configures continuity channels on shared ADC1 */
+    hw_battery_init();
+    hw_continuity_init();
 
-    /* Digital inputs */
+    /* Digital inputs — arm switch sense (GPIO 21) */
     hw_inputs_init();
 
     /* RGB LED */

@@ -9,38 +9,34 @@ static const char *TAG = "hw_inputs";
 
 void hw_inputs_init(void)
 {
+    /* Arm switch sense input — GPIO 21 (§5.4.3)
+     * External circuit: 10 kΩ series + 3.3V zener clamp + 100 kΩ pull-down.
+     * No internal pull needed — external 100 kΩ pull-down handles it. */
     gpio_config_t cfg = {
-        .pin_bit_mask = (1ULL << PIN_ARM_SWITCH) | (1ULL << PIN_RELAY_FEEDBACK),
+        .pin_bit_mask = (1ULL << PIN_ARM_SENSE),
         .mode         = GPIO_MODE_INPUT,
-        .pull_up_en   = GPIO_PULLUP_ENABLE,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type    = GPIO_INTR_DISABLE,
     };
     gpio_config(&cfg);
-    ESP_LOGI(TAG, "Input GPIOs initialised (arm switch, relay feedback)");
+    ESP_LOGI(TAG, "Input GPIOs initialised (arm switch sense on GPIO %d)", PIN_ARM_SENSE);
 }
 
-int arm_switch_read_raw(void)
+int arm_sense_read_raw(void)
 {
-    return gpio_get_level(PIN_ARM_SWITCH);
+    return gpio_get_level(PIN_ARM_SENSE);
 }
 
 /* Simple 3-sample debounce — reads three times 5 ms apart */
-int arm_switch_read_debounced(void)
+int arm_sense_read_debounced(void)
 {
-    int s0 = gpio_get_level(PIN_ARM_SWITCH);
+    int s0 = gpio_get_level(PIN_ARM_SENSE);
     vTaskDelay(pdMS_TO_TICKS(5));
-    int s1 = gpio_get_level(PIN_ARM_SWITCH);
+    int s1 = gpio_get_level(PIN_ARM_SENSE);
     vTaskDelay(pdMS_TO_TICKS(5));
-    int s2 = gpio_get_level(PIN_ARM_SWITCH);
+    int s2 = gpio_get_level(PIN_ARM_SENSE);
 
-    /* Majority vote */
-    int level = (s0 + s1 + s2) >= 2 ? 1 : 0;
-    /* Armed = switch active = GPIO LOW (pull-up, switch pulls to GND) */
-    return (level == 0) ? 1 : 0;
-}
-
-int feedback_read_raw(void)
-{
-    return gpio_get_level(PIN_RELAY_FEEDBACK);
+    /* Majority vote — HIGH = armed (VBAT present on fire path) */
+    return (s0 + s1 + s2) >= 2 ? 1 : 0;
 }

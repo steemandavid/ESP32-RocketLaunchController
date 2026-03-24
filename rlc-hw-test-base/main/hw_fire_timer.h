@@ -1,8 +1,8 @@
 #pragma once
 #include <stdint.h>
 
-/* fire_pulse() closes low-side relay, activates channel relay for duration_ms
- * using a hardware timer ISR → xTaskNotifyFromISR() → task deactivates relays.
+/* fire_pulse() energises the channel SPDT relay (NC→NO) for duration_ms
+ * using a hardware timer ISR → xTaskNotifyFromISR() → task deactivates relay.
  * If safe_after is non-zero, relay_all_safe() is called after expiry.
  * Returns actual elapsed ms measured by esp_timer_get_time(). */
 void hw_fire_timer_init(void);

@@ -93,27 +93,23 @@ static void cmd_help(void)
         "General:\r\n"
         "  help                         This message\r\n"
         "  status                       Full system status\r\n"
-        "  safe                         Deactivate all relays immediately\r\n"
+        "  safe                         De-energise all SPDT relays immediately\r\n"
         "  pins                         Print pin assignments\r\n"
-        "\r\nRelay:\r\n"
-        "  relay <ch> on|off            Activate/deactivate channel relay (1-8)\r\n"
-        "  relay all off                Deactivate all 8 channel relays\r\n"
-        "  lowside on|off               Close/open low-side relay\r\n"
+        "\r\nRelay (SPDT, via ULN2003A):\r\n"
+        "  relay <ch> on|off            Energise/de-energise channel relay (1-8)\r\n"
+        "  relay all off                De-energise all 8 channel relays\r\n"
         "  relay sweep                  Sweep all 8 channels (500 ms each)\r\n"
-        "  relay feedback               Read relay feedback GPIO\r\n"
-        "\r\nContinuity:\r\n"
+        "\r\nContinuity (always-on via SPDT NC contact):\r\n"
         "  cont <ch>                    Read continuity channel (1-8)\r\n"
         "  cont all                     Read all 8 channels\r\n"
         "  cont <ch> raw [N]            Take N raw samples (default 64)\r\n"
-        "  cont mosfet on|off           Enable/disable continuity MOSFET\r\n"
         "  cont monitor                 Continuously monitor all channels (any key stops)\r\n"
         "\r\nBattery:\r\n"
         "  batt                         Read battery voltage\r\n"
         "  batt raw [N]                 Take N raw samples (default 8)\r\n"
         "\r\nInputs:\r\n"
-        "  arm                          Poll arm switch until key press\r\n"
-        "  feedback                     Read relay feedback\r\n"
-        "\r\nSiren:\r\n"
+        "  arm                          Poll arm switch sense until key press\r\n"
+        "\r\nSiren (via ULN2003A IC2):\r\n"
         "  siren on|off                 Activate/deactivate siren\r\n"
         "  siren pulse <on> <off> <N>   Pulse N times\r\n"
         "  siren test                   Run all siren patterns\r\n"
@@ -123,8 +119,8 @@ static void cmd_help(void)
         "  led test                     Cycle all status patterns\r\n"
         "  led brightness <0-255>       Set brightness\r\n"
         "\r\nFire:\r\n"
-        "  fire <ch> <ms>               Fire channel for duration_ms, then safe\r\n"
-        "  fire <ch> <ms> nosafe        Fire channel, leave relays after\r\n"
+        "  fire <ch> <ms>               Energise channel SPDT relay for duration_ms, then safe\r\n"
+        "  fire <ch> <ms> nosafe        Energise channel, leave relay after\r\n"
     );
 }
 
@@ -132,12 +128,10 @@ static void cmd_status(void)
 {
     uart_puts("=== System Status ===\r\n");
 
-    /* Relay feedback + arm switch */
-    int fb  = relay_feedback_read();
-    int arm = arm_switch_read_debounced();
-    printf("Arm switch : %s (GPIO raw=%d)\r\n", arm ? "ARMED" : "DISARMED",
-           arm_switch_read_raw());
-    printf("Rel. feedback: %s (GPIO raw=%d)\r\n", fb ? "SAFE" : "FAULT", fb);
+    /* Arm switch sense */
+    int armed = arm_sense_read_debounced();
+    printf("Arm sense  : %s (GPIO raw=%d)\r\n", armed ? "ARMED" : "DISARMED",
+           arm_sense_read_raw());
 
     /* Battery */
     batt_reading_t batt = batt_read();
@@ -148,56 +142,48 @@ static void cmd_status(void)
     uart_puts("Continuity :\r\n");
     for (int ch = 1; ch <= 8; ch++) {
         cont_reading_t c = cont_read(ch);
-        printf("  CH%d: raw=%d  %"PRId32" µV  %s\r\n",
+        printf("  CH%d: raw=%d  %"PRId32" uV  %s\r\n",
                ch, c.raw, c.uv, cont_band_str(c.band));
     }
 }
 
 static void cmd_pins(void)
 {
-    uart_puts("=== Pin Assignments ===\r\n");
+    uart_puts("=== Pin Assignments (FSD v1.10) ===\r\n");
     printf("Batt ADC        : GPIO %d\r\n", PIN_BATT_ADC);
+    int cont_pins[] = { PIN_CONT_CH1_ADC, PIN_CONT_CH2_ADC, PIN_CONT_CH3_ADC,
+                        PIN_CONT_CH4_ADC, PIN_CONT_CH5_ADC, PIN_CONT_CH6_ADC,
+                        PIN_CONT_CH7_ADC, PIN_CONT_CH8_ADC };
     for (int i = 0; i < 8; i++) {
-        int pins[] = { PIN_CONT_CH1_ADC, PIN_CONT_CH2_ADC, PIN_CONT_CH3_ADC,
-                       PIN_CONT_CH4_ADC, PIN_CONT_CH5_ADC, PIN_CONT_CH6_ADC,
-                       PIN_CONT_CH7_ADC, PIN_CONT_CH8_ADC };
-        printf("Cont CH%d ADC    : GPIO %d\r\n", i + 1, pins[i]);
+        printf("Cont CH%d ADC    : GPIO %d\r\n", i + 1, cont_pins[i]);
     }
     int relays[] = { PIN_RELAY_CH1, PIN_RELAY_CH2, PIN_RELAY_CH3, PIN_RELAY_CH4,
                      PIN_RELAY_CH5, PIN_RELAY_CH6, PIN_RELAY_CH7, PIN_RELAY_CH8 };
     for (int i = 0; i < 8; i++) {
-        printf("Relay CH%d       : GPIO %d\r\n", i + 1, relays[i]);
+        printf("SPDT relay CH%d  : GPIO %d  (active HIGH via ULN2003A)\r\n", i + 1, relays[i]);
     }
-    printf("Low-side relay  : GPIO %d\r\n", PIN_LOWSIDE_RELAY);
-    printf("Relay feedback  : GPIO %d  level=%d\r\n",
-           PIN_RELAY_FEEDBACK, gpio_get_level(PIN_RELAY_FEEDBACK));
-    printf("Arm switch      : GPIO %d  level=%d\r\n",
-           PIN_ARM_SWITCH, gpio_get_level(PIN_ARM_SWITCH));
-    printf("Siren           : GPIO %d\r\n", PIN_SIREN);
-    printf("Cont MOSFET     : GPIO %d  (active %s)\r\n",
-           PIN_CONT_MOSFET, PIN_CONT_MOSFET_ACTIVE ? "HIGH" : "LOW");
+    printf("Arm switch sense: GPIO %d  level=%d  (%s)\r\n",
+           PIN_ARM_SENSE, gpio_get_level(PIN_ARM_SENSE),
+           gpio_get_level(PIN_ARM_SENSE) ? "ARMED" : "DISARMED");
+    printf("Siren           : GPIO %d  (via ULN2003A IC2)\r\n", PIN_SIREN);
     printf("RGB LED         : GPIO %d\r\n", PIN_RGB_LED);
+    printf("Spare GPIOs     : 38, 39, 41, 42, 48\r\n");
 }
 
 static void cmd_relay(char *toks[], int ntok)
 {
-    if (ntok < 2) { uart_puts("Usage: relay <ch> on|off  |  relay all off  |  relay sweep  |  relay feedback\r\n"); return; }
+    if (ntok < 2) { uart_puts("Usage: relay <ch> on|off  |  relay all off  |  relay sweep\r\n"); return; }
 
     if (strcmp(toks[1], "sweep") == 0) {
-        uart_puts("Relay sweep: 8 channels × 500 ms\r\n");
+        uart_puts("Relay sweep: 8 SPDT channels x 500 ms\r\n");
         relay_sweep();
         uart_puts("Sweep complete.\r\n");
-        return;
-    }
-    if (strcmp(toks[1], "feedback") == 0) {
-        int lvl = relay_feedback_read();
-        printf("Relay feedback: GPIO=%d  %s\r\n", lvl, lvl ? "SAFE" : "FAULT");
         return;
     }
     if (strcmp(toks[1], "all") == 0) {
         if (ntok >= 3 && strcmp(toks[2], "off") == 0) {
             relay_all_off();
-            uart_puts("All channel relays deactivated.\r\n");
+            uart_puts("All SPDT relays de-energised.\r\n");
         } else {
             uart_puts("Unknown relay all subcommand.\r\n");
         }
@@ -205,29 +191,15 @@ static void cmd_relay(char *toks[], int ntok)
     }
 
     int ch = atoi(toks[1]);
-    if (ch < 1 || ch > 8) { uart_puts("Channel must be 1–8.\r\n"); return; }
+    if (ch < 1 || ch > 8) { uart_puts("Channel must be 1-8.\r\n"); return; }
     if (ntok < 3) { uart_puts("Usage: relay <ch> on|off\r\n"); return; }
 
     if (strcmp(toks[2], "on") == 0) {
         relay_set(ch, 1);
-        printf("Relay CH%d ON\r\n", ch);
+        printf("SPDT relay CH%d energised (NC->NO)\r\n", ch);
     } else if (strcmp(toks[2], "off") == 0) {
         relay_set(ch, 0);
-        printf("Relay CH%d OFF\r\n", ch);
-    } else {
-        uart_puts("Expected 'on' or 'off'.\r\n");
-    }
-}
-
-static void cmd_lowside(char *toks[], int ntok)
-{
-    if (ntok < 2) { uart_puts("Usage: lowside on|off\r\n"); return; }
-    if (strcmp(toks[1], "on") == 0) {
-        lowside_set(1);
-        uart_puts("Low-side relay ON\r\n");
-    } else if (strcmp(toks[1], "off") == 0) {
-        lowside_set(0);
-        uart_puts("Low-side relay OFF\r\n");
+        printf("SPDT relay CH%d de-energised (->NC)\r\n", ch);
     } else {
         uart_puts("Expected 'on' or 'off'.\r\n");
     }
@@ -235,19 +207,7 @@ static void cmd_lowside(char *toks[], int ntok)
 
 static void cmd_cont(char *toks[], int ntok)
 {
-    if (ntok < 2) { uart_puts("Usage: cont <ch|all|mosfet|monitor>\r\n"); return; }
-
-    if (strcmp(toks[1], "mosfet") == 0) {
-        if (ntok < 3) { uart_puts("Usage: cont mosfet on|off\r\n"); return; }
-        if (strcmp(toks[2], "on") == 0) {
-            cont_mosfet_set(1);
-            uart_puts("Continuity MOSFET ON (circuit powered)\r\n");
-        } else {
-            cont_mosfet_set(0);
-            uart_puts("Continuity MOSFET OFF (circuit de-energised)\r\n");
-        }
-        return;
-    }
+    if (ntok < 2) { uart_puts("Usage: cont <ch|all|monitor>\r\n"); return; }
 
     if (strcmp(toks[1], "monitor") == 0) {
         uart_puts("Monitoring all channels — press any key to stop.\r\n");
@@ -258,7 +218,7 @@ static void cmd_cont(char *toks[], int ntok)
             for (int ch = 1; ch <= 8; ch++) {
                 cont_reading_t r = cont_read(ch);
                 if (r.band != prev[ch - 1]) {
-                    printf("CH%d: %s → %s  (%"PRId32" µV)\r\n",
+                    printf("CH%d: %s -> %s  (%"PRId32" uV)\r\n",
                            ch, cont_band_str(prev[ch - 1]),
                            cont_band_str(r.band), r.uv);
                     prev[ch - 1] = r.band;
@@ -273,14 +233,14 @@ static void cmd_cont(char *toks[], int ntok)
     if (strcmp(toks[1], "all") == 0) {
         for (int ch = 1; ch <= 8; ch++) {
             cont_reading_t r = cont_read(ch);
-            printf("CH%d: raw=%d  %"PRId32" µV  %s\r\n",
+            printf("CH%d: raw=%d  %"PRId32" uV  %s\r\n",
                    ch, r.raw, r.uv, cont_band_str(r.band));
         }
         return;
     }
 
     int ch = atoi(toks[1]);
-    if (ch < 1 || ch > 8) { uart_puts("Channel must be 1–8.\r\n"); return; }
+    if (ch < 1 || ch > 8) { uart_puts("Channel must be 1-8.\r\n"); return; }
 
     /* cont <ch> raw [N] */
     if (ntok >= 3 && strcmp(toks[2], "raw") == 0) {
@@ -294,7 +254,7 @@ static void cmd_cont(char *toks[], int ntok)
     }
 
     cont_reading_t r = cont_read(ch);
-    printf("CH%d: raw=%d  %"PRId32" µV  %s\r\n",
+    printf("CH%d: raw=%d  %"PRId32" uV  %s\r\n",
            ch, r.raw, r.uv, cont_band_str(r.band));
 }
 
@@ -316,25 +276,20 @@ static void cmd_batt(char *toks[], int ntok)
 
 static void cmd_arm(void)
 {
-    uart_puts("Polling arm switch — press any key to stop.\r\n");
+    uart_puts("Polling arm switch sense (GPIO 21) — press any key to stop.\r\n");
+    uart_puts("HIGH = ARMED (VBAT on fire path), LOW = DISARMED\r\n");
     uint8_t dummy;
     int last = -1;
     while (uart_read_bytes(UART_NUM, &dummy, 1, 0) <= 0) {
-        int armed = arm_switch_read_debounced();
-        int raw   = arm_switch_read_raw();
+        int armed = arm_sense_read_debounced();
+        int raw   = arm_sense_read_raw();
         if (armed != last) {
-            printf("Arm switch: raw=%d  %s\r\n", raw, armed ? "ARMED" : "DISARMED");
+            printf("Arm sense: raw=%d  %s\r\n", raw, armed ? "ARMED" : "DISARMED");
             last = armed;
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }
     uart_puts("Stopped.\r\n");
-}
-
-static void cmd_feedback(void)
-{
-    int lvl = feedback_read_raw();
-    printf("Relay feedback: GPIO=%d  %s\r\n", lvl, lvl ? "SAFE (no current)" : "FAULT (current detected)");
 }
 
 static void cmd_siren(char *toks[], int ntok)
@@ -355,7 +310,7 @@ static void cmd_siren(char *toks[], int ntok)
         uint32_t on_ms  = atoi(toks[2]);
         uint32_t off_ms = atoi(toks[3]);
         int      count  = atoi(toks[4]);
-        printf("Siren pulse: %"PRIu32" ms on / %"PRIu32" ms off × %d\r\n", on_ms, off_ms, count);
+        printf("Siren pulse: %"PRIu32" ms on / %"PRIu32" ms off x %d\r\n", on_ms, off_ms, count);
         siren_pulse(on_ms, off_ms, count);
     } else {
         uart_puts("Unknown siren subcommand.\r\n");
@@ -370,7 +325,7 @@ static void cmd_led(char *toks[], int ntok)
         led_off();
         uart_puts("LED off\r\n");
     } else if (strcmp(toks[1], "test") == 0) {
-        uart_puts("Running LED pattern test...\r\n");
+        uart_puts("Running LED pattern test (FSD v1.10 §11.1)...\r\n");
         led_test();
     } else if (strcmp(toks[1], "brightness") == 0) {
         if (ntok < 3) { uart_puts("Usage: led brightness <0-255>\r\n"); return; }
@@ -397,10 +352,11 @@ static void cmd_fire(char *toks[], int ntok)
     int      safe_after = 1;
     if (ntok >= 4 && strcmp(toks[3], "nosafe") == 0) safe_after = 0;
 
-    if (ch < 1 || ch > 8) { uart_puts("Channel must be 1–8.\r\n"); return; }
+    if (ch < 1 || ch > 8) { uart_puts("Channel must be 1-8.\r\n"); return; }
     if (duration == 0)     { uart_puts("Duration must be > 0 ms.\r\n"); return; }
 
-    printf("Fire CH%d for %"PRIu32" ms%s...\r\n", ch, duration, safe_after ? " (safe after)" : " (nosafe)");
+    printf("Fire CH%d for %"PRIu32" ms%s (SPDT relay NC->NO)...\r\n",
+           ch, duration, safe_after ? " (safe after)" : " (nosafe)");
     int elapsed = fire_pulse(ch, duration, safe_after);
     printf("Fire complete. Elapsed: %d ms  (requested: %"PRIu32" ms)\r\n", elapsed, duration);
 }
@@ -420,11 +376,9 @@ static void dispatch(char *line)
     else if (strcmp(toks[0], "safe")     == 0) { relay_all_safe(); fire_abort(); uart_puts("All outputs safe.\r\n"); }
     else if (strcmp(toks[0], "pins")     == 0) cmd_pins();
     else if (strcmp(toks[0], "relay")    == 0) cmd_relay(toks, ntok);
-    else if (strcmp(toks[0], "lowside")  == 0) cmd_lowside(toks, ntok);
     else if (strcmp(toks[0], "cont")     == 0) cmd_cont(toks, ntok);
     else if (strcmp(toks[0], "batt")     == 0) cmd_batt(toks, ntok);
     else if (strcmp(toks[0], "arm")      == 0) cmd_arm();
-    else if (strcmp(toks[0], "feedback") == 0) cmd_feedback();
     else if (strcmp(toks[0], "siren")    == 0) cmd_siren(toks, ntok);
     else if (strcmp(toks[0], "led")      == 0) cmd_led(toks, ntok);
     else if (strcmp(toks[0], "fire")     == 0) cmd_fire(toks, ntok);
@@ -457,7 +411,7 @@ void cli_task(void *arg)
 {
     char buf[CLI_BUF_SIZE];
 
-    uart_puts("\r\n=== RLC Base Unit Hardware Test ===\r\n");
+    uart_puts("\r\n=== RLC Base Unit Hardware Test (FSD v1.10) ===\r\n");
     uart_puts("Type 'help' for available commands.\r\n");
 
     while (1) {

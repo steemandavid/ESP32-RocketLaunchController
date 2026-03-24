@@ -2,7 +2,14 @@
 
 /* -----------------------------------------------------------------------
  * pin_config.h — All GPIO assignments and polarity for RLC base unit HW test
- * RLC-HWTEST-BASE-001 v1.0
+ * RLC-HWTEST-BASE-001 v1.1 — aligned with FSD v1.10
+ *
+ * v1.10 changes: removed low-side relay (GPIO 21 repurposed as arm switch
+ * sense), removed relay feedback (GPIO 38), removed arm switch digital
+ * input (GPIO 39), removed continuity MOSFET (GPIO 41).  SPDT relays
+ * driven via 2× ULN2003A (active HIGH).  Arm switch sensed exclusively
+ * via zener-clamped sense circuit on GPIO 21.
+ * Freed GPIOs: 38, 39, 41, 42, 48.
  * ----------------------------------------------------------------------- */
 
 /* --- ADC inputs -------------------------------------------------------- */
@@ -27,7 +34,7 @@
 #define ADC_CH_CONT7            ADC_CHANNEL_7
 #define ADC_CH_CONT8            ADC_CHANNEL_8
 
-/* --- Relay outputs ----------------------------------------------------- */
+/* --- SPDT relay outputs (via ULN2003A, active HIGH) -------------------- */
 #define PIN_RELAY_CH1           11
 #define PIN_RELAY_CH1_ACTIVE    1
 
@@ -52,20 +59,17 @@
 #define PIN_RELAY_CH8           18
 #define PIN_RELAY_CH8_ACTIVE    1
 
-#define PIN_LOWSIDE_RELAY       21
-#define PIN_LOWSIDE_ACTIVE      1
+/* --- Arm switch sense input (§5.4.3) ---------------------------------- */
+/* External circuit: 10 kΩ series + 3.3V zener clamp + 100 kΩ pull-down.
+ * HIGH (~3.3V clamped) = arm switch ON / VBAT present on fire path.
+ * LOW  (~0V)           = arm switch OFF / no VBAT on fire path.           */
+#define PIN_ARM_SENSE           21
 
-/* --- Digital inputs ---------------------------------------------------- */
-#define PIN_RELAY_FEEDBACK      38  /* Internal pull-up; HIGH=safe, LOW=fault */
-#define PIN_ARM_SWITCH          39  /* Internal pull-up; LOW=armed, HIGH=disarmed */
-
-/* --- Other outputs ----------------------------------------------------- */
+/* --- Siren output (via ULN2003A IC2) ----------------------------------- */
 #define PIN_SIREN               40
 #define PIN_SIREN_ACTIVE        1
 
-#define PIN_CONT_MOSFET         41  /* Active LOW — pull-up on gate */
-#define PIN_CONT_MOSFET_ACTIVE  0
-
+/* --- RGB LED ----------------------------------------------------------- */
 #define PIN_RGB_LED             47  /* WS2812 on-board, RMT peripheral */
 
 /* --- Battery divider --------------------------------------------------- */

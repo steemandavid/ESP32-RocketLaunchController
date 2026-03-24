@@ -1,6 +1,5 @@
 #include "hw_continuity.h"
 #include "pin_config.h"
-#include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
@@ -15,15 +14,17 @@ static const adc_channel_t s_cont_channels[8] = {
     ADC_CH_CONT5, ADC_CH_CONT6, ADC_CH_CONT7, ADC_CH_CONT8
 };
 
-/* Shared ADC1 handle — battery init may already have created it.
- * We use a global so both modules can share the unit handle. */
+/* Shared ADC1 handle — battery init creates it, we share. */
 extern adc_oneshot_unit_handle_t g_adc1_handle;
 extern adc_cali_handle_t         g_adc1_cali_handle;
 extern bool                      g_adc1_cali_ok;
 
 void hw_continuity_init(void)
 {
-    /* Configure each continuity ADC channel on the shared ADC1 unit */
+    /* Configure each continuity ADC channel on the shared ADC1 unit.
+     * No MOSFET gate to configure — SPDT relay NC contact provides
+     * inherent isolation; continuity is always active when relay
+     * is de-energised (FSD §5.4.2). */
     adc_oneshot_chan_cfg_t cfg = {
         .atten    = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_12,
@@ -32,19 +33,7 @@ void hw_continuity_init(void)
         ESP_ERROR_CHECK(adc_oneshot_config_channel(g_adc1_handle, s_cont_channels[i], &cfg));
     }
 
-    /* Configure continuity MOSFET GPIO */
-    gpio_config_t gpio_cfg = {
-        .pin_bit_mask = (1ULL << PIN_CONT_MOSFET),
-        .mode         = GPIO_MODE_OUTPUT,
-        .pull_up_en   = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type    = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&gpio_cfg);
-    /* Drive inactive (HIGH — active LOW device) */
-    gpio_set_level(PIN_CONT_MOSFET, PIN_CONT_MOSFET_ACTIVE ? 0 : 1);
-
-    ESP_LOGI(TAG, "Continuity ADC channels initialised");
+    ESP_LOGI(TAG, "Continuity ADC channels initialised (always-on via SPDT NC)");
 }
 
 static int32_t read_uv_with_raw(adc_channel_t ch, int *out_raw)
@@ -115,12 +104,6 @@ void cont_read_raw_stats(int ch, int n_samples,
     *out_min    = mn;
     *out_max    = mx;
     *out_stddev = (int)sqrt((double)var / n_samples);
-}
-
-void cont_mosfet_set(int active)
-{
-    int level = active ? PIN_CONT_MOSFET_ACTIVE : !PIN_CONT_MOSFET_ACTIVE;
-    gpio_set_level(PIN_CONT_MOSFET, level);
 }
 
 const char *cont_band_str(cont_band_t band)

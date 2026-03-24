@@ -65,8 +65,7 @@ int fire_pulse(int ch, uint32_t duration_ms, int safe_after)
 
     int64_t t_start = esp_timer_get_time();
 
-    /* Activate relays */
-    lowside_set(1);
+    /* Energise SPDT relay — switches from NC (continuity) to NO (fire path) */
     relay_set(ch, 1);
 
     /* Start timer */
@@ -83,7 +82,8 @@ int fire_pulse(int ch, uint32_t duration_ms, int safe_after)
     int     elapsed_ms = (int)((t_end - t_start) / 1000);
 
     if (bits & FIRE_ABORT_BIT) {
-        ESP_LOGI(TAG, "Fire aborted by safe command");
+        relay_all_safe();
+        ESP_LOGI(TAG, "Fire aborted — relays de-energised");
         return elapsed_ms;
     }
 
