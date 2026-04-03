@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.10
-**Date:** 2026-03-23
+**Version:** 1.11
+**Date:** 2026-03-30
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -24,6 +24,7 @@
 | 1.7 | 2026-03-22 | Applied 27 accepted findings from v1.6 review. Key changes: allocated GPIO 41 for shared continuity enable MOSFET; disabled continuity sensing in ARMED/PRE_FIRE/FIRING/ERROR states; specified ISR-safe signalling for fire pulse timer; added general ISR safety rule; dead-man timestamp captured in ESP-NOW receive callback; 50 ms relay dropout delay after FIRING; removed periodic relay feedback monitoring (check at arm-time only); added SIREN_ERROR and SIREN_CONTINUITY_LOST patterns; clarified channel relay stays open in ARMED; simplified LINK_REQUEST handling in POST_FIRE; 500 ms long-press to arm; ESP-NOW receive queue; boot sequence specification; removed boot-time Wi-Fi channel scan; encoder button 8-bit notation fix; TWDT per-task watchdog. |
 | 1.8 | 2026-03-23 | Applied accepted findings from v1.7 review (C1–C5, H1–H7, M1–M10, L1–L9). Key changes: removed stale continuity guards from ARMED→PRE_FIRE and continuity-loss disarm from ARMED/PRE_FIRE (sensing disabled — stale data); fire pulse timer ISR now only signals task via xTaskNotifyFromISR(), all relay control in task context; added ARM_TIMEOUT_MS (10s) auto-disarm; explicit independent GND for continuity circuit; HEARTBEAT_INTERVAL_MS reduced to 500 ms (link loss detection now 1.5s); PONG freshness at PRE_FIRE→FIRING uses HEARTBEAT_INTERVAL_MS + HEARTBEAT_TIMEOUT_MS; ERR_COMM_DEGRADED blocks IDLE→ARMED and PRE_FIRE→FIRING; remote treats multiple bits in channel_armed_bitmask as error; siren silenced immediately on link recovery; ESP-NOW receive queue depth raised to 16; long-press timer starts from debounced transition; continuity thresholds in microvolts; LINK_ACK header token clarification; CMD_DISARM in IDLE ACK'd as idempotent; Fire Complete screen layout added; strict version matching rationale note; compile-time keys noted as known limitation; test renumbering; backlight always 100%; SPI2_HOST naming fix. |
 | 1.10 | 2026-03-23 | Igniter circuit redesign: removed low-side relay entirely. Each channel relay changed to 12V automotive SPDT relay (20A contacts), driven via 2× ULN2003A darlington arrays. SPDT relay NC contact routes to continuity sense circuit; NO contact routes to fire path (VBAT+ via arm switch). Igniter low-side connected directly to ground. Fire path now has two independent break points (arm switch + channel relay). Removed P-channel MOSFET continuity enable switch (GPIO 41) — SPDT relay NC/NO switching provides inherent isolation between continuity sensing and fire path; continuity is always active when relay is de-energised. Replaced single 3.3 kΩ R_ref with two series fusible resistors (1.5 kΩ + 1.8 kΩ = 3.3 kΩ) for defence-in-depth against single-resistor short failure. Arm switch is now hardware-only SPST in fire path high-side, sensed exclusively via arm switch sense circuit (10 kΩ + 3.3V zener + 100 kΩ on GPIO 21); removed dedicated digital arm switch GPIO 39. Added arm switch sense as arming guard. Post-fire igniter status detected via continuity sense circuit after relay returns to NC. Removed all low-side relay references from state machine, relay control functions, STATUS_UPDATE protocol, safety requirements, boot sequence, pin assignments, and tests. Replaced `relay_lowside_set()` with `relay_fire_set()` for SPDT relay control. Updated STATUS_UPDATE struct: replaced `low_side_relay` field with `arm_switch_hw`. Added ULN2003A driver specification (2× ICs, 8 relay coils + 1 siren, active-HIGH GPIO logic, internal freewheel diodes). Specified relay type (12V automotive SPDT, 20A). Added code review agent to §4.4. Freed GPIO 38, 39, 41, 42, 48 (5 spare). Added tests T-S17, T-S18, T-S19. |
+| 1.11 | 2026-03-30 | Added §4.6 Code Reusability and §4.7 RTOS Architecture Requirements. Code must be written with reusability in mind (generic libraries, abstract interfaces, no project-specific coupling in shared components). Formalised RTOS best practices: all inter-task communication via FreeRTOS primitives (queues, semaphores, task notifications), mutex-protected shared state, ISR-to-task signalling only, priority inversion prevention, and race-condition avoidance rules. |
 
 ---
 
@@ -376,6 +377,76 @@ The code shall be designed for testability:
 - The protocol layer shall be testable by feeding raw byte buffers and verifying parsed output.
 - The debounce engine shall be testable by providing a sequence of simulated readings and verifying output.
 - Integration tests shall use a two-unit bench setup with LEDs or resistors substituting for igniters, and jumper wires for continuity simulation.
+
+### 4.6 Code Reusability
+
+The firmware shall be written with reusability in mind so that individual components can be reused in future projects without modification or with minimal configuration changes. This is a mandatory architectural requirement, not an optional quality goal.
+
+**General rules:**
+
+- All modules in `rlc_common` (and sub-modules in `rlc_base` and `rlc_remote` where appropriate) shall be implemented as **generic, self-contained libraries** with well-defined public APIs. No module shall contain hard-coded project-specific values in its core logic — all project-specific parameters (GPIO numbers, thresholds, timing, buffer sizes) shall be passed in via configuration structs or `#define` constants at the call site.
+- Each library module shall have a single, clearly defined responsibility (single-responsibility principle). A module that handles ADC sampling shall not also handle display rendering; a debounce engine shall not embed knowledge of which GPIO it is debouncing.
+- Hardware abstraction layers (HALs) shall separate hardware-independent logic from platform-specific register access. Drivers shall expose abstract interfaces (e.g., `adc_read_mv(channel)` not `adc1_get_raw()`) so that the same logic can be retargeted to different hardware without rewriting.
+- No component shall directly access the internal state of another component. All inter-component communication shall go through well-defined public API functions. Internal data structures shall be opaque to callers (declared in `.c` files, exposed only as `typedef struct foo_s *foo_handle_t` in headers where appropriate).
+- Shared utility modules (debounce engine, battery ADC driver, RGB LED driver, logging, watchdog, version management) shall be completely decoupled from the RLC application. They shall not `#include` any RLC-specific headers other than common type definitions. This enables dropping them into a new ESP-IDF project with zero changes.
+- Configuration shall be centralised. All tuneable parameters (timeouts, thresholds, queue depths, stack sizes, pin assignments) shall be defined in dedicated configuration headers or Kconfig symbols, not scattered across source files. This makes it straightforward to adapt the firmware to a different board or application.
+
+**Naming and organisation:**
+
+- Library modules shall use a consistent prefix (e.g., `debounce_`, `adc_`, `relay_`, `led_`, `buzzer_`) to avoid namespace collisions when reused.
+- Each module shall reside in its own directory with a `CMakeLists.txt`, an `include/` directory for public headers, and a `.c` source directory. This follows the ESP-IDF component model and allows independent compilation and reuse.
+
+### 4.7 RTOS Architecture Requirements
+
+The firmware shall make full and correct use of FreeRTOS (bundled with ESP-IDF) as the underlying real-time operating system. All concurrency, scheduling, and inter-task communication shall follow FreeRTOS best practices. Special care shall be taken to avoid race conditions, priority inversion, deadlocks, and starvation.
+
+**Task design:**
+
+- The system shall use FreeRTOS tasks as defined in §9.10 (task priority table). Each task shall have a single, well-defined responsibility and run an infinite loop that blocks on a FreeRTOS primitive when idle (no busy-wait loops).
+- Tasks shall not poll or spin-wait. Idle tasks shall block on `xQueueReceive()`, `xSemaphoreTake()`, `ulTaskNotifyTake()`, `vTaskDelay()`, or event-group waits.
+- Task stack sizes shall be sized appropriately (see §9.10) and shall be validated using the `uxTaskGetStackHighWaterMark()` API during development. A stack watermark below 20% of the allocated size SHALL be flagged for review.
+
+**Inter-task communication:**
+
+- All data passed between tasks SHALL go through FreeRTOS primitives. The choice of primitive depends on the use case:
+  - **Queues (`xQueueSend` / `xQueueReceive`):** for passing data items (messages, events with payloads, sensor readings) from one task to another. The ESP-NOW receive callback SHALL post to a queue (depth ≥ 16) as specified in §6.4.
+  - **Task notifications (`xTaskNotifyGive` / `ulTaskNotifyTake`, `xTaskNotify` / `xTaskNotifyWait`):** for lightweight, single-bit signalling where no data payload is needed (e.g., timer ISR signalling the state machine task). Task notifications SHALL NOT be used to pass data values between tasks — use queues for that.
+  - **Binary semaphores (`xSemaphoreCreateBinary`):** for synchronisation between an ISR and a task (e.g., "data ready" signal from a peripheral interrupt).
+  - **Mutexes (`xSemaphoreCreateMutex`):** for protecting shared resources accessed by multiple tasks. A mutex SHALL be held for the minimum time necessary — acquire, perform the critical section, release immediately. No blocking calls (queue sends, delays) shall be made while holding a mutex.
+  - **Counting semaphores:** for managing limited resource pools (e.g., available ADC channels, display buffer slots).
+- Direct global variable sharing between tasks without synchronisation is **prohibited**. If a variable is written by one task and read by another, it SHALL be protected by a mutex or accessed exclusively through a queue or task notification.
+
+**Shared state and race conditions:**
+
+- Any state that is accessed by more than one task (e.g., the current FSM state, channel configuration, link status) SHALL be protected by a mutex or accessed only through a single "owner" task that serialises access via a command queue. The preferred pattern is the **single-owner model**: one task owns a data structure and other tasks send commands to it via a queue, eliminating the need for mutexes entirely.
+- When the single-owner model is not practical, mutexes SHALL be used with the following rules:
+  - Mutexes SHALL be taken before reading or writing shared state and released immediately after.
+  - Mutexes SHALL NOT be nested (no taking a second mutex while holding the first) unless a strict lock ordering is documented and followed. Lock ordering violations are a fatal bug.
+  - `xSemaphoreTake()` with a timeout SHALL be used for all non-ISR mutex acquisitions. Acquiring without a timeout risks deadlock.
+- Atomic operations (`portENTER_CRITICAL` / `portEXIT_CRITICAL`, or `stdatomic.h` atomics) SHALL be used for simple flag variables shared between an ISR and a task where a full mutex is excessive. Critical sections SHALL be kept as short as possible (a few instructions at most).
+- The dead-man timestamp update in the ESP-NOW receive callback (§6.4) is the only permitted exception to the "no bare globals in ISRs" rule, as it is a single aligned 32-bit write which is atomic on ESP32-S3.
+
+**ISR safety:**
+
+- All hardware timer callbacks and interrupt service routines SHALL use only ISR-safe FreeRTOS API variants (see §9.11): `xTaskNotifyFromISR()`, `xQueueSendFromISR()`, `xSemaphoreGiveFromISR()`. No mutexes, blocking calls, or direct function calls to state machine logic are permitted in ISR context.
+- ISRs SHALL perform the minimum work necessary: read the interrupt source, clear the interrupt, and signal a task via a queue send or task notification. All processing shall happen in task context.
+- ISR-to-task data transfer SHALL use `xQueueSendFromISR()` with a dedicated queue, never shared with task-to-task queue traffic on the same queue handle (to avoid ISR and task both calling send on the same queue, which can cause internal corruption even with ISR-safe variants).
+
+**Priority inversion prevention:**
+
+- Mutexes protecting shared resources accessed by tasks of different priorities SHALL use the **inheritance** protocol (enabled by passing `xSemaphoreCreateMutex()` — ESP-IDF enables priority inheritance by default). Priority inheritance SHALL NOT be disabled.
+- Priority inversion scenarios SHALL be considered during design review. If a low-priority task (e.g., display) and a high-priority task (e.g., state machine) both access a shared resource, the mutex with priority inheritance ensures the low-priority task is temporarily boosted while holding the mutex.
+
+**Watchdog and liveness:**
+
+- Each FreeRTOS task SHALL subscribe to the ESP-IDF Task Watchdog Timer (TWDT) as specified in §9.10. The TWDT ensures that no task silently stalls.
+- Tasks that block on FreeRTOS primitives with timeouts (queues, semaphores) SHALL reset the watchdog after each successful receive, or handle the timeout case (e.g., log a warning, transition to a safe state).
+
+**Prohibited patterns:**
+
+- No `vTaskDelay()` loops that act as polling (e.g., `while(1) { check_something(); vTaskDelay(10); }` when the event could be signal-driven). Replace with blocking on a queue, semaphore, or task notification.
+- No disabling of the scheduler (`vTaskSuspendAll()` / `xTaskResumeAll()`) except in rare, well-documented cases where the critical section is too long for `portENTER_CRITICAL()` but too short to warrant a mutex.
+- No direct task-to-task function calls that bypass FreeRTOS primitives (e.g., calling one task's handler function directly from another task). This breaks scheduling guarantees and makes deadlock analysis impossible.
 
 ---
 
