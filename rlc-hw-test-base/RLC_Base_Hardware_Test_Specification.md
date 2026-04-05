@@ -214,7 +214,7 @@ All digital outputs SHALL use configurable polarity defined in `pin_config.h`:
 - All ADC readings SHALL use ADC1 with the ESP-IDF v5.x calibration API (`adc_cali_raw_to_voltage()`).
 - Continuity channels: 12-bit resolution, 64-sample oversampling per reading.
 - Battery channel: 12-bit resolution, 8-sample averaging.
-- `DIVIDER_RATIO` for battery voltage SHALL be configurable in `pin_config.h` (default: 4.0).
+- `DIVIDER_RATIO` for battery voltage SHALL be configurable in `pin_config.h` (default: 4.3, for 33 kΩ + 10 kΩ divider).
 
 ### 6.4 Continuity Band Classification
 

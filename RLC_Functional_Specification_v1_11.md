@@ -875,7 +875,7 @@ Same as Base Unit §5.4.9. On-board WS2812 on GPIO 47.
 | Nominal voltage | 11.1–12.6V (LiPo) or 12.0–12.8V (SLA) |
 | Minimum operating voltage | 9.0V (`BASE_VBAT_CRITICAL_MV`) |
 | Minimum arm voltage | 10.5V (`BASE_VBAT_MIN_ARM_MV`) |
-| Voltage divider ratio | 4.0:1 (giving 0–3.3V ADC range for 0–13.2V battery) |
+| Voltage divider ratio | 4.3:1 (33 kΩ + 10 kΩ, giving 0–3.3V ADC range for 0–14.19V battery) |
 | Capacity requirement | Minimum 2 Ah recommended. Must sustain relay inrush current (per §9.8) without dipping below BOD threshold. |
 | Connector | To be defined in hardware design. Recommend XT60 or Anderson PowerPole for field robustness. |
 | Regulation | 3.3V LDO or DC-DC buck converter for ESP32-S3 and logic. Relay coils driven from battery via 2× ULN2003A darlington arrays (§5.4.9). |
@@ -2202,7 +2202,7 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 
 | Constant | Default Value | Description |
 |---|---|---|
-| `BASE_VBAT_DIVIDER_RATIO` | 4.0 | Voltage divider ratio for base battery ADC |
+| `BASE_VBAT_DIVIDER_RATIO` | 4.3 | Voltage divider ratio for base battery ADC (33 kΩ + 10 kΩ) |
 | `BASE_VBAT_MIN_ARM_MV` | 10500 | Minimum base battery to allow arming (mV) |
 | `BASE_VBAT_CRITICAL_MV` | 9000 | Critical base battery threshold (mV) |
 | `REMOTE_VBAT_DIVIDER_RATIO` | 2.0 | Voltage divider ratio for remote battery ADC |

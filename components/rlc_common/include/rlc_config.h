@@ -42,7 +42,7 @@
 
 /* ── Voltage Thresholds (millivolts) ──────────────────────────── */
 
-#define BASE_VBAT_DIVIDER_RATIO        4.0f
+#define BASE_VBAT_DIVIDER_RATIO        4.3f
 #define BASE_VBAT_MIN_ARM_MV           10500
 #define BASE_VBAT_CRITICAL_MV          9000
 
