@@ -79,7 +79,7 @@
 
 /* ── RGB LED ──────────────────────────────────────────────────── */
 
-#define RGB_LED_GPIO               47
+#define RGB_LED_GPIO               48
 #define RGB_LED_BRIGHTNESS         30   /* 0–255 */
 
 /* ── Display Configuration (Remote only) ──────────────────────── */

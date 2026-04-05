@@ -7,7 +7,7 @@
 #include "hw_siren.h"
 #include "hw_rgb_led.h"
 #include "hw_fire_timer.h"
-#include "driver/uart.h"
+#include "driver/usb_serial_jtag.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -17,25 +17,23 @@
 #include <stdio.h>
 #include <ctype.h>
 
-#define UART_NUM        UART_NUM_0
-#define UART_BAUD       115200
 #define CLI_BUF_SIZE    256
 #define PROMPT          "\r\nbase> "
 
 static const char *TAG = "cli";
 
 /* ------------------------------------------------------------------ */
-/* UART helpers                                                         */
+/* Console helpers (USB-Serial/JTAG — ttyACM0 on ESP32-S3)              */
 /* ------------------------------------------------------------------ */
 
 static void uart_puts(const char *s)
 {
-    uart_write_bytes(UART_NUM, s, strlen(s));
+    usb_serial_jtag_write_bytes(s, strlen(s), portMAX_DELAY);
 }
 
 static void uart_putc(char c)
 {
-    uart_write_bytes(UART_NUM, &c, 1);
+    usb_serial_jtag_write_bytes(&c, 1, portMAX_DELAY);
 }
 
 /* Read one line; echo characters; handle backspace. Returns length. */
@@ -44,7 +42,7 @@ static int uart_readline(char *buf, int max_len)
     int pos = 0;
     while (1) {
         uint8_t c;
-        int n = uart_read_bytes(UART_NUM, &c, 1, portMAX_DELAY);
+        int n = usb_serial_jtag_read_bytes(&c, 1, portMAX_DELAY);
         if (n <= 0) continue;
 
         if (c == '\r' || c == '\n') {
@@ -94,34 +92,41 @@ static void cmd_help(void)
         "  help                         This message\r\n"
         "  status                       Full system status\r\n"
         "  safe                         De-energise all SPDT relays immediately\r\n"
-        "  pins                         Print pin assignments\r\n"
+        "  pins                         Print pin assignments\r\n");
+    uart_puts(
         "\r\nRelay (SPDT, via ULN2003A):\r\n"
         "  relay <ch> on|off            Energise/de-energise channel relay (1-8)\r\n"
         "  relay all off                De-energise all 8 channel relays\r\n"
-        "  relay sweep                  Sweep all 8 channels (500 ms each)\r\n"
+        "  relay sweep                  Sweep all 8 channels (500 ms each)\r\n");
+    uart_puts(
         "\r\nContinuity (always-on via SPDT NC contact):\r\n"
         "  cont <ch>                    Read continuity channel (1-8)\r\n"
         "  cont all                     Read all 8 channels\r\n"
         "  cont <ch> raw [N]            Take N raw samples (default 64)\r\n"
-        "  cont monitor                 Continuously monitor all channels (any key stops)\r\n"
+        "  cont monitor                 Continuously monitor all channels (any key stops)\r\n");
+    uart_puts(
         "\r\nBattery:\r\n"
         "  batt                         Read battery voltage\r\n"
         "  batt raw [N]                 Take N raw samples (default 8)\r\n"
         "\r\nInputs:\r\n"
         "  arm                          Poll arm switch sense until key press\r\n"
+        "  arm sim on|off               Energise/de-energise arm sim relay (GPIO 38)\r\n");
+    uart_puts(
         "\r\nSiren (via ULN2003A IC2):\r\n"
         "  siren on|off                 Activate/deactivate siren\r\n"
         "  siren pulse <on> <off> <N>   Pulse N times\r\n"
-        "  siren test                   Run all siren patterns\r\n"
+        "  siren test                   Run all siren patterns\r\n");
+    uart_puts(
         "\r\nLED:\r\n"
         "  led <r> <g> <b>              Set RGB colour (0-255)\r\n"
         "  led off                      Turn off LED\r\n"
         "  led test                     Cycle all status patterns\r\n"
         "  led brightness <0-255>       Set brightness\r\n"
+        "  led gpiotest                 Raw GPIO47 toggle (diagnostic)\r\n");
+    uart_puts(
         "\r\nFire:\r\n"
         "  fire <ch> <ms>               Energise channel SPDT relay for duration_ms, then safe\r\n"
-        "  fire <ch> <ms> nosafe        Energise channel, leave relay after\r\n"
-    );
+        "  fire <ch> <ms> nosafe        Energise channel, leave relay after\r\n");
 }
 
 static void cmd_status(void)
@@ -160,14 +165,16 @@ static void cmd_pins(void)
     int relays[] = { PIN_RELAY_CH1, PIN_RELAY_CH2, PIN_RELAY_CH3, PIN_RELAY_CH4,
                      PIN_RELAY_CH5, PIN_RELAY_CH6, PIN_RELAY_CH7, PIN_RELAY_CH8 };
     for (int i = 0; i < 8; i++) {
-        printf("SPDT relay CH%d  : GPIO %d  (active HIGH via ULN2003A)\r\n", i + 1, relays[i]);
+        printf("SPDT relay CH%d  : GPIO %2d  level=%d  (active HIGH via ULN2003A)\r\n",
+               i + 1, relays[i], gpio_get_level(relays[i]));
     }
     printf("Arm switch sense: GPIO %d  level=%d  (%s)\r\n",
            PIN_ARM_SENSE, gpio_get_level(PIN_ARM_SENSE),
            gpio_get_level(PIN_ARM_SENSE) ? "ARMED" : "DISARMED");
+    printf("Arm sim relay   : GPIO %d  (BC547 to ground)\r\n", PIN_ARM_SIM_RELAY);
     printf("Siren           : GPIO %d  (via ULN2003A IC2)\r\n", PIN_SIREN);
     printf("RGB LED         : GPIO %d\r\n", PIN_RGB_LED);
-    printf("Spare GPIOs     : 38, 39, 41, 42, 48\r\n");
+    printf("Spare GPIOs     : 39, 41, 42, 47\r\n");
 }
 
 static void cmd_relay(char *toks[], int ntok)
@@ -214,7 +221,7 @@ static void cmd_cont(char *toks[], int ntok)
         cont_band_t prev[8] = { CONT_BAND_OPEN, CONT_BAND_OPEN, CONT_BAND_OPEN, CONT_BAND_OPEN,
                                 CONT_BAND_OPEN, CONT_BAND_OPEN, CONT_BAND_OPEN, CONT_BAND_OPEN };
         uint8_t dummy;
-        while (uart_read_bytes(UART_NUM, &dummy, 1, 0) <= 0) {
+        while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
             for (int ch = 1; ch <= 8; ch++) {
                 cont_reading_t r = cont_read(ch);
                 if (r.band != prev[ch - 1]) {
@@ -274,13 +281,27 @@ static void cmd_batt(char *toks[], int ntok)
            r.raw, r.mv_calibrated, r.mv_scaled, (double)BATT_DIVIDER_RATIO);
 }
 
-static void cmd_arm(void)
+static void cmd_arm(char *toks[], int ntok)
 {
+    if (ntok >= 2 && strcmp(toks[1], "sim") == 0) {
+        if (ntok < 3) { uart_puts("Usage: arm sim on|off\r\n"); return; }
+        if (strcmp(toks[2], "on") == 0) {
+            arm_sim_set(1);
+            uart_puts("Arm sim relay ON — simulating ARMED.\r\n");
+        } else if (strcmp(toks[2], "off") == 0) {
+            arm_sim_set(0);
+            uart_puts("Arm sim relay OFF — simulating DISARMED.\r\n");
+        } else {
+            uart_puts("Expected 'on' or 'off'.\r\n");
+        }
+        return;
+    }
+
     uart_puts("Polling arm switch sense (GPIO 21) — press any key to stop.\r\n");
     uart_puts("HIGH = ARMED (VBAT on fire path), LOW = DISARMED\r\n");
     uint8_t dummy;
     int last = -1;
-    while (uart_read_bytes(UART_NUM, &dummy, 1, 0) <= 0) {
+    while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
         int armed = arm_sense_read_debounced();
         int raw   = arm_sense_read_raw();
         if (armed != last) {
@@ -324,6 +345,27 @@ static void cmd_led(char *toks[], int ntok)
     if (strcmp(toks[1], "off") == 0) {
         led_off();
         uart_puts("LED off\r\n");
+    } else if (strcmp(toks[1], "gpiotest") == 0) {
+        /* Raw GPIO diagnostic — bypasses led_strip, drives GPIO 47 directly */
+        uart_puts("GPIO47 raw toggle test (3 blinks)...\r\n");
+        gpio_config_t io = {
+            .pin_bit_mask = (1ULL << PIN_RGB_LED),
+            .mode         = GPIO_MODE_OUTPUT,
+            .pull_up_en   = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type    = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&io);
+        for (int i = 0; i < 3; i++) {
+            gpio_set_level(PIN_RGB_LED, 1);
+            printf("  GPIO %d HIGH\r\n", PIN_RGB_LED);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            gpio_set_level(PIN_RGB_LED, 0);
+            printf("  GPIO %d LOW\r\n", PIN_RGB_LED);
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+        uart_puts("GPIO47 test done — re-init led_strip.\r\n");
+        hw_rgb_led_init();
     } else if (strcmp(toks[1], "test") == 0) {
         uart_puts("Running LED pattern test (FSD v1.10 §11.1)...\r\n");
         led_test();
@@ -361,6 +403,23 @@ static void cmd_fire(char *toks[], int ntok)
     printf("Fire complete. Elapsed: %d ms  (requested: %"PRIu32" ms)\r\n", elapsed, duration);
 }
 
+static void cmd_gpio(char *toks[], int ntok)
+{
+    if (ntok < 3) { uart_puts("Usage: gpio <pin> <0|1>\r\n"); return; }
+    int pin = atoi(toks[1]);
+    int lvl = atoi(toks[2]);
+    gpio_config_t io = {
+        .pin_bit_mask = (1ULL << pin),
+        .mode         = GPIO_MODE_INPUT_OUTPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io);
+    gpio_set_level(pin, lvl);
+    printf("GPIO %d driven %d  (readback=%d)\r\n", pin, lvl, gpio_get_level(pin));
+}
+
 /* ------------------------------------------------------------------ */
 /* Dispatch                                                             */
 /* ------------------------------------------------------------------ */
@@ -378,10 +437,11 @@ static void dispatch(char *line)
     else if (strcmp(toks[0], "relay")    == 0) cmd_relay(toks, ntok);
     else if (strcmp(toks[0], "cont")     == 0) cmd_cont(toks, ntok);
     else if (strcmp(toks[0], "batt")     == 0) cmd_batt(toks, ntok);
-    else if (strcmp(toks[0], "arm")      == 0) cmd_arm();
+    else if (strcmp(toks[0], "arm")      == 0) cmd_arm(toks, ntok);
     else if (strcmp(toks[0], "siren")    == 0) cmd_siren(toks, ntok);
     else if (strcmp(toks[0], "led")      == 0) cmd_led(toks, ntok);
     else if (strcmp(toks[0], "fire")     == 0) cmd_fire(toks, ntok);
+    else if (strcmp(toks[0], "gpio")     == 0) cmd_gpio(toks, ntok);
     else uart_puts("Unknown command. Type 'help' for usage.\r\n");
 }
 
@@ -391,20 +451,14 @@ static void dispatch(char *line)
 
 void cli_init(void)
 {
-    uart_config_t cfg = {
-        .baud_rate  = UART_BAUD,
-        .data_bits  = UART_DATA_8_BITS,
-        .parity     = UART_PARITY_DISABLE,
-        .stop_bits  = UART_STOP_BITS_1,
-        .flow_ctrl  = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_DEFAULT,
+    /* USB-Serial/JTAG on ESP32-S3 native USB (GPIO 19/20) → /dev/ttyACM0.
+     * Single-cable flash + console. Baud rate is ignored (USB CDC). */
+    usb_serial_jtag_driver_config_t cfg = {
+        .rx_buffer_size = 1024,
+        .tx_buffer_size = 4096,
     };
-    ESP_ERROR_CHECK(uart_param_config(UART_NUM, &cfg));
-    /* GPIO 43 (TX) and 44 (RX) are default for UART0 on ESP32-S3 */
-    ESP_ERROR_CHECK(uart_set_pin(UART_NUM, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE,
-                                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-    ESP_ERROR_CHECK(uart_driver_install(UART_NUM, 1024, 0, 0, NULL, 0));
-    ESP_LOGI(TAG, "CLI UART initialised at %d baud", UART_BAUD);
+    ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&cfg));
+    ESP_LOGI(TAG, "CLI USB-Serial/JTAG initialised");
 }
 
 void cli_task(void *arg)

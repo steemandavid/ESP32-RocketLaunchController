@@ -21,7 +21,7 @@ static void gpio_out_init(int pin, int inactive_level)
 {
     gpio_config_t cfg = {
         .pin_bit_mask = (1ULL << pin),
-        .mode         = GPIO_MODE_OUTPUT,
+        .mode         = GPIO_MODE_INPUT_OUTPUT,  /* read-back enabled for diagnostics */
         .pull_up_en   = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type    = GPIO_INTR_DISABLE,

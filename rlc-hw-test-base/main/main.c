@@ -33,6 +33,9 @@ void app_main(void)
     /* Digital inputs — arm switch sense (GPIO 21) */
     hw_inputs_init();
 
+    /* Arm switch simulation relay — GPIO 38 (BC547 to ground) */
+    arm_sim_init();
+
     /* RGB LED */
     ESP_LOGI(TAG, "RGB LED init");
     hw_rgb_led_init();

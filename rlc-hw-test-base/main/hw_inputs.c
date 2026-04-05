@@ -40,3 +40,26 @@ int arm_sense_read_debounced(void)
     /* Majority vote — HIGH = armed (VBAT present on fire path) */
     return (s0 + s1 + s2) >= 2 ? 1 : 0;
 }
+
+/* --- Arm switch simulation relay (GPIO 38, BC547 sinking coil) -------- */
+
+void arm_sim_init(void)
+{
+    gpio_config_t cfg = {
+        .pin_bit_mask = (1ULL << PIN_ARM_SIM_RELAY),
+        .mode         = GPIO_MODE_OUTPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&cfg);
+    /* Start de-energised (relay off = arm switch disarmed) */
+    gpio_set_level(PIN_ARM_SIM_RELAY, !PIN_ARM_SIM_RELAY_ACTIVE);
+    ESP_LOGI(TAG, "Arm sim relay initialised on GPIO %d (OFF)", PIN_ARM_SIM_RELAY);
+}
+
+void arm_sim_set(int on)
+{
+    gpio_set_level(PIN_ARM_SIM_RELAY, on ? PIN_ARM_SIM_RELAY_ACTIVE : !PIN_ARM_SIM_RELAY_ACTIVE);
+    ESP_LOGI(TAG, "Arm sim relay: %s (GPIO %d)", on ? "ON (sim ARMED)" : "OFF (sim DISARMED)", PIN_ARM_SIM_RELAY);
+}

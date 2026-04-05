@@ -9,7 +9,7 @@
  * input (GPIO 39), removed continuity MOSFET (GPIO 41).  SPDT relays
  * driven via 2× ULN2003A (active HIGH).  Arm switch sensed exclusively
  * via zener-clamped sense circuit on GPIO 21.
- * Freed GPIOs: 38, 39, 41, 42, 48.
+ * Freed GPIOs: 39, 41, 42, 47.  (GPIO 38 now arm sim relay.)
  * ----------------------------------------------------------------------- */
 
 /* --- ADC inputs -------------------------------------------------------- */
@@ -65,15 +65,22 @@
  * LOW  (~0V)           = arm switch OFF / no VBAT on fire path.           */
 #define PIN_ARM_SENSE           21
 
+/* --- Arm switch simulation relay (GPIO 38, BC547 to ground) ------------ */
+/* GPIO HIGH drives BC547 into saturation, energising the relay coil.
+ * Relay contacts feed/remove voltage into the arm sense circuit to
+ * simulate the physical arm switch toggle.                              */
+#define PIN_ARM_SIM_RELAY       38
+#define PIN_ARM_SIM_RELAY_ACTIVE 1
+
 /* --- Siren output (via ULN2003A IC2) ----------------------------------- */
 #define PIN_SIREN               40
 #define PIN_SIREN_ACTIVE        1
 
 /* --- RGB LED ----------------------------------------------------------- */
-#define PIN_RGB_LED             47  /* WS2812 on-board, RMT peripheral */
+#define PIN_RGB_LED             48  /* WS2812 on-board (DevKitC-1 v1.0), RMT peripheral */
 
 /* --- Battery divider --------------------------------------------------- */
-#define BATT_DIVIDER_RATIO      4.0f
+#define BATT_DIVIDER_RATIO      4.3f
 
 /* --- Continuity thresholds (µV) --------------------------------------- */
 #define CONT_SHORT_UV               500
