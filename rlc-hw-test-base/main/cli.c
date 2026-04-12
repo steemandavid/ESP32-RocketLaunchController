@@ -92,12 +92,13 @@ static void cmd_help(void)
         "  help                         This message\r\n"
         "  status                       Full system status\r\n"
         "  safe                         De-energise all SPDT relays immediately\r\n"
-        "  pins                         Print pin assignments\r\n");
+        "  pins                         Print pin assignments\r\n"
+        "  exit                         Exit help — press Ctrl+] to quit monitor\r\n");
     uart_puts(
         "\r\nRelay (SPDT, via ULN2003A):\r\n"
         "  relay <ch> on|off            Energise/de-energise channel relay (1-8)\r\n"
         "  relay all off                De-energise all 8 channel relays\r\n"
-        "  relay sweep                  Sweep all 8 channels (500 ms each)\r\n");
+        "  relay sweep                  Sweep all 8 channels + arm relay (500 ms each)\r\n");
     uart_puts(
         "\r\nContinuity (always-on via SPDT NC contact):\r\n"
         "  cont <ch>                    Read continuity channel (1-8)\r\n"
@@ -110,7 +111,7 @@ static void cmd_help(void)
         "  batt raw [N]                 Take N raw samples (default 8)\r\n"
         "\r\nInputs:\r\n"
         "  arm                          Poll arm switch sense until key press\r\n"
-        "  arm sim on|off               Energise/de-energise arm sim relay (GPIO 38)\r\n");
+        "  arm sim on|off               Energise/de-energise arm relay (GPIO 47)\r\n");
     uart_puts(
         "\r\nSiren (via ULN2003A IC2):\r\n"
         "  siren on|off                 Activate/deactivate siren\r\n"
@@ -121,8 +122,9 @@ static void cmd_help(void)
         "  led <r> <g> <b>              Set RGB colour (0-255)\r\n"
         "  led off                      Turn off LED\r\n"
         "  led test                     Cycle all status patterns\r\n"
+        "  led strip                    8-pixel strip diagnostic\r\n"
         "  led brightness <0-255>       Set brightness\r\n"
-        "  led gpiotest                 Raw GPIO47 toggle (diagnostic)\r\n");
+        "  led gpiotest                 Raw GPIO48 toggle (diagnostic)\r\n");
     uart_puts(
         "\r\nFire:\r\n"
         "  fire <ch> <ms>               Energise channel SPDT relay for duration_ms, then safe\r\n"
@@ -171,10 +173,10 @@ static void cmd_pins(void)
     printf("Arm switch sense: GPIO %d  level=%d  (%s)\r\n",
            PIN_ARM_SENSE, gpio_get_level(PIN_ARM_SENSE),
            gpio_get_level(PIN_ARM_SENSE) ? "ARMED" : "DISARMED");
-    printf("Arm sim relay   : GPIO %d  (BC547 to ground)\r\n", PIN_ARM_SIM_RELAY);
+    printf("Arm relay       : GPIO %d  (IRLZ44N MOSFET)\r\n", PIN_ARM_SIM_RELAY);
     printf("Siren           : GPIO %d  (via ULN2003A IC2)\r\n", PIN_SIREN);
-    printf("RGB LED         : GPIO %d\r\n", PIN_RGB_LED);
-    printf("Spare GPIOs     : 39, 41, 42, 47\r\n");
+    printf("RGB LED strip   : GPIO %d  (WS2812, %d pixels + on-board mirror)\r\n", PIN_RGB_LED, NUM_RGB_LEDS);
+    printf("Spare GPIOs     : 38, 39, 41, 42\r\n");
 }
 
 static void cmd_relay(char *toks[], int ntok)
@@ -182,7 +184,7 @@ static void cmd_relay(char *toks[], int ntok)
     if (ntok < 2) { uart_puts("Usage: relay <ch> on|off  |  relay all off  |  relay sweep\r\n"); return; }
 
     if (strcmp(toks[1], "sweep") == 0) {
-        uart_puts("Relay sweep: 8 SPDT channels x 500 ms\r\n");
+        uart_puts("Relay sweep: 8 SPDT channels + arm relay x 500 ms\r\n");
         relay_sweep();
         uart_puts("Sweep complete.\r\n");
         return;
@@ -340,14 +342,17 @@ static void cmd_siren(char *toks[], int ntok)
 
 static void cmd_led(char *toks[], int ntok)
 {
-    if (ntok < 2) { uart_puts("Usage: led <r> <g> <b>  |  led off  |  led test  |  led brightness <n>\r\n"); return; }
+    if (ntok < 2) { uart_puts("Usage: led <r> <g> <b>  |  led off  |  led test  |  led strip  |  led brightness <n>\r\n"); return; }
 
     if (strcmp(toks[1], "off") == 0) {
         led_off();
         uart_puts("LED off\r\n");
+    } else if (strcmp(toks[1], "strip") == 0) {
+        uart_puts("Running 8-pixel LED strip diagnostic...\r\n");
+        led_strip_test();
     } else if (strcmp(toks[1], "gpiotest") == 0) {
-        /* Raw GPIO diagnostic — bypasses led_strip, drives GPIO 47 directly */
-        uart_puts("GPIO47 raw toggle test (3 blinks)...\r\n");
+        /* Raw GPIO diagnostic — bypasses led_strip, drives GPIO 48 directly */
+        uart_puts("GPIO48 raw toggle test (3 blinks)...\r\n");
         gpio_config_t io = {
             .pin_bit_mask = (1ULL << PIN_RGB_LED),
             .mode         = GPIO_MODE_OUTPUT,
@@ -364,7 +369,7 @@ static void cmd_led(char *toks[], int ntok)
             printf("  GPIO %d LOW\r\n", PIN_RGB_LED);
             vTaskDelay(pdMS_TO_TICKS(500));
         }
-        uart_puts("GPIO47 test done — re-init led_strip.\r\n");
+        uart_puts("GPIO48 test done — re-init led_strip.\r\n");
         hw_rgb_led_init();
     } else if (strcmp(toks[1], "test") == 0) {
         uart_puts("Running LED pattern test (FSD v1.10 §11.1)...\r\n");
@@ -434,6 +439,7 @@ static void dispatch(char *line)
     else if (strcmp(toks[0], "status")   == 0) cmd_status();
     else if (strcmp(toks[0], "safe")     == 0) { relay_all_safe(); fire_abort(); uart_puts("All outputs safe.\r\n"); }
     else if (strcmp(toks[0], "pins")     == 0) cmd_pins();
+    else if (strcmp(toks[0], "exit")     == 0) uart_puts("Press Ctrl+] to exit the IDF monitor.\r\n");
     else if (strcmp(toks[0], "relay")    == 0) cmd_relay(toks, ntok);
     else if (strcmp(toks[0], "cont")     == 0) cmd_cont(toks, ntok);
     else if (strcmp(toks[0], "batt")     == 0) cmd_batt(toks, ntok);

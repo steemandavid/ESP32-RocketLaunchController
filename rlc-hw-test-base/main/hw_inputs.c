@@ -41,7 +41,7 @@ int arm_sense_read_debounced(void)
     return (s0 + s1 + s2) >= 2 ? 1 : 0;
 }
 
-/* --- Arm switch simulation relay (GPIO 38, BC547 sinking coil) -------- */
+/* --- Arm relay output (GPIO 47, IRLZ44N MOSFET) ----------------------- */
 
 void arm_sim_init(void)
 {

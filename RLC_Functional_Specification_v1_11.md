@@ -479,13 +479,13 @@ For all digital outputs (relays, siren, buzzer), whether the active state is HIG
 
 ```c
 #define PIN_RELAY_CH1          11
-#define PIN_RELAY_CH1_ACTIVE   1    // 1 = active HIGH (ULN2003A: HIGH = relay energised)
+#define PIN_RELAY_CH1_ACTIVE   1    // 1 = active HIGH (IRLZ44N: HIGH = MOSFET on = relay energised)
 
 #define PIN_SIREN              40
-#define PIN_SIREN_ACTIVE       1    // 1 = active HIGH (ULN2003A: HIGH = siren on)
+#define PIN_SIREN_ACTIVE       1    // 1 = active HIGH (IRLZ44N: HIGH = MOSFET on = siren on)
 ```
 
-The relay and siren driver functions shall use these polarity constants to translate logical state (on/off) to physical GPIO level. With the ULN2003A darlington driver, all outputs are active HIGH (GPIO HIGH → ULN2003A sinks → coil energised). The polarity constants are retained for code portability in case a different driver topology is used in future.
+The relay and siren driver functions shall use these polarity constants to translate logical state (on/off) to physical GPIO level. With the IRLZ44N low-side MOSFET driver, all outputs are active HIGH (GPIO HIGH → MOSFET on → relay coil sinks to GND → coil energised). The polarity constants are retained for code portability in case a different driver topology is used in future.
 
 ### 5.3 Debounce Engine
 
@@ -524,12 +524,12 @@ All GPIO pin numbers and polarities shall be defined in `pin_config.h`.
 
 | Parameter | Value |
 |---|---|
-| Signal type | Digital output, active HIGH (GPIO HIGH = ULN2003 sinks = relay coil energised) |
+| Signal type | Digital output, active HIGH (GPIO HIGH = MOSFET on = relay coil energised) |
 | Quantity | 8 (channels 1–8) |
 | Relay type | 12V automotive SPDT relay, 20A contact rating (e.g., typical 5-pin auto relay). Coil resistance ~80–150 Ω, coil current ~80–150 mA at 12V. |
-| Driver | 2× ULN2003A darlington transistor arrays (see §5.4.9). Each ULN2003A has 7 channels; IC1 drives channels 1–7, IC2 drives channel 8 + siren. |
+| Driver | 9× IRLZ44N logic-level N-channel MOSFETs in low-side switch configuration (see §5.4.9). One MOSFET per relay coil (8 channels + 1 siren). |
 | Default state at boot | Inactive (relay de-energised, NC position — igniter routed to continuity sense circuit) |
-| Drive requirement | 3.3 V logic level into ULN2003A input, max ~1 mA per channel |
+| Drive requirement | 3.3 V logic level into MOSFET gate via 150 Ω series resistor. 10 kΩ gate pull-down to GND ensures MOSFET is OFF when GPIO is high-impedance at boot. |
 
 Each output, when driven active, energises an SPDT relay that switches the igniter from the continuity sensing circuit (NC) to the fire path (NO). The NO contact is connected to battery positive via the arm switch. The COM contact is connected to the igniter high-side. The igniter low-side is connected directly to ground. The output must be held active for the configured fire pulse duration, then returned to inactive (relay returns to NC position).
 
@@ -570,7 +570,7 @@ The current-limiting resistors R_ref1 + R_ref2 (1.5 kΩ + 1.8 kΩ = 3.3 kΩ tota
 
 The 100 kΩ pull-down resistor (R_pull) serves a critical function: **without it, an open circuit leaves the ADC pin floating**, producing undefined readings. With R_pull, an open circuit reads a defined voltage of 3.3 × 100k / (3.3k + 100k) ≈ **3.19V**, which is clearly distinguishable from any connected igniter. The pull-down draws negligible current (33 µA) and does not materially affect readings when an igniter is connected, since R_pull (100 kΩ) is vastly larger than any igniter resistance.
 
-**Component count per channel:** 3 resistors (R_ref1 1.5 kΩ fusible + R_ref2 1.8 kΩ fusible + R_pull 100 kΩ). **Total additional components: 24 continuity resistors** (8× R_ref1 1.5 kΩ fusible + 8× R_ref2 1.8 kΩ fusible + 8× R_pull 100 kΩ) + **3 arm switch sense components** (1× 10 kΩ series + 1× 3.3 V zener + 1× 100 kΩ pull-down) + **8× 12V automotive SPDT relays** + **2× ULN2003A darlington arrays**.
+**Component count per channel:** 3 resistors (R_ref1 1.5 kΩ fusible + R_ref2 1.8 kΩ fusible + R_pull 100 kΩ). **Total additional components: 24 continuity resistors** (8× R_ref1 1.5 kΩ fusible + 8× R_ref2 1.8 kΩ fusible + 8× R_pull 100 kΩ) + **3 arm switch sense components** (1× 10 kΩ series + 1× 3.3 V zener + 1× 100 kΩ pull-down) + **8× 12V automotive SPDT relays** + **9× IRLZ44N MOSFET driver circuits** (9 MOSFETs + 9 gate resistors + 9 pull-downs + 9 flyback diodes, see §5.4.9).
 
 ##### Continuity Band Classification
 
@@ -738,26 +738,54 @@ The DIVIDER_RATIO constant must be defined in configuration to match the externa
 
 | Parameter | Value |
 |---|---|
-| Signal type | Digital output, active HIGH (GPIO HIGH = ULN2003 sinks = siren activated) |
+| Signal type | Digital output, active HIGH (GPIO HIGH = MOSFET on = siren activated) |
 | Quantity | 1 |
 | Function | Loud alarm: pulsing during ARMED, continuous during PRE_FIRE and FIRING, pulsed during LINK_LOST |
-| Driver | Via ULN2003A IC2 (shares IC with channel 8 relay) |
+| Driver | Via dedicated IRLZ44N MOSFET (same low-side switch topology as relay drivers, see §5.4.9) |
 
-#### 5.4.9 ULN2003A Darlington Driver Arrays
+#### 5.4.9 IRLZ44N MOSFET Low-Side Drivers
 
 | Parameter | Value |
 |---|---|
-| IC type | ULN2003A — 7-channel darlington transistor array with integrated freewheel diodes |
-| Quantity | 2 ICs |
-| IC1 allocation | Channels 1–7 relay coils (7 of 7 channels used) |
-| IC2 allocation | Channel 8 relay coil + siren (2 of 7 channels used, 5 spare) |
-| Supply | COM pin on each IC connected to VBAT+ (12V) for freewheel diode return path |
-| Max sink current | 500 mA per channel (derated to ~300 mA for thermal margin). 12V automotive relay coils draw ~80–150 mA — well within limits. |
-| Logic | Active HIGH: ESP32-S3 GPIO HIGH → ULN2003A input HIGH → output LOW (sinking) → relay coil energised from VBAT through coil to ground via darlington. ESP32-S3 GPIO LOW → ULN2003A output high-impedance → relay de-energised. |
+| MOSFET type | IRLZ44N — N-channel logic-level power MOSFET (Vds = 55 V, Id = 47 A, Rds(on) ≈ 22 mΩ @ Vgs = 5 V) |
+| Quantity | 9 (one per relay coil × 8 channels + 1 siren) |
+| Configuration | Low-side switch: drain to relay coil low-side, source to GND, gate from ESP32-S3 GPIO |
+| Gate series resistor (R_g) | 150 Ω per MOSFET (standard E24 value). Limits peak gate inrush to 22 mA (3.3V / 150Ω), damps gate ringing from lead inductance. Turn-on time ≈ 270 ns (R_g × Ciss), negligible for relay switching. |
+| Gate pull-down resistor (R_pd) | 10 kΩ per MOSFET, gate to GND. Ensures MOSFET is OFF when GPIO is high-impedance at boot. **Critical for boot safety.** |
+| Flyback diode | 1 per relay coil (1N4007 or Schottky e.g. 1N5819/SS14), cathode to VBAT+, anode to drain. Clamps inductive kick on coil de-energisation. |
+| Rds(on) at 3.3 V Vgs | ~30–40 mΩ (higher than 5 V spec but negligible for relay coil currents of 80–150 mA; P_diss < 1 mW per channel) |
+| Logic | Active HIGH: ESP32-S3 GPIO HIGH → MOSFET gate driven via R_g → MOSFET on (drain-source conducts) → relay coil energised from VBAT+ through coil to GND via MOSFET. ESP32-S3 GPIO LOW → MOSFET off → relay de-energised. |
 
-**Freewheel diodes:** The ULN2003A has integrated freewheel (suppression) diodes from each output to the COM pin. The COM pin on both ICs SHALL be connected to VBAT+ (12V). These diodes clamp the inductive kick from relay coil de-energisation, protecting the darlington outputs. No external freewheel diodes are required.
+**Per-channel circuit:**
 
-**Boot safety:** At power-on, the ESP32-S3 GPIOs default to input mode (high-impedance). The ULN2003A inputs have internal base resistors that pull the inputs low when not driven. This ensures all relay outputs are de-energised at boot, even before the firmware configures GPIOs. This is a hardware fail-safe.
+```
+        VBAT+ (12V)
+            │
+      ┌─────┴─────┐
+      │  Relay     │
+      │  coil      │◄── flyback diode (cathode to VBAT+, anode to drain)
+      └─────┬─────┘
+            │ drain
+    ┌───────┴───────┐
+    │   IRLZ44N     │
+    │               │
+    │  gate  source │
+    └──┬───────┬────┘
+       │       │
+  R_g  │       │
+(150Ω) │       │
+       │       │
+ESP32 ─┘  R_pd │
+GPIO      (10k)│
+           │   │
+          GND GND
+```
+
+**Flyback diodes:** Each relay coil and the siren MUST have an external flyback (freewheel) diode. The diode cathode connects to VBAT+ (12 V) and the anode connects to the MOSFET drain (relay coil low-side). This clamps the inductive voltage spike when the coil de-energises, protecting the MOSFET. A 1N4007 (general purpose) or 1N5819/SS14 (Schottky, faster recovery) is suitable.
+
+**Boot safety:** At power-on, the ESP32-S3 GPIOs default to input mode (high-impedance). The 10 kΩ gate pull-down resistor on each MOSFET holds the gate at 0 V, ensuring all MOSFETs are OFF and all relay outputs are de-energised before the firmware configures GPIOs. This is a hardware fail-safe. Without the pull-down, stray capacitive coupling from the drain (via Cgd) could partially turn on the MOSFET during power-on transients.
+
+**Component count:** 9× IRLZ44N MOSFETs + 9× gate series resistors (150 Ω) + 9× gate pull-down resistors (10 kΩ) + 9× flyback diodes = **36 components total** for relay and siren drive.
 
 #### 5.4.10 RGB LED (Status Indicator)
 
@@ -871,27 +899,31 @@ Same as Base Unit §5.4.9. On-board WS2812 on GPIO 47.
 
 | Parameter | Value |
 |---|---|
-| Battery chemistry | 3S LiPo (11.1V nominal) or sealed lead-acid (12V nominal) |
-| Nominal voltage | 11.1–12.6V (LiPo) or 12.0–12.8V (SLA) |
+| Battery chemistry | 3S LiPo (11.1V nominal) |
+| Specified battery | Turnigy Rapid 3S 5000mAh 11.1V 100C LiPo (SKU 9067160560, 55.5 Wh) |
+| Nominal voltage | 11.1V (fully charged: 12.6V) |
 | Minimum operating voltage | 9.0V (`BASE_VBAT_CRITICAL_MV`) |
 | Minimum arm voltage | 10.5V (`BASE_VBAT_MIN_ARM_MV`) |
 | Voltage divider ratio | 4.3:1 (33 kΩ + 10 kΩ, giving 0–3.3V ADC range for 0–14.19V battery) |
-| Capacity requirement | Minimum 2 Ah recommended. Must sustain relay inrush current (per §9.8) without dipping below BOD threshold. |
-| Connector | To be defined in hardware design. Recommend XT60 or Anderson PowerPole for field robustness. |
-| Regulation | 3.3V LDO or DC-DC buck converter for ESP32-S3 and logic. Relay coils driven from battery via 2× ULN2003A darlington arrays (§5.4.9). |
+| Capacity | 5000 mAh (specified battery) |
+| Discharge rating | 100C continuous (500 A) — far exceeds relay + igniter demand, ensuring stable voltage under all loads |
+| Connector | XT90 (on battery); PCB must mate with XT90 or use XT90 pigtail. |
+| Regulation | 3.3V LDO or DC-DC buck converter for ESP32-S3 and logic. Relay coils driven from battery via IRLZ44N low-side MOSFET switches (§5.4.9). |
 
 #### 5.6.2 Remote Unit Power Supply
 
 | Parameter | Value |
 |---|---|
-| Battery chemistry | Single-cell LiPo (1S, 3.7V nominal) |
-| Nominal voltage | 3.7V (fully charged: 4.2V) |
-| Minimum operating voltage | 3.2V (`REMOTE_VBAT_CRITICAL_MV`) |
-| Minimum arm voltage | 3.5V (`REMOTE_VBAT_MIN_ARM_MV`) |
-| Voltage divider ratio | 2.0:1 (giving 0–3.3V ADC range for 0–6.6V battery, though LiPo max is 4.2V) |
-| Capacity requirement | Minimum 1000 mAh recommended for a full launch day (4+ hours). ESP32-S3 with Wi-Fi active draws ~150–250 mA; display backlight adds ~20–50 mA. |
-| Connector | JST-PH 2-pin (standard for LiPo hobby batteries) or USB-C with integrated charging IC. |
-| Regulation | 3.3V LDO from LiPo (dropout < 0.3V at 300 mA). |
+| Battery chemistry | 2S LiPo (7.4V nominal) |
+| Specified battery | Turnigy 2200mAh 2S 7.4V 30C Shorty LiPo (SKU 9067110009, 16.28 Wh) |
+| Nominal voltage | 7.4V (fully charged: 8.4V) |
+| Minimum operating voltage | 6.4V (`REMOTE_VBAT_CRITICAL_MV`, 3.2V/cell) |
+| Minimum arm voltage | 7.0V (`REMOTE_VBAT_MIN_ARM_MV`, 3.5V/cell) |
+| Voltage divider ratio | 2.8:1 (18 kΩ + 10 kΩ, giving 0–3.0V ADC range for 0–8.4V battery) |
+| Capacity | 2200 mAh (specified battery) |
+| Discharge rating | 30C continuous (66 A) — far exceeds remote unit demand (~300 mA peak) |
+| Connector | T-plug (Deans) (on battery); PCB must mate with T-plug or use T-plug pigtail. |
+| Regulation | 3.3V DC-DC buck converter (e.g., MP1584EN module). LDO not recommended due to large voltage differential (7.4–8.4V → 3.3V) and associated thermal waste. |
 
 ---
 
@@ -2205,10 +2237,10 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `BASE_VBAT_DIVIDER_RATIO` | 4.3 | Voltage divider ratio for base battery ADC (33 kΩ + 10 kΩ) |
 | `BASE_VBAT_MIN_ARM_MV` | 10500 | Minimum base battery to allow arming (mV) |
 | `BASE_VBAT_CRITICAL_MV` | 9000 | Critical base battery threshold (mV) |
-| `REMOTE_VBAT_DIVIDER_RATIO` | 2.0 | Voltage divider ratio for remote battery ADC |
-| `REMOTE_VBAT_MIN_ARM_MV` | 3500 | Minimum remote battery to allow arming (mV) |
-| `REMOTE_VBAT_MIN_OPERATE_MV` | 3300 | Minimum remote battery for operation (mV) |
-| `REMOTE_VBAT_CRITICAL_MV` | 3200 | Critical remote battery threshold (mV). Set above 3.0V to protect LiPo cell health (3.0V is the absolute minimum for most LiPo cells and risks permanent damage) and to maintain margin above the ESP32-S3 brown-out threshold (2.84V). |
+| `REMOTE_VBAT_DIVIDER_RATIO` | 2.8 | Voltage divider ratio for remote battery ADC (18 kΩ + 10 kΩ) |
+| `REMOTE_VBAT_MIN_ARM_MV` | 7000 | Minimum remote battery to allow arming (mV, 3.5V/cell) |
+| `REMOTE_VBAT_MIN_OPERATE_MV` | 6600 | Minimum remote battery for operation (mV, 3.3V/cell) |
+| `REMOTE_VBAT_CRITICAL_MV` | 6400 | Critical remote battery threshold (mV, 3.2V/cell). Set above 6.0V (3.0V/cell) to protect LiPo cell health and to maintain margin above the regulation stage input requirements. |
 
 ### 14.3 Hardware Configuration
 
@@ -2573,21 +2605,23 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm
 | Channel 7 SPDT relay output | 17 | Digital output |
 | Channel 8 SPDT relay output | 18 | Digital output |
 | Arm switch sense input | 21 | Digital input with external 3.3V zener clamp, 10kΩ series, 100kΩ pull-down (§5.4.3). Sole method of arm switch state detection. |
-| Siren output | 40 | Digital output, via ULN2003A IC2 |
-| RGB LED (status) | 47 | WS2812 via RMT (on-board, fixed) |
+| Arm relay output | 47 | Digital output, via IRLZ44N MOSFET (§5.4.9) |
+| Siren output | 40 | Digital output, via IRLZ44N MOSFET (§5.4.9) |
+| RGB LED strip (status) | 48 | WS2812 8-pixel LED strip via RMT |
 
-**Total: 20 GPIOs + 1 on-board LED = 21 pins used. 5 spare GPIOs (38, 39, 41, 42, 48). GPIO 3 deliberately unused (strapping pin).**
+**Total: 21 GPIOs = 22 pins used. 4 spare GPIOs (38, 39, 41, 42). GPIO 3 deliberately unused (strapping pin).**
 
 **Notes:**
 - GPIO 1–9 plus GPIO 10 are allocated to ADC1 (1 battery + 8 continuity). All 10 ADC1 pins are used; no spare ADC1 pins remain.
 - GPIO 3 is a strapping pin (JTAG signal select) and is deliberately not used. Channel 2 continuity is assigned to GPIO 10 (ADC1_CH9) instead.
 - Continuity inputs use ADC1 GPIOs (2, 10, 4–9) for analogue band classification. Each requires two external series fusible resistors (1.5 kΩ + 1.8 kΩ) and one 100 kΩ pull-down resistor (24 resistors total). Continuity is sensed via the SPDT relay NC contact. No MOSFET switch is required — the SPDT relay provides inherent isolation.
-- SPDT relay outputs on GPIO 11–18, driven via 2× ULN2003A darlington arrays (§5.4.9). Active HIGH: GPIO HIGH = relay energised (NO/fire position). GPIO LOW = relay de-energised (NC/continuity position).
+- SPDT relay outputs on GPIO 11–18, each driven via an IRLZ44N low-side MOSFET (§5.4.9). Active HIGH: GPIO HIGH = MOSFET on = relay energised (NO/fire position). GPIO LOW = relay de-energised (NC/continuity position).
 - ADC2 (GPIO 11–20) is unreliable with ESP-NOW active, but GPIO 11–18 are used as digital outputs only — ADC2 conflict does not apply to digital I/O.
 - GPIO 21 is the arm switch sense input — reads VBAT presence on the fire path via the arm switch, protected by external 3.3V zener clamp. This is the sole method of arm switch state detection (no separate digital arm switch GPIO).
-- GPIO 40 is the siren output, driven via ULN2003A IC2.
-- GPIO 47 has the on-board WS2812 RGB LED — no external wiring needed.
-- Spare GPIOs 38, 39, 41, 42, 48 available for future expansion.
+- GPIO 40 is the siren output, driven via IRLZ44N MOSFET (§5.4.9).
+- GPIO 47 is the arm relay output, driven via IRLZ44N MOSFET (§5.4.9). Active HIGH.
+- GPIO 48 has the WS2812 8-pixel RGB LED strip for status indication.
+- Spare GPIOs 38, 39, 41, 42 available for future expansion.
 
 ### C.2 Remote Unit Pin Assignment
 
@@ -2597,7 +2631,10 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm
 | Encoder DT (B) | 5 | Digital input, pull-up, interrupt |
 | Encoder SW (push) | 6 | Digital input, pull-up |
 | Arm/disarm switch | 7 | Digital input, pull-up |
+| Arm switch LED (red) | 8 | Digital output |
 | Fire button | 15 | Digital input, pull-up |
+| Fire button LED (red) | 17 | Digital output |
+| Fire button LED (green) | 18 | Digital output |
 | Battery voltage ADC | 1 | ADC1_CH0 — safe with Wi-Fi/ESP-NOW |
 | Buzzer | 16 | Digital output |
 | Display SPI MOSI | 11 | SPI2 MOSI |
@@ -2609,9 +2646,9 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm
 | Display MISO | 9 | SPI2 MISO |
 | RGB LED (status) | 47 | WS2812 via RMT (on-board, fixed) |
 
-**Total: 14 GPIOs + 1 on-board LED = 15 pins used. 10 spare GPIOs.**
+**Total: 17 GPIOs + 1 on-board LED = 18 pins used. 7 spare GPIOs.**
 
-**Spare GPIOs available:** 2, 8, 17, 18, 38, 39, 40, 41, 42, 48 — available for future expansion (e.g., SD card, additional buttons, external status LEDs).
+**Spare GPIOs available:** 2, 38, 39, 40, 41, 42, 48 — available for future expansion (e.g., SD card, additional buttons, external status LEDs).
 
 **Notes:**
 - Battery ADC is on GPIO 1 (ADC1_CH0), same as base unit for code reuse.

@@ -1,4 +1,5 @@
 #include "hw_relay.h"
+#include "hw_inputs.h"
 #include "pin_config.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -68,4 +69,8 @@ void relay_sweep(void)
         vTaskDelay(pdMS_TO_TICKS(500));
         relay_set(ch, 0);
     }
+    /* Arm relay (GPIO 47) */
+    arm_sim_set(1);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    arm_sim_set(0);
 }

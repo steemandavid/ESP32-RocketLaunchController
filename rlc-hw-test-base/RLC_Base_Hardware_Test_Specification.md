@@ -77,10 +77,11 @@ All pin assignments match the main RLC FSD (RLC-FSPEC-001 v1.10, Appendix C.1).
 | Channel 7 SPDT relay output | 17 | Digital output | Active HIGH via ULN2003A IC1 |
 | Channel 8 SPDT relay output | 18 | Digital output | Active HIGH via ULN2003A IC2 |
 | Arm switch sense input | 21 | Digital input | External 10kΩ + 3.3V zener + 100kΩ pull-down. HIGH=armed. |
+| Arm relay output | 47 | Digital output | Active HIGH via IRLZ44N MOSFET |
 | Siren output | 40 | Digital output | Active HIGH via ULN2003A IC2 |
-| RGB LED (status) | 47 | WS2812 | On-board, RMT peripheral |
+| RGB LED strip (status) | 48 | WS2812 | 8-pixel LED strip, RMT peripheral |
 
-**Spare GPIOs:** 38, 39, 41, 42, 48
+**Spare GPIOs:** 38, 39, 41, 42
 
 ---
 
@@ -260,7 +261,7 @@ Each test validates one hardware subsystem. Tests are performed manually using t
 | ID | Test | Procedure | Pass Criteria |
 |---|---|---|---|
 | B-R01 | Individual SPDT relay activation | `relay <ch> on` for each channel 1–8. Observe relay click or measure GPIO with multimeter/logic analyser. `relay <ch> off` after each. | Each relay energises (NC→NO) and de-energises (→NC) cleanly. GPIO matches expected active HIGH level. |
-| B-R02 | Relay sweep | `relay sweep`. Listen for 8 sequential clicks. | 8 distinct relay activations heard/measured, ~500 ms apart. |
+| B-R02 | Relay sweep | `relay sweep`. Listen for 9 sequential clicks. | 9 distinct relay activations heard/measured (8 channel + arm relay), ~500 ms apart. |
 | B-R03 | All-safe | `relay 1 on`, `relay 3 on`. Then `safe`. Verify all relays de-energised. | All relay GPIOs return to inactive state (LOW). |
 
 ### 7.2 Continuity Tests
