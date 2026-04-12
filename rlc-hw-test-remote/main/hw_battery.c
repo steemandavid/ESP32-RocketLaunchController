@@ -90,10 +90,14 @@ void batt_read_raw_stats(int n_samples, int *out_mean, int *out_min, int *out_ma
     for (int i = 0; i < n_samples; i++) {
         int raw = 0;
         adc_oneshot_read(s_adc1_handle, ADC_CH_BATT, &raw);
-        buf[i] = raw;
-        sum   += raw;
-        if (raw < mn) mn = raw;
-        if (raw > mx) mx = raw;
+        int mv = raw;
+        if (s_adc1_cali_ok) {
+            adc_cali_raw_to_voltage(s_adc1_cali, raw, &mv);
+        }
+        buf[i] = mv;
+        sum   += mv;
+        if (mv < mn) mn = mv;
+        if (mv > mx) mx = mv;
     }
     int mean = (int)(sum / n_samples);
     long long var = 0;

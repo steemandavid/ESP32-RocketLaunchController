@@ -39,18 +39,26 @@ int fire_read_raw(void)
     return gpio_get_level(PIN_FIRE_BUTTON);
 }
 
-int fire_get_shift_reg(void)
+void fire_poll(void)
 {
-    /* Shift current reading into register */
     int raw = gpio_get_level(PIN_FIRE_BUTTON);
     s_fire_sr = (s_fire_sr << 1) | (raw ? 1 : 0);
+}
+
+int fire_get_shift_reg(void)
+{
     return s_fire_sr;
 }
 
 int fire_read_debounced(void)
 {
-    fire_get_shift_reg();
     return (s_fire_sr == 0x00) ? 1 : 0;  /* 0x00 = all LOW = pressed */
+}
+
+void fire_reset_fresh(void)
+{
+    s_fire_sr = 0xFF;
+    s_fire_was_released = 1;
 }
 
 int fire_fresh_press(void)
@@ -71,16 +79,19 @@ int arm_read_raw(void)
     return gpio_get_level(PIN_ARM_SWITCH);
 }
 
-uint16_t arm_get_shift_reg(void)
+void arm_poll(void)
 {
     int raw = gpio_get_level(PIN_ARM_SWITCH);
     s_arm_sr = (s_arm_sr << 1) | (raw ? 1 : 0);
+}
+
+uint16_t arm_get_shift_reg(void)
+{
     return s_arm_sr;
 }
 
 int arm_read_debounced(void)
 {
-    arm_get_shift_reg();
     return (s_arm_sr == 0x0000) ? 1 : 0; /* 0x0000 = all LOW = ARMED */
 }
 
@@ -91,15 +102,18 @@ int enc_sw_read_raw(void)
     return gpio_get_level(PIN_ENCODER_SW);
 }
 
-uint16_t enc_sw_get_shift_reg(void)
+void enc_sw_poll(void)
 {
     int raw = gpio_get_level(PIN_ENCODER_SW);
     s_enc_sw_sr = (s_enc_sw_sr << 1) | (raw ? 1 : 0);
+}
+
+uint16_t enc_sw_get_shift_reg(void)
+{
     return s_enc_sw_sr;
 }
 
 int enc_sw_read_debounced(void)
 {
-    enc_sw_get_shift_reg();
     return (s_enc_sw_sr == 0x0000) ? 1 : 0; /* pressed = LOW */
 }

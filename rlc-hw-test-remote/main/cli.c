@@ -110,6 +110,7 @@ static void cmd_help(void)
         "  disp fill <r> <g> <b>        Fill screen with colour\r\n"
         "  disp test                    Run test patterns\r\n"
         "  disp text <string>           Display text (white on black)\r\n"
+        "  disp grid                    Draw 8-channel grid layout\r\n"
         "  disp gradient                Horizontal gradient\r\n"
         "  disp speed                   Measure fill speed\r\n"
         "  disp pixel <x> <y> <r> <g> <b>  Set single pixel\r\n"
@@ -152,8 +153,11 @@ static void cmd_status(void)
     uart_puts("=== System Status ===\r\n");
 
     printf("Encoder count   : %d\r\n", enc_get_count());
+    arm_poll();
     printf("Arm switch      : raw=%d  %s\r\n", arm_read_raw(), arm_read_debounced() ? "ARMED" : "DISARMED");
+    fire_poll();
     printf("Fire button     : raw=%d  %s\r\n", fire_read_raw(), fire_read_debounced() ? "PRESSED" : "RELEASED");
+    enc_sw_poll();
     printf("Encoder SW      : raw=%d  %s\r\n", enc_sw_read_raw(), enc_sw_read_debounced() ? "PRESSED" : "RELEASED");
 
     batt_reading_t batt = batt_read();
@@ -240,6 +244,7 @@ static void cmd_enc(char *toks[], int ntok)
         uart_puts("Monitoring encoder SW — press any key to stop.\r\n");
         uint8_t dummy;
         while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
+            enc_sw_poll();
             int raw = enc_sw_read_raw();
             int db  = enc_sw_read_debounced();
             printf("SW: raw=%d  debounced=%s\r\n", raw, db ? "PRESSED" : "RELEASED");
@@ -254,6 +259,7 @@ static void cmd_enc(char *toks[], int ntok)
         int was_pressed = 0;
         int64_t press_time = 0;
         while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
+            enc_sw_poll();
             int db = enc_sw_read_debounced();
             if (db && !was_pressed) {
                 press_time = esp_timer_get_time();
@@ -282,6 +288,7 @@ static void cmd_fire(char *toks[], int ntok)
         uart_puts("Monitoring fire button — press any key to stop.\r\n");
         uint8_t dummy;
         while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
+            fire_poll();
             int raw = fire_read_raw();
             int sr  = fire_get_shift_reg();
             int db  = fire_read_debounced();
@@ -291,10 +298,10 @@ static void cmd_fire(char *toks[], int ntok)
         uart_puts("Stopped.\r\n");
     } else if (strcmp(toks[1], "fresh") == 0) {
         uart_puts("Fresh-press test — press fire button. Any key stops.\r\n");
-        /* Reset fresh-press tracking */
-        hw_buttons_init();
+        fire_reset_fresh();
         uint8_t dummy;
         while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
+            fire_poll();
             if (fire_fresh_press()) {
                 printf("FRESH PRESS detected!\r\n");
             }
@@ -314,6 +321,7 @@ static void cmd_arm(char *toks[], int ntok)
         uart_puts("Monitoring arm switch — press any key to stop.\r\n");
         uint8_t dummy;
         while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
+            arm_poll();
             int raw = arm_read_raw();
             uint16_t sr = arm_get_shift_reg();
             int db  = arm_read_debounced();
@@ -330,7 +338,7 @@ static void cmd_arm(char *toks[], int ntok)
 
 static void cmd_disp(char *toks[], int ntok)
 {
-    if (ntok < 2) { uart_puts("Usage: disp init|id|fill|test|text|gradient|speed|pixel|rect|backlight\r\n"); return; }
+    if (ntok < 2) { uart_puts("Usage: disp init|id|fill|test|text|grid|gradient|speed|pixel|rect|backlight\r\n"); return; }
 
     if (strcmp(toks[1], "init") == 0) {
         uart_puts("Initialising display...\r\n");
@@ -350,8 +358,22 @@ static void cmd_disp(char *toks[], int ntok)
         display_test();
     } else if (strcmp(toks[1], "text") == 0) {
         if (ntok < 3) { uart_puts("Usage: disp text <string>\r\n"); return; }
-        display_text(toks[2]);
-        printf("Text displayed: %s\r\n", toks[2]);
+        /* Rejoin tokens 2..N with spaces for multi-word text */
+        char text_buf[128];
+        int pos = 0;
+        for (int i = 2; i < ntok && pos < (int)sizeof(text_buf) - 1; i++) {
+            if (i > 2 && pos < (int)sizeof(text_buf) - 1) text_buf[pos++] = ' ';
+            int len = strlen(toks[i]);
+            if (pos + len >= (int)sizeof(text_buf)) len = sizeof(text_buf) - 1 - pos;
+            memcpy(&text_buf[pos], toks[i], len);
+            pos += len;
+        }
+        text_buf[pos] = '\0';
+        display_text(text_buf);
+        printf("Text displayed: %s\r\n", text_buf);
+    } else if (strcmp(toks[1], "grid") == 0) {
+        display_grid();
+        uart_puts("Channel grid displayed.\r\n");
     } else if (strcmp(toks[1], "gradient") == 0) {
         display_gradient();
         uart_puts("Gradient displayed.\r\n");
@@ -415,7 +437,7 @@ static void cmd_batt(char *toks[], int ntok)
         if (n <= 0) n = 8;
         int mean, mn, mx, sd;
         batt_read_raw_stats(n, &mean, &mn, &mx, &sd);
-        printf("Battery raw stats (%d samples): mean=%d  min=%d  max=%d  stddev=%d\r\n",
+        printf("Battery stats (%d samples): mean=%d mV  min=%d mV  max=%d mV  stddev=%d mV\r\n",
                n, mean, mn, mx, sd);
         return;
     }
@@ -492,6 +514,7 @@ static void cmd_debounce(char *toks[], int ntok)
 
     if (strcmp(toks[1], "fire") == 0) {
         while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
+            fire_poll();
             int sr = fire_get_shift_reg();
             char bin[9];
             for (int i = 7; i >= 0; i--) bin[7-i] = (sr & (1<<i)) ? '1' : '0';
@@ -501,12 +524,14 @@ static void cmd_debounce(char *toks[], int ntok)
         }
     } else if (strcmp(toks[1], "arm") == 0) {
         while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
+            arm_poll();
             uint16_t sr = arm_get_shift_reg();
             printf("Arm SR: 0x%04X\r\n", sr);
             vTaskDelay(pdMS_TO_TICKS(10));
         }
     } else if (strcmp(toks[1], "encoder") == 0) {
         while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
+            enc_sw_poll();
             uint16_t sr = enc_sw_get_shift_reg();
             printf("Enc SW SR: 0x%04X\r\n", sr);
             vTaskDelay(pdMS_TO_TICKS(10));

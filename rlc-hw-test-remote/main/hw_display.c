@@ -72,13 +72,10 @@ static const uint8_t font5x7[][5] = {
 
 static inline void dc_data(void)  { gpio_set_level(PIN_DISP_DC, 1); }
 static inline void dc_cmd(void)   { gpio_set_level(PIN_DISP_DC, 0); }
-static inline void cs_low(void)   { gpio_set_level(PIN_DISP_CS, 0); }
-static inline void cs_high(void)  { gpio_set_level(PIN_DISP_CS, 1); }
 
 static void spi_send_cmd(uint8_t cmd)
 {
     spi_transaction_t t = {
-        .flags     = SPI_TRANS_MULTILINE_CMD,
         .length    = 8,
         .tx_buffer = &cmd,
     };
@@ -99,15 +96,20 @@ static void spi_send_data(const uint8_t *data, int len)
 
 static void spi_read_data(uint8_t cmd, uint8_t *buf, int len)
 {
+    /* Acquire bus to hold CS low across command + read */
+    spi_device_acquire_bus(s_spi, portMAX_DELAY);
+
     spi_send_cmd(cmd);
     dc_data();
     memset(buf, 0, len);
     spi_transaction_t t = {
-        .length    = 8,
+        .length    = 0,
         .rxlength  = len * 8,
         .rx_buffer = buf,
     };
     spi_device_polling_transmit(s_spi, &t);
+
+    spi_device_release_bus(s_spi);
 }
 
 static void set_window(int x0, int y0, int x1, int y1)
@@ -136,8 +138,8 @@ static void hardware_reset(void)
 
 void hw_display_init(void)
 {
-    /* Configure control pins */
-    uint64_t mask = (1ULL << PIN_DISP_CS) | (1ULL << PIN_DISP_DC)
+    /* Configure control pins (CS handled by SPI driver) */
+    uint64_t mask = (1ULL << PIN_DISP_DC)
                   | (1ULL << PIN_DISP_RST) | (1ULL << PIN_DISP_BACKLIGHT);
     gpio_config_t io = {
         .pin_bit_mask = mask,
@@ -165,7 +167,7 @@ void hw_display_init(void)
     spi_device_interface_config_t dev = {
         .clock_speed_hz = DISPLAY_SPI_FREQ_HZ,
         .mode           = 0,
-        .spics_io_num   = -1,  /* Manual CS */
+        .spics_io_num   = PIN_DISP_CS,
         .queue_size     = 1,
     };
     ESP_ERROR_CHECK(spi_bus_add_device(DISPLAY_SPI_HOST, &dev, &s_spi));
@@ -269,33 +271,75 @@ void display_rect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b)
     free(buf);
 }
 
+static void draw_char(int x, int y, char ch, int scale, uint8_t r, uint8_t g, uint8_t b)
+{
+    if (ch < 0x20 || ch > 0x7E) ch = 0x20;
+    int idx = ch - 0x20;
+    for (int col = 0; col < 5; col++) {
+        uint8_t bits = font5x7[idx][col];
+        for (int row = 0; row < 7; row++) {
+            if (bits & (1 << row)) {
+                display_rect(x + col * scale, y + row * scale, scale, scale, r, g, b);
+            }
+        }
+    }
+}
+
 void display_text(const char *str)
 {
     if (!str) return;
     int len = strlen(str);
-    int char_w = 6;  /* 5 pixels + 1 spacing */
-    int char_h = 8;  /* 7 pixels + 1 spacing */
+    int scale = 2;
+    int char_w = 6 * scale;  /* (5 pixels + 1 spacing) * scale */
+    int char_h = 8 * scale;  /* (7 pixels + 1 spacing) * scale */
     int total_w = len * char_w;
     int total_h = char_h;
     int x_start = (DISPLAY_WIDTH - total_w) / 2;
     int y_start = (DISPLAY_HEIGHT - total_h) / 2;
+    if (x_start < 0) x_start = 0;
 
     /* Clear to black */
     display_fill(0, 0, 0);
 
     for (int c = 0; c < len; c++) {
-        char ch = str[c];
-        if (ch < 0x20 || ch > 0x7E) ch = 0x20;
-        int idx = ch - 0x20;
-        int x0 = x_start + c * char_w;
-        for (int col = 0; col < 5; col++) {
-            uint8_t bits = font5x7[idx][col];
-            for (int row = 0; row < 7; row++) {
-                if (bits & (1 << row)) {
-                    display_pixel(x0 + col, y_start + row, 255, 255, 255);
-                }
-            }
-        }
+        draw_char(x_start + c * char_w, y_start, str[c], scale, 255, 255, 255);
+    }
+}
+
+void display_grid(void)
+{
+    display_fill(0, 0, 0);
+
+    /* 4 columns × 2 rows grid for channels 1–8 */
+    int cols = 4, rows = 2;
+    int cell_w = DISPLAY_WIDTH / cols;
+    int cell_h = DISPLAY_HEIGHT / rows;
+
+    /* Colours per channel: blue, green, red, orange, yellow, cyan, magenta, white */
+    static const uint8_t ch_colours[][3] = {
+        {0,0,255}, {0,255,0}, {255,0,0}, {255,140,0},
+        {255,255,0}, {0,255,255}, {255,0,255}, {255,255,255}
+    };
+
+    for (int ch = 0; ch < 8; ch++) {
+        int col = ch % cols;
+        int row = ch / cols;
+        int x = col * cell_w;
+        int y = row * cell_h;
+
+        /* Cell border (1px white) */
+        display_rect(x, y, cell_w, 1, 80, 80, 80);
+        display_rect(x, y, 1, cell_h, 80, 80, 80);
+
+        /* Colour indicator square (16x16 centred) */
+        int bx = x + (cell_w - 16) / 2;
+        int by = y + (cell_h - 16) / 2 - 6;
+        display_rect(bx, by, 16, 16,
+                     ch_colours[ch][0], ch_colours[ch][1], ch_colours[ch][2]);
+
+        /* Channel number below indicator */
+        char num = '1' + ch;
+        draw_char(x + (cell_w - 10) / 2, by + 20, num, 2, 255, 255, 255);
     }
 }
 

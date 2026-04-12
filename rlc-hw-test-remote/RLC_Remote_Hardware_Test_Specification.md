@@ -39,7 +39,7 @@ ESP32-S3-DevKitC-1 with ESP32-S3-WROOM-1 N16R8 (16 MB Flash, 8 MB Octal PSRAM).
 | Octal PSRAM — not available | GPIO 33, 34, 35, 36, 37 | Internal SPI bus for PSRAM |
 | USB — reserved | GPIO 19, 20 | USB D+/D- |
 | UART0 — reserved | GPIO 43, 44 | Serial debug/programming (used for test CLI) |
-| On-board RGB LED | GPIO 47 | WS2812 — used for status |
+| On-board RGB LED | GPIO 48 | WS2812 — used for status |
 
 ---
 
@@ -56,14 +56,14 @@ All pin assignments match the main RLC FSD (RLC-FSPEC-001 v1.8, Appendix C.2).
 | Fire button | 15 | Digital input | Internal pull-up |
 | Battery voltage ADC | 1 | ADC1_CH0 | Analogue input, voltage divider |
 | Buzzer | 16 | Digital output | Configurable polarity |
-| Display SPI MOSI | 11 | SPI2 MOSI | ILI9488 data in |
-| Display SPI SCLK | 12 | SPI2 CLK | ILI9488 clock |
-| Display CS | 10 | Digital output | ILI9488 chip select |
-| Display DC | 13 | Digital output | ILI9488 data/command |
-| Display RST | 14 | Digital output | ILI9488 hardware reset |
+| Display SPI MOSI | 11 | SPI2 MOSI | ILI9341 data in |
+| Display SPI SCLK | 12 | SPI2 CLK | ILI9341 clock |
+| Display CS | 10 | Digital output | ILI9341 chip select |
+| Display DC | 13 | Digital output | ILI9341 data/command |
+| Display RST | 14 | Digital output | ILI9341 hardware reset |
 | Display backlight | 21 | Digital output | Always HIGH (100% brightness) |
-| Display MISO | 9 | SPI2 MISO | ILI9488 data out (read-back) |
-| RGB LED (status) | 47 | WS2812 | On-board, RMT peripheral |
+| Display MISO | 9 | SPI2 MISO | ILI9341 data out (read-back) |
+| RGB LED (status) | 48 | WS2812 | On-board, RMT peripheral |
 
 ---
 
@@ -79,7 +79,7 @@ rlc-hw-test-remote/
 │   ├── hw_encoder.h
 │   ├── hw_buttons.c          # Fire button, arm switch
 │   ├── hw_buttons.h
-│   ├── hw_display.c          # ILI9488 SPI display driver
+│   ├── hw_display.c          # ILI9341 SPI display driver
 │   ├── hw_display.h
 │   ├── hw_buzzer.c           # Buzzer output control
 │   ├── hw_buzzer.h
@@ -129,8 +129,8 @@ The firmware SHALL provide a UART0 command-line interface at **115200 baud** (8N
 
 | Command | Description |
 |---|---|
-| `disp init` | Initialise ILI9488 display: SPI bus setup, hardware reset sequence, read display ID register. Report success/failure and display ID. |
-| `disp id` | Read and display the ILI9488 identification register (command 0x04). |
+| `disp init` | Initialise ILI9341 display: SPI bus setup, hardware reset sequence, read display ID register. Report success/failure and display ID. |
+| `disp id` | Read and display the ILI9341 identification register (command 0x04). |
 | `disp fill <r> <g> <b>` | Fill entire screen with specified RGB888 colour. E.g., `disp fill 255 0 0` for red. |
 | `disp test` | Run display test pattern: red, green, blue, white, black fills (1 second each), then horizontal colour bars, then vertical colour bars. |
 | `disp text <string>` | Display text string at centre of screen (white on black). Basic font rendering. |
@@ -226,20 +226,20 @@ Digital outputs SHALL use configurable polarity defined in `pin_config.h`:
 - Stable values: 0x0000 = ARMED, 0xFFFF = DISARMED.
 - Fail-safe: disconnected wire = HIGH = DISARMED.
 
-### 6.7 ILI9488 Display
+### 6.7 ILI9341 Display
 
-- Controller: ILI9488, 480 × 320 pixels, 4-wire SPI.
+- Controller: ILI9341, 240 × 320 pixels, 4-wire SPI.
 - SPI bus: SPI2_HOST on ESP32-S3.
 - Pins: MOSI=11, SCLK=12, CS=10, DC=13, RST=14, MISO=9, backlight=21.
-- Colour depth: 18-bit (RGB666). The driver may accept RGB888 and convert to RGB666 for transmission, or use RGB565 with conversion.
+- Colour depth: 16-bit (RGB565). The driver accepts RGB888 and converts to RGB565 for transmission.
 - SPI clock: start at 20 MHz. Report actual clock achieved.
 - Hardware reset sequence: RST LOW for 10 ms, then HIGH, then wait 120 ms before sending commands.
-- Display ID read-back: command 0x04 ("Read Display Identification Information") via SPI. Expected response identifies ILI9488. If read-back fails, report error but continue (allow testing of other peripherals).
+- Display ID read-back: command 0x04 ("Read Display Identification Information") via SPI. Expected response identifies ILI9341. If read-back fails, report error but continue (allow testing of other peripherals).
 - Rotation: landscape mode (rotation=1).
 
 ### 6.8 RGB LED
 
-WS2812 single-pixel driver using ESP32-S3 RMT peripheral on GPIO 47. Same implementation as base unit test.
+WS2812 single-pixel driver using ESP32-S3 RMT peripheral on GPIO 48. Same implementation as base unit test.
 
 ---
 
@@ -281,17 +281,17 @@ Each test validates one hardware subsystem. Tests are performed manually using t
 
 | ID | Test | Procedure | Pass Criteria |
 |---|---|---|---|
-| R-D01 | Initialisation and ID | `disp init`. | SPI initialised, display ID read successfully, matches expected ILI9488 ID. |
+| R-D01 | Initialisation and ID | `disp init`. | SPI initialised, display ID read successfully, matches expected ILI9341 ID. |
 | R-D02 | Backlight | `disp backlight off`. Wait 2s. `disp backlight on`. | Screen visibly turns off and on. |
-| R-D03 | Colour fills | `disp fill 255 0 0`, `disp fill 0 255 0`, `disp fill 0 0 255`, `disp fill 255 255 255`, `disp fill 0 0 0`. | Each fill covers entire 480×320 area with correct colour. No artefacts. |
+| R-D03 | Colour fills | `disp fill 255 0 0`, `disp fill 0 255 0`, `disp fill 0 0 255`, `disp fill 255 255 255`, `disp fill 0 0 0`. | Each fill covers entire 240×320 area with correct colour. No artefacts. |
 | R-D04 | Test pattern | `disp test`. | Colour fills + horizontal and vertical bars render correctly. No corruption. |
 | R-D05 | Text rendering | `disp text "Hello RLC"`. | Text displayed at centre, readable, correct font rendering. |
 | R-D06 | Channel grid | `disp grid`. | 8-cell grid with numbered channels and colour-coded symbols renders correctly. Layout matches main FSD §10.2.2 design intent. |
 | R-D07 | Gradient | `disp gradient`. | Smooth gradient from black to white. No banding or colour steps (validates colour depth). |
-| R-D08 | Pixel accuracy | `disp pixel 0 0 255 0 0`, `disp pixel 479 0 0 255 0`, `disp pixel 0 319 0 0 255`, `disp pixel 479 319 255 255 0`. | Pixels appear at exact corners. Confirms coordinate system and display orientation. |
+| R-D08 | Pixel accuracy | `disp pixel 0 0 255 0 0`, `disp pixel 239 0 0 255 0`, `disp pixel 0 319 0 0 255`, `disp pixel 239 319 255 255 0`. | Pixels appear at exact corners. Confirms coordinate system and display orientation. |
 | R-D09 | Partial update | `disp fill 0 0 0`. Then `disp rect 100 100 200 100 255 0 0`. | Black background with red rectangle at correct position and size. Surrounding pixels undisturbed. |
-| R-D10 | SPI speed | `disp speed`. | Full-screen fill completes. Reports time in ms. At 20 MHz: expect ~100–200 ms for 480×320×3 bytes. |
-| R-D11 | Display ID re-read | After display is initialised: `disp id`. | Returns valid ILI9488 ID. Confirms SPI read-back works during operation (not just at init). |
+| R-D10 | SPI speed | `disp speed`. | Full-screen fill completes. Reports time in ms. At 20 MHz: expect ~30–60 ms for 240×320×2 bytes. |
+| R-D11 | Display ID re-read | After display is initialised: `disp id`. | Returns valid ILI9341 ID. Confirms SPI read-back works during operation (not just at init). |
 
 ### 7.5 Buzzer Tests
 

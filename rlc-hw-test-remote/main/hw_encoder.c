@@ -6,15 +6,35 @@
 
 static const char *TAG = "hw_enc";
 
-static volatile int s_count = 0;
+static volatile int s_count     = 0;
 static volatile int s_direction = 0;
+static volatile uint8_t s_prev_state = 0;
 
-void IRAM_ATTR enc_isr(void *arg)
+/*
+ * Gray code quadrature lookup table.
+ * Index = (prev_AB << 2) | curr_AB, value = step (+1 CW, -1 CCW, 0 invalid).
+ * AB encoding: (A << 1) | B
+ */
+static const int8_t DRAM_ATTR s_enc_table[16] = {
+/*  prev\cur:  00   01   10   11  */
+/*  00 */       0,  -1,  +1,   0,
+/*  01 */      +1,   0,   0,  -1,
+/*  10 */      -1,   0,   0,  +1,
+/*  11 */       0,  +1,  -1,   0,
+};
+
+static void IRAM_ATTR enc_isr(void *arg)
 {
-    int a = gpio_get_level(PIN_ENCODER_A);
-    int b = gpio_get_level(PIN_ENCODER_B);
-    s_direction = a ^ b ? 1 : -1;
-    s_count += s_direction;
+    uint8_t a = gpio_get_level(PIN_ENCODER_A);
+    uint8_t b = gpio_get_level(PIN_ENCODER_B);
+    uint8_t cur = (a << 1) | b;
+    uint8_t idx = (s_prev_state << 2) | cur;
+    int8_t step = s_enc_table[idx];
+    if (step) {
+        s_count += step;
+        s_direction = step;
+    }
+    s_prev_state = cur;
 }
 
 void hw_encoder_init(void)
@@ -28,6 +48,10 @@ void hw_encoder_init(void)
         .intr_type    = GPIO_INTR_ANYEDGE,
     };
     gpio_config(&io);
+
+    /* Sample initial state */
+    s_prev_state = (gpio_get_level(PIN_ENCODER_A) << 1)
+                 | gpio_get_level(PIN_ENCODER_B);
 
     /* Install GPIO ISR */
     gpio_install_isr_service(0);
@@ -49,5 +73,7 @@ void enc_reset_count(void)
 
 int enc_get_direction(void)
 {
-    return s_direction;
+    int d = s_direction;
+    s_direction = 0;
+    return d;
 }
