@@ -1,0 +1,8 @@
+# ESP32-S3 defaults for RLC remote unit hardware test
+CONFIG_IDF_TARGET="esp32s3"
+
+# USB-Serial/JTAG console (single-cable flash + CLI)
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Disable classic BT (not needed)
+CONFIG_BT_ENABLED=n
