@@ -104,7 +104,7 @@ static void cmd_help(void)
         "  fire fresh                   Test fresh-press detection (any key stops)\r\n"
         "  arm monitor                  Monitor arm switch (any key stops)\r\n");
     uart_puts(
-        "\r\nDisplay (ILI9341):\r\n"
+        "\r\nDisplay (ILI9488):\r\n"
         "  disp init                    Initialise display and read ID\r\n"
         "  disp id                      Read display ID\r\n"
         "  disp fill <r> <g> <b>        Fill screen with colour\r\n"

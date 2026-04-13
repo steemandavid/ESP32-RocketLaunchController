@@ -1,7 +1,7 @@
 /**
  * RLC RGB LED Status Driver
  *
- * WS2812 (NeoPixel) on GPIO 47 via RMT peripheral.
+ * WS2812 (NeoPixel) on GPIO 48 via RMT peripheral.
  * Pattern engine runs as a FreeRTOS task.
  */
 

@@ -197,7 +197,7 @@ Digital outputs SHALL use configurable polarity defined in `pin_config.h`:
 
 ```c
 #define PIN_BUZZER              16
-#define PIN_BUZZER_ACTIVE       1    // 1 = active HIGH, 0 = active LOW
+#define PIN_BUZZER_ACTIVE       0    // 0 = active LOW (BC547 NPN inverts)
 
 #define PIN_DISPLAY_BACKLIGHT   21
 #define PIN_BACKLIGHT_ACTIVE    1    // Always HIGH for 100% brightness
@@ -207,11 +207,11 @@ Digital outputs SHALL use configurable polarity defined in `pin_config.h`:
 
 - Battery ADC on GPIO 1 (ADC1_CH0) SHALL use the ESP-IDF v5.x calibration API (`adc_cali_raw_to_voltage()`).
 - 12-bit resolution, 8-sample averaging.
-- `DIVIDER_RATIO` for battery voltage SHALL be configurable in `pin_config.h` (default: 2.0 for single-cell LiPo).
+- `DIVIDER_RATIO` for battery voltage SHALL be configurable in `pin_config.h` (default: 2.8 for 2S LiPo via 18 kΩ + 10 kΩ divider).
 
 ### 6.4 Rotary Encoder
 
-- A/B pins (GPIO 4, 5): interrupt-driven with Gray code quadrature state machine (preferred) or edge detection with 2 ms lockout.
+- A/B pins (GPIO 4, 5): interrupt-driven with cycle-position quadrature decoder and 2 ms lockout (validates direction on every transition, unlike Gray code which alternates on half-step encoders). A configurable divider (ENC_DIVIDER=3) requires multiple raw pulses per counted step to reduce sensitivity.
 - Push button (GPIO 6): 16-bit shift-register debounce, 10 ms polling, 160 ms debounce time.
 - The encoder driver SHALL track direction (CW/CCW) and step count.
 
@@ -286,14 +286,14 @@ Each test validates one hardware subsystem. Tests are performed manually using t
 |---|---|---|---|
 | R-D01 | Initialisation and ID | `disp init`. | SPI initialised, display ID read successfully, matches expected ILI9488 ID. |
 | R-D02 | Backlight | `disp backlight off`. Wait 2s. `disp backlight on`. | Screen visibly turns off and on. |
-| R-D03 | Colour fills | `disp fill 255 0 0`, `disp fill 0 255 0`, `disp fill 0 0 255`, `disp fill 255 255 255`, `disp fill 0 0 0`. | Each fill covers entire 240×320 area with correct colour. No artefacts. |
+| R-D03 | Colour fills | `disp fill 255 0 0`, `disp fill 0 255 0`, `disp fill 0 0 255`, `disp fill 255 255 255`, `disp fill 0 0 0`. | Each fill covers entire 480×320 area with correct colour. No artefacts. |
 | R-D04 | Test pattern | `disp test`. | Colour fills + horizontal and vertical bars render correctly. No corruption. |
 | R-D05 | Text rendering | `disp text "Hello RLC"`. | Text displayed at centre, readable, correct font rendering. |
 | R-D06 | Channel grid | `disp grid`. | 8-cell grid with numbered channels and colour-coded symbols renders correctly. Layout matches main FSD §10.2.2 design intent. |
 | R-D07 | Gradient | `disp gradient`. | Smooth gradient from black to white. No banding or colour steps (validates colour depth). |
-| R-D08 | Pixel accuracy | `disp pixel 0 0 255 0 0`, `disp pixel 239 0 0 255 0`, `disp pixel 0 319 0 0 255`, `disp pixel 239 319 255 255 0`. | Pixels appear at exact corners. Confirms coordinate system and display orientation. |
+| R-D08 | Pixel accuracy | `disp pixel 0 0 255 0 0`, `disp pixel 479 0 0 255 0`, `disp pixel 0 319 0 0 255`, `disp pixel 479 319 255 255 0`. | Pixels appear at exact corners. Confirms coordinate system and display orientation. |
 | R-D09 | Partial update | `disp fill 0 0 0`. Then `disp rect 100 100 200 100 255 0 0`. | Black background with red rectangle at correct position and size. Surrounding pixels undisturbed. |
-| R-D10 | SPI speed | `disp speed`. | Full-screen fill completes. Reports time in ms. At 20 MHz: expect ~30–60 ms for 240×320×2 bytes. |
+| R-D10 | SPI speed | `disp speed`. | Full-screen fill completes. Reports time in ms. At 20 MHz: expect ~50–100 ms for 480×320×3 bytes. |
 | R-D11 | Display ID re-read | After display is initialised: `disp id`. | Returns valid ILI9488 ID. Confirms SPI read-back works during operation (not just at init). |
 
 ### 7.5 Buzzer Tests

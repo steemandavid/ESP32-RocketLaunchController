@@ -46,10 +46,10 @@
 #define BASE_VBAT_MIN_ARM_MV           10500
 #define BASE_VBAT_CRITICAL_MV          9000
 
-#define REMOTE_VBAT_DIVIDER_RATIO      2.0f
-#define REMOTE_VBAT_MIN_ARM_MV         3500
-#define REMOTE_VBAT_MIN_OPERATE_MV     3300
-#define REMOTE_VBAT_CRITICAL_MV        3000
+#define REMOTE_VBAT_DIVIDER_RATIO      2.8f
+#define REMOTE_VBAT_MIN_ARM_MV         7000
+#define REMOTE_VBAT_MIN_OPERATE_MV     6600
+#define REMOTE_VBAT_CRITICAL_MV        6400
 
 /* ── Hardware Configuration ───────────────────────────────────── */
 

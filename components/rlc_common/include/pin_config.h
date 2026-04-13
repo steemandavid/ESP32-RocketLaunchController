@@ -70,6 +70,7 @@
 /* Arm/disarm switch — LOW = armed, HIGH = disarmed */
 #define PIN_ARM_SWITCH             7
 #define PIN_ARM_LED                8    /* Red LED (built-in series resistor) */
+#define PIN_ARM_LED_ACTIVE         0    /* 0 = active LOW (LED wired 3.3V→resistor→GPIO) */
 
 /* Fire button — LOW = pressed, HIGH = released */
 #define PIN_FIRE_BUTTON            15
@@ -81,7 +82,7 @@
 
 /* Buzzer output */
 #define PIN_BUZZER                 16
-#define PIN_BUZZER_ACTIVE          1    /* 1 = active HIGH, 0 = active LOW */
+#define PIN_BUZZER_ACTIVE          0    /* 0 = active LOW (BC547 NPN transistor inverts) */
 
 /* ILI9488 LCD Display (SPI2) */
 #define PIN_DISPLAY_MOSI           11

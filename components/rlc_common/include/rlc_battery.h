@@ -24,7 +24,7 @@ typedef enum {
  * Initialise the battery ADC on the specified GPIO (must be ADC1, GPIO 1-10).
  *
  * @param gpio_num      ADC GPIO pin
- * @param divider_ratio Voltage divider ratio (e.g. 4.0 for base, 2.0 for remote)
+ * @param divider_ratio Voltage divider ratio (e.g. 4.3 for base, 2.8 for remote)
  * @return              0 on success
  */
 int rlc_battery_init(int gpio_num, float divider_ratio);

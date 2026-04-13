@@ -1,7 +1,7 @@
 /**
  * RLC RGB LED Status Driver
  *
- * WS2812 on GPIO 47 via RMT, driven by a FreeRTOS task.
+ * WS2812 on GPIO 48 via RMT, driven by a FreeRTOS task.
  */
 
 #include "rlc_rgb_led.h"

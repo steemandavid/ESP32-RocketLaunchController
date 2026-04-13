@@ -464,10 +464,10 @@ Key constraints of this board:
 | Octal PSRAM — not available | GPIO 33, 34, 35, 36, 37 | Internal SPI bus for PSRAM |
 | USB — reserved | GPIO 19, 20 | USB D+/D- for programming/debug |
 | UART0 — reserved | GPIO 43, 44 | Serial debug/programming via USB-to-UART bridge |
-| On-board RGB LED | GPIO 47 | WS2812 addressable LED — used for status indication |
+| On-board RGB LED | GPIO 48 | WS2812 addressable LED — used for status indication |
 
-**Available GPIOs (24 general-purpose + GPIO47 for RGB LED):**
-GPIO 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 38, 39, 40, 41, 42, 48
+**Available GPIOs (24 general-purpose + GPIO48 for RGB LED):**
+GPIO 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 38, 39, 40, 41, 42, 47
 
 **Note:** GPIO 3 is technically usable after boot but is a strapping pin (JTAG select) and its state during reset affects debugging. It is deliberately excluded from the available list. See Appendix C.1 for the assignment of GPIO 10 in its place.
 
@@ -512,7 +512,7 @@ All digital inputs (except the rotary encoder A/B pins) shall use a shift-regist
 
 The fire button uses an 8-bit register (80 ms debounce) to minimise latency on release detection, which is safety-critical for the dead-man switch function. All other inputs use 16-bit registers (160 ms debounce).
 
-The rotary encoder A/B pins remain interrupt-driven with a 2 ms lockout (shift-register debounce is not suitable for quadrature decoding). A Gray code quadrature state machine is preferred over simple lockout-based edge counting. The encoder push button uses the shift-register method at 10 ms polling.
+The rotary encoder A/B pins remain interrupt-driven with a 2 ms lockout (shift-register debounce is not suitable for quadrature decoding). A cycle-position quadrature decoder is used, which gives consistent direction on every transition for half-step encoders (e.g. KY-040), unlike Gray code lookups which alternate direction. The encoder push button uses the shift-register method at 10 ms polling.
 
 The debounce engine shall be implemented as a generic, reusable module in `rlc_common` that accepts a GPIO number, polling interval, register width (8-bit or 16-bit), and callback for state changes.
 
@@ -792,7 +792,7 @@ GPIO      (10k)│
 | Parameter | Value |
 |---|---|
 | Type | WS2812 (NeoPixel) addressable RGB LED, on-board |
-| Pin | GPIO 47 (fixed, on-board) |
+| Pin | GPIO 48 (fixed, on-board) |
 | Driver | ESP32-S3 RMT peripheral |
 | Function | Visual status indication (see §11) |
 
@@ -805,7 +805,7 @@ GPIO      (10k)│
 | Signal type | 2× digital input (A/B quadrature) + 1× digital input (push button) |
 | Quantity | 1 encoder |
 | Inputs | CLK (A), DT (B), SW (push button) — all with internal pull-ups |
-| A/B debounce | Interrupt-driven with 2 ms lockout (not shift-register). A proper Gray code quadrature state machine is recommended over simple edge-counting with lockout, as it eliminates the need for a lockout entirely and correctly handles fast rotation. If the simpler lockout approach is used, 2 ms provides sufficient noise filtering while allowing reliable detection at fast rotation speeds (~1 ms per detent on typical KY-040 encoders). |
+| A/B debounce | Interrupt-driven cycle-position quadrature decoder with 2 ms lockout (not shift-register). Each quadrature state (00, 01, 10, 11) maps to a position in the CW rotation cycle; moving forward (+1) in the cycle is CW, backward (−1) is CCW. This gives consistent direction on every transition, unlike Gray code lookups which alternate on half-step encoders (e.g. KY-040). A configurable pulse divider (ENC_DIVIDER=3) requires multiple raw pulses in the same direction before outputting one counted step, reducing sensitivity to incidental rotation. |
 | Push button debounce | Shift-register, 10 ms polling, 160 ms debounce |
 | Rotation function | Select active channel (1–8), wrapping around |
 | Push button function | Context-dependent: ARM confirm via **500 ms long-press** (in IDLE with arm switch ON), DISARM (in ARMED). Short press in IDLE with arm switch ON shows "Hold to ARM" prompt. **The 500 ms long-press timer starts from the debounced stable-pressed transition (0xFFFF→0x0000), not from the raw physical press. Total operator hold time is approximately 660 ms (160 ms debounce + 500 ms long-press).** |
@@ -850,10 +850,10 @@ Three indicator LEDs are driven directly from GPIO outputs. All three LEDs have 
 
 | Parameter | Value |
 |---|---|
-| Signal type | Digital output, active HIGH |
+| Signal type | Digital output (fire LEDs: active HIGH; arm LED: active LOW — LED wired 3.3V→resistor→GPIO) |
 | Quantity | 3 |
 | Drive | Direct GPIO — built-in series resistors on illuminated push-button modules |
-| Default state at boot | All off (GPIO LOW) |
+| Default state at boot | All off (fire LEDs: GPIO LOW; arm LED: GPIO HIGH) |
 
 #### 5.5.5 Battery Voltage Input
 
@@ -871,7 +871,7 @@ Three indicator LEDs are driven directly from GPIO outputs. All three LEDs have 
 | Controller IC | ILI9488 |
 | Resolution | 480 × 320 pixels |
 | Interface | 4-wire SPI |
-| Colour depth | 18-bit (262k colours); driver shall use RGB666 or RGB565 |
+| Colour depth | 18-bit (262k colours); driver transmits RGB666 (3 bytes per pixel). Internal colour constants use RGB888 notation for readability. |
 | Touch | Not used in this design (pins 10–14 of module left unconnected) |
 | Pin count | 14-pin module (only pins 1–9 connected) |
 | SPI clock | Start at 20 MHz write / 6.67 MHz read; increase if stable |
@@ -901,14 +901,14 @@ SPI bus shall use SPI2_HOST on the ESP32-S3.
 
 | Parameter | Value |
 |---|---|
-| Signal type | Digital output, configurable polarity (default: active HIGH) |
+| Signal type | Digital output, configurable polarity (default: active LOW — BC547 NPN transistor inverts GPIO signal) |
 | Quantity | 1 |
 | Function | Audible feedback (beeps for state changes, ping failures, warnings, alarms) |
-| Drive | Active buzzer driven through MOSFET |
+| Drive | Active buzzer driven through BC547 NPN transistor (low-side switch) |
 
 #### 5.5.8 RGB LED (Status Indicator)
 
-Same as Base Unit §5.4.9. On-board WS2812 on GPIO 47.
+Same as Base Unit §5.4.9. On-board WS2812 on GPIO 48.
 
 ### 5.6 Power Supply
 
@@ -1705,7 +1705,7 @@ The fire pulse shall be driven by a hardware timer interrupt, NOT a software del
 
 #### 8.3.1 Rotary Encoder
 
-- A/B pins: read via interrupts with 2 ms lockout (or Gray code quadrature state machine).
+- A/B pins: read via interrupts with cycle-position quadrature decoder and 2 ms lockout (§5.5.1).
 - Push button: shift-register debounce, 10 ms polling.
 - Rotation: increment/decrement selected channel (1–8, wrapping).
 - Push: context-dependent:
@@ -1890,18 +1890,18 @@ See §5.5.6 for hardware details.
 
 #### 10.2.0 Display Colour Constants
 
-All display colours shall use the following RGB565 values (adjustable during implementation):
+All display colours shall use the following RGB888 values (adjustable during implementation). The driver transmits these as RGB666 to the ILI9488.
 
-| Name | RGB888 | RGB565 | Usage |
-|---|---|---|---|
-| Blue (continuity GOOD) | (0, 120, 255) | 0x03DF | Continuity GOOD filled circle (●). Blue is used instead of green for red-green colour-blind accessibility (~8% of males). |
-| Red (continuity OPEN / error) | (255, 0, 0) | 0xF800 | Continuity OPEN circle (○), error text |
-| Orange (continuity SHORT) | (255, 140, 0) | 0xFC60 | Continuity SHORT diamond (◆) |
-| Yellow (continuity MARGINAL / warning) | (255, 220, 0) | 0xFEE0 | Continuity MARGINAL triangle (▲), warning text |
-| Cyan (selected) | (0, 220, 255) | 0x06DF | Selected channel highlight |
-| Red background (armed) | (180, 0, 0) | 0xB000 | Armed channel background |
-| White (default text) | (255, 255, 255) | 0xFFFF | Normal text |
-| Dark background | (0, 0, 0) | 0x0000 | Screen background |
+| Name | RGB888 | Usage |
+|---|---|---|
+| Blue (continuity GOOD) | (0, 120, 255) | Continuity GOOD filled circle (●). Blue is used instead of green for red-green colour-blind accessibility (~8% of males). |
+| Red (continuity OPEN / error) | (255, 0, 0) | Continuity OPEN circle (○), error text |
+| Orange (continuity SHORT) | (255, 140, 0) | Continuity SHORT diamond (◆) |
+| Yellow (continuity MARGINAL / warning) | (255, 220, 0) | Continuity MARGINAL triangle (▲), warning text |
+| Cyan (selected) | (0, 220, 255) | Selected channel highlight |
+| Red background (armed) | (180, 0, 0) | Armed channel background |
+| White (default text) | (255, 255, 255) | Normal text |
+| Dark background | (0, 0, 0) | Screen background |
 
 The display shall support the following screens, determined by the remote FSM state.
 
@@ -2098,7 +2098,7 @@ When a NACK is received, the human-readable text from the NACK reason code table
 
 ## 11. RGB LED Status Specification
 
-Both units have an on-board WS2812 (NeoPixel) addressable RGB LED on GPIO 47, driven via the ESP32-S3 RMT peripheral.
+Both units have an on-board WS2812 (NeoPixel) addressable RGB LED on GPIO 48, driven via the ESP32-S3 RMT peripheral.
 
 ### 11.1 Base Unit LED Patterns
 
@@ -2661,11 +2661,11 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm
 | Display RST | 14 | Reset |
 | Display backlight | 21 | Digital output, always HIGH (100% brightness) |
 | Display MISO | 9 | SPI2 MISO |
-| RGB LED (status) | 47 | WS2812 via RMT (on-board, fixed) |
+| RGB LED (status) | 48 | WS2812 via RMT (on-board, fixed) |
 
 **Total: 17 GPIOs + 1 on-board LED = 18 pins used. 7 spare GPIOs.**
 
-**Spare GPIOs available:** 2, 38, 39, 40, 41, 42, 48 — available for future expansion (e.g., SD card, additional buttons, external status LEDs).
+**Spare GPIOs available:** 2, 38, 39, 40, 41, 42, 47 — available for future expansion (e.g., SD card, additional buttons, external status LEDs).
 
 **Notes:**
 - Battery ADC is on GPIO 1 (ADC1_CH0), same as base unit for code reuse.
