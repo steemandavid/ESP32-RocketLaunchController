@@ -21,17 +21,18 @@
 /* --- Arm/disarm switch ------------------------------------------------- */
 #define PIN_ARM_SWITCH          7   /* Pull-up, 16-bit debounce */
 #define PIN_ARM_LED             8   /* Red LED, digital output */
+#define PIN_ARM_LED_ACTIVE      0   /* 0 = active LOW (LED wired 3.3V→resistor→GPIO) */
 
 /* --- Fire button ------------------------------------------------------- */
 #define PIN_FIRE_BUTTON         15  /* Pull-up, 8-bit debounce */
-#define PIN_FIRE_LED_RED        17  /* Red LED, digital output */
-#define PIN_FIRE_LED_GREEN      18  /* Green LED, digital output */
+#define PIN_FIRE_LED_RED        17  /* Red ring LED, digital output (built-in series resistor) */
+#define PIN_FIRE_LED_GREEN      18  /* Green ring LED, digital output (built-in series resistor) */
 
 /* --- Buzzer ------------------------------------------------------------ */
 #define PIN_BUZZER              16  /* Digital output */
-#define PIN_BUZZER_ACTIVE       1   /* 1 = active HIGH */
+#define PIN_BUZZER_ACTIVE       0   /* 0 = active LOW (BC547 inverts) */
 
-/* --- Display (ILI9341, 240×320, SPI) ----------------------------------- */
+/* --- Display (ILI9488, 480×320, RGB666, SPI) --------------------------- */
 #define PIN_DISP_MOSI           11  /* SPI2 MOSI */
 #define PIN_DISP_SCLK           12  /* SPI2 CLK */
 #define PIN_DISP_MISO           9   /* SPI2 MISO */
@@ -44,7 +45,7 @@
 #define PIN_RGB_LED             48  /* WS2812 on-board, RMT peripheral */
 
 /* --- Display parameters ------------------------------------------------ */
-#define DISPLAY_WIDTH           240
+#define DISPLAY_WIDTH           480
 #define DISPLAY_HEIGHT          320
 #define DISPLAY_SPI_HOST        SPI2_HOST
 #define DISPLAY_SPI_FREQ_HZ     20000000    /* 20 MHz */

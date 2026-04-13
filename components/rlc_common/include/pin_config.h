@@ -69,9 +69,12 @@
 
 /* Arm/disarm switch — LOW = armed, HIGH = disarmed */
 #define PIN_ARM_SWITCH             7
+#define PIN_ARM_LED                8    /* Red LED (built-in series resistor) */
 
 /* Fire button — LOW = pressed, HIGH = released */
 #define PIN_FIRE_BUTTON            15
+#define PIN_FIRE_LED_RED           17   /* Red ring LED (built-in series resistor) */
+#define PIN_FIRE_LED_GREEN         18   /* Green ring LED (built-in series resistor) */
 
 /* Battery voltage ADC (ADC1 only) */
 #define PIN_VBAT_ADC               1

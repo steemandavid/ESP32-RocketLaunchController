@@ -25,7 +25,7 @@ void hw_leds_init(void)
 
 void arm_led_set(int on)
 {
-    gpio_set_level(PIN_ARM_LED, on ? 1 : 0);
+    gpio_set_level(PIN_ARM_LED, on ? PIN_ARM_LED_ACTIVE : !PIN_ARM_LED_ACTIVE);
 }
 
 void fire_led_red(int on)
@@ -40,7 +40,7 @@ void fire_led_green(int on)
 
 void all_leds_off(void)
 {
-    gpio_set_level(PIN_ARM_LED, 0);
+    gpio_set_level(PIN_ARM_LED, !PIN_ARM_LED_ACTIVE);        /* inactive = HIGH (LED off) */
     gpio_set_level(PIN_FIRE_LED_RED, 0);
     gpio_set_level(PIN_FIRE_LED_GREEN, 0);
 }

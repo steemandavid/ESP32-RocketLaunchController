@@ -12,27 +12,26 @@ static const char *TAG = "hw_disp";
 
 static spi_device_handle_t s_spi = NULL;
 
-/* ILI9341 commands */
-#define ILI9341_SWRESET     0x01
-#define ILI9341_SLPIN       0x10
-#define ILI9341_SLPOUT      0x11
-#define ILI9341_DISPOFF     0x28
-#define ILI9341_DISPON      0x29
-#define ILI9341_CASET       0x2A
-#define ILI9341_PASET       0x2B
-#define ILI9341_RAMWR       0x2C
-#define ILI9341_RAMRD       0x2E
-#define ILI9341_MADCTL      0x36
-#define ILI9341_PIXFMT      0x3A
-#define ILI9341_FRMCTR1     0xB1
-#define ILI9341_DFUNCTR     0xB6
-#define ILI9341_PWCTR1      0xC0
-#define ILI9341_PWCTR2      0xC1
-#define ILI9341_VMCTR1      0xC5
-#define ILI9341_VMCTR2      0xC7
-#define ILI9341_GMCTRP1     0xE0
-#define ILI9341_GMCTRN1     0xE1
-#define ILI9341_ID          0x04
+/* ILI9488 commands */
+#define ILI9488_SWRESET     0x01
+#define ILI9488_SLPIN       0x10
+#define ILI9488_SLPOUT      0x11
+#define ILI9488_DISPOFF     0x28
+#define ILI9488_DISPON      0x29
+#define ILI9488_CASET       0x2A
+#define ILI9488_PASET       0x2B
+#define ILI9488_RAMWR       0x2C
+#define ILI9488_RAMRD       0x2E
+#define ILI9488_MADCTL      0x36
+#define ILI9488_PIXFMT      0x3A
+#define ILI9488_FRMCTR1     0xB1
+#define ILI9488_DFUNCTR     0xB6
+#define ILI9488_PWCTR1      0xC0
+#define ILI9488_PWCTR2      0xC1
+#define ILI9488_VMCTR1      0xC5
+#define ILI9488_GMCTRP1     0xE0
+#define ILI9488_GMCTRN1     0xE1
+#define ILI9488_ID          0x04
 
 /* 5x7 bitmap font (ASCII 0x20-0x7E) */
 static const uint8_t font5x7[][5] = {
@@ -96,36 +95,45 @@ static void spi_send_data(const uint8_t *data, int len)
 
 static void spi_read_data(uint8_t cmd, uint8_t *buf, int len)
 {
-    /* Acquire bus to hold CS low across command + read */
-    spi_device_acquire_bus(s_spi, portMAX_DELAY);
+    int total = 1 + len;
+    uint8_t *tx = calloc(1, total);
+    uint8_t *rx = calloc(1, total);
+    if (!tx || !rx) { free(tx); free(rx); return; }
 
-    spi_send_cmd(cmd);
-    dc_data();
-    memset(buf, 0, len);
+    tx[0] = cmd;
+
+    gpio_set_level(PIN_DISP_CS, 0);
+    dc_cmd();
+
     spi_transaction_t t = {
-        .length    = 0,
-        .rxlength  = len * 8,
-        .rx_buffer = buf,
+        .length    = total * 8,
+        .rxlength  = total * 8,
+        .tx_buffer = tx,
+        .rx_buffer = rx,
     };
     spi_device_polling_transmit(s_spi, &t);
 
-    spi_device_release_bus(s_spi);
+    gpio_set_level(PIN_DISP_CS, 1);
+
+    memcpy(buf, rx + 1, len);
+    free(tx);
+    free(rx);
 }
 
 static void set_window(int x0, int y0, int x1, int y1)
 {
     uint8_t buf[4];
-    spi_send_cmd(ILI9341_CASET);
+    spi_send_cmd(ILI9488_CASET);
     buf[0] = (x0 >> 8) & 0xFF; buf[1] = x0 & 0xFF;
     buf[2] = (x1 >> 8) & 0xFF; buf[3] = x1 & 0xFF;
     spi_send_data(buf, 4);
 
-    spi_send_cmd(ILI9341_PASET);
+    spi_send_cmd(ILI9488_PASET);
     buf[0] = (y0 >> 8) & 0xFF; buf[1] = y0 & 0xFF;
     buf[2] = (y1 >> 8) & 0xFF; buf[3] = y1 & 0xFF;
     spi_send_data(buf, 4);
 
-    spi_send_cmd(ILI9341_RAMWR);
+    spi_send_cmd(ILI9488_RAMWR);
 }
 
 static void hardware_reset(void)
@@ -138,7 +146,7 @@ static void hardware_reset(void)
 
 void hw_display_init(void)
 {
-    /* Configure control pins (CS handled by SPI driver) */
+    /* Configure control pins */
     uint64_t mask = (1ULL << PIN_DISP_DC)
                   | (1ULL << PIN_DISP_RST) | (1ULL << PIN_DISP_BACKLIGHT);
     gpio_config_t io = {
@@ -160,7 +168,7 @@ void hw_display_init(void)
         .sclk_io_num     = PIN_DISP_SCLK,
         .quadwp_io_num   = -1,
         .quadhd_io_num   = -1,
-        .max_transfer_sz = DISPLAY_WIDTH * DISPLAY_HEIGHT * 2 + 8,
+        .max_transfer_sz = DISPLAY_WIDTH * DISPLAY_HEIGHT * 3 + 8,
     };
     ESP_ERROR_CHECK(spi_bus_initialize(DISPLAY_SPI_HOST, &bus, SPI_DMA_CH_AUTO));
 
@@ -176,37 +184,75 @@ void hw_display_init(void)
     hardware_reset();
 
     /* Software reset */
-    spi_send_cmd(ILI9341_SWRESET);
+    spi_send_cmd(ILI9488_SWRESET);
     vTaskDelay(pdMS_TO_TICKS(120));
 
     /* Out of sleep */
-    spi_send_cmd(ILI9341_SLPOUT);
+    spi_send_cmd(ILI9488_SLPOUT);
     vTaskDelay(pdMS_TO_TICKS(120));
 
-    /* Pixel format: RGB565 */
-    uint8_t pixfmt = 0x55;  /* 16-bit/pixel */
-    spi_send_cmd(ILI9341_PIXFMT);
-    spi_send_data(&pixfmt, 1);
+    /* Power control 1 */
+    spi_send_cmd(ILI9488_PWCTR1);
+    uint8_t pw1[] = { 0x07, 0x42, 0x18 };
+    spi_send_data(pw1, 3);
 
-    /* Memory access control: landscape (rotation 1) */
-    uint8_t madctl = 0x28;  /* MY=0, MX=1, MV=1, ML=0, RGB */
-    spi_send_cmd(ILI9341_MADCTL);
+    /* Power control 2 */
+    spi_send_cmd(ILI9488_PWCTR2);
+    uint8_t pw2[] = { 0x00 };
+    spi_send_data(pw2, 1);
+
+    /* VCOM control */
+    spi_send_cmd(ILI9488_VMCTR1);
+    uint8_t vm1[] = { 0x00, 0x07 };
+    spi_send_data(vm1, 2);
+
+    /* Memory access control: landscape (480x320) */
+    spi_send_cmd(ILI9488_MADCTL);
+    uint8_t madctl = 0x68;  /* MY=0, MX=1, MV=1, ML=0, BGR */
     spi_send_data(&madctl, 1);
 
+    /* Pixel format: 18-bit RGB666 (3 bytes per pixel) */
+    spi_send_cmd(ILI9488_PIXFMT);
+    uint8_t pixfmt = 0x66;
+    spi_send_data(&pixfmt, 1);
+
+    /* Frame rate */
+    spi_send_cmd(ILI9488_FRMCTR1);
+    uint8_t frm[] = { 0x10, 0x10 };
+    spi_send_data(frm, 2);
+
+    /* Display function control */
+    spi_send_cmd(ILI9488_DFUNCTR);
+    uint8_t dfc[] = { 0x02, 0x22 };
+    spi_send_data(dfc, 2);
+
+    /* Gamma positive */
+    spi_send_cmd(ILI9488_GMCTRP1);
+    uint8_t gmp[] = { 0x0F, 0x1F, 0x1C, 0x0C, 0x0F, 0x08, 0x48, 0x98,
+                      0x37, 0x0A, 0x13, 0x04, 0x11, 0x0D, 0x00 };
+    spi_send_data(gmp, 15);
+
+    /* Gamma negative */
+    spi_send_cmd(ILI9488_GMCTRN1);
+    uint8_t gmn[] = { 0x0F, 0x32, 0x2E, 0x0B, 0x0D, 0x05, 0x47, 0x75,
+                      0x37, 0x06, 0x10, 0x03, 0x24, 0x20, 0x00 };
+    spi_send_data(gmn, 15);
+
     /* Display on */
-    spi_send_cmd(ILI9341_DISPON);
+    spi_send_cmd(ILI9488_DISPON);
     vTaskDelay(pdMS_TO_TICKS(20));
 
     /* Clear to black */
     display_fill(0, 0, 0);
 
-    ESP_LOGI(TAG, "ILI9341 display initialised (240x320, RGB565, %d MHz)", DISPLAY_SPI_FREQ_HZ / 1000000);
+    ESP_LOGI(TAG, "ILI9488 display initialised (%dx%d, RGB666, %d MHz)",
+             DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_SPI_FREQ_HZ / 1000000);
 }
 
 bool display_read_id(uint32_t *out_id)
 {
     uint8_t buf[4] = {0};
-    spi_read_data(ILI9341_ID, buf, 4);
+    spi_read_data(ILI9488_ID, buf, 4);
     if (out_id) {
         *out_id = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16)
                 | ((uint32_t)buf[2] << 8)  | buf[3];
@@ -216,24 +262,24 @@ bool display_read_id(uint32_t *out_id)
 
 void display_fill(uint8_t r, uint8_t g, uint8_t b)
 {
-    uint16_t colour = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
     set_window(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
 
-    /* Send in chunks to avoid huge allocation */
+    /* Send in chunks — 3 bytes per pixel (RGB666) */
     int pixels = DISPLAY_WIDTH * DISPLAY_HEIGHT;
     int chunk  = 4096;
-    uint8_t *buf = malloc(chunk * 2);
+    uint8_t *buf = malloc(chunk * 3);
     if (!buf) return;
 
     for (int i = 0; i < chunk; i++) {
-        buf[i * 2]     = (colour >> 8) & 0xFF;
-        buf[i * 2 + 1] = colour & 0xFF;
+        buf[i * 3]     = r;
+        buf[i * 3 + 1] = g;
+        buf[i * 3 + 2] = b;
     }
 
     int remaining = pixels;
     while (remaining > 0) {
         int n = remaining > chunk ? chunk : remaining;
-        spi_send_data(buf, n * 2);
+        spi_send_data(buf, n * 3);
         remaining -= n;
     }
     free(buf);
@@ -241,31 +287,30 @@ void display_fill(uint8_t r, uint8_t g, uint8_t b)
 
 void display_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b)
 {
-    uint16_t colour = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
     set_window(x, y, x, y);
-    uint8_t buf[2] = { (colour >> 8) & 0xFF, colour & 0xFF };
-    spi_send_data(buf, 2);
+    uint8_t buf[3] = { r, g, b };
+    spi_send_data(buf, 3);
 }
 
 void display_rect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b)
 {
-    uint16_t colour = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
     set_window(x, y, x + w - 1, y + h - 1);
 
     int total = w * h;
     int chunk = 4096;
-    uint8_t *buf = malloc(chunk * 2);
+    uint8_t *buf = malloc(chunk * 3);
     if (!buf) return;
 
     for (int i = 0; i < chunk; i++) {
-        buf[i * 2]     = (colour >> 8) & 0xFF;
-        buf[i * 2 + 1] = colour & 0xFF;
+        buf[i * 3]     = r;
+        buf[i * 3 + 1] = g;
+        buf[i * 3 + 2] = b;
     }
 
     int remaining = total;
     while (remaining > 0) {
         int n = remaining > chunk ? chunk : remaining;
-        spi_send_data(buf, n * 2);
+        spi_send_data(buf, n * 3);
         remaining -= n;
     }
     free(buf);
@@ -310,12 +355,11 @@ void display_grid(void)
 {
     display_fill(0, 0, 0);
 
-    /* 4 columns × 2 rows grid for channels 1–8 */
+    /* 4 columns x 2 rows grid for channels 1-8 */
     int cols = 4, rows = 2;
     int cell_w = DISPLAY_WIDTH / cols;
     int cell_h = DISPLAY_HEIGHT / rows;
 
-    /* Colours per channel: blue, green, red, orange, yellow, cyan, magenta, white */
     static const uint8_t ch_colours[][3] = {
         {0,0,255}, {0,255,0}, {255,0,0}, {255,140,0},
         {255,255,0}, {0,255,255}, {255,0,255}, {255,255,255}
@@ -327,7 +371,7 @@ void display_grid(void)
         int x = col * cell_w;
         int y = row * cell_h;
 
-        /* Cell border (1px white) */
+        /* Cell border */
         display_rect(x, y, cell_w, 1, 80, 80, 80);
         display_rect(x, y, 1, cell_h, 80, 80, 80);
 
@@ -337,7 +381,7 @@ void display_grid(void)
         display_rect(bx, by, 16, 16,
                      ch_colours[ch][0], ch_colours[ch][1], ch_colours[ch][2]);
 
-        /* Channel number below indicator */
+        /* Channel number */
         char num = '1' + ch;
         draw_char(x + (cell_w - 10) / 2, by + 20, num, 2, 255, 255, 255);
     }

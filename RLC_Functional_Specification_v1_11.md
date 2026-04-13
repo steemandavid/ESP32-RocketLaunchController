@@ -838,7 +838,24 @@ The fire button uses an 8-bit shift register (80 ms debounce) rather than 16-bit
 
 The software shall enforce **fresh press detection**: the button must transition from stably released (0xFF) to stably pressed (0x00) to initiate fire. A button that reads pressed at boot or at state entry does not count as a press.
 
-#### 5.5.4 Battery Voltage Input
+#### 5.5.4 Indicator LEDs
+
+Three indicator LEDs are driven directly from GPIO outputs. All three LEDs have **built-in series resistors** — no external current-limiting resistors are required.
+
+| LED | GPIO | Colour | Function |
+|---|---|---|---|
+| Arm switch LED | 8 | Red | Illuminates when arm switch is in ARMED position |
+| Fire button LED (red) | 17 | Red | Illuminates during ARMED / PRE_FIRE / FIRING states |
+| Fire button LED (green) | 18 | Green | Illuminates during safe / IDLE state |
+
+| Parameter | Value |
+|---|---|
+| Signal type | Digital output, active HIGH |
+| Quantity | 3 |
+| Drive | Direct GPIO — built-in series resistors on illuminated push-button modules |
+| Default state at boot | All off (GPIO LOW) |
+
+#### 5.5.5 Battery Voltage Input
 
 | Parameter | Value |
 |---|---|
@@ -847,7 +864,7 @@ The software shall enforce **fresh press detection**: the button must transition
 | Pin | GPIO 1 (ADC1_CH0) — same as base unit for code reuse |
 | Conversion | Same as Base Unit §5.4.7 — use `adc_cali_raw_to_voltage()` calibration API. DIVIDER_RATIO may differ. |
 
-#### 5.5.5 ILI9488 LCD Display
+#### 5.5.6 ILI9488 LCD Display
 
 | Parameter | Value |
 |---|---|
@@ -880,7 +897,7 @@ SPI bus shall use SPI2_HOST on the ESP32-S3.
 
 **Display health check:** at boot, the firmware SHALL read back the ILI9488 display ID register (command 0x04, "Read Display Identification Information") via SPI. If the read-back value does not match the expected ILI9488 ID, or the SPI transaction fails, the remote SHALL transition to ERROR state (the operator cannot safely control the system without visual feedback). A periodic display health check (every 5000 ms) SHALL re-read the display ID register during IDLE state. **The display health check SHALL be performed within `display_task`, serialised with normal display writes.** It SHALL NOT be performed from a separate task or timer callback. Display failure during ARMED, PRE_FIRE, or FIRING SHALL trigger an immediate CMD_DISARM and transition to ERROR.
 
-#### 5.5.6 Buzzer Output
+#### 5.5.7 Buzzer Output
 
 | Parameter | Value |
 |---|---|
@@ -889,7 +906,7 @@ SPI bus shall use SPI2_HOST on the ESP32-S3.
 | Function | Audible feedback (beeps for state changes, ping failures, warnings, alarms) |
 | Drive | Active buzzer driven through MOSFET |
 
-#### 5.5.7 RGB LED (Status Indicator)
+#### 5.5.8 RGB LED (Status Indicator)
 
 Same as Base Unit §5.4.9. On-board WS2812 on GPIO 47.
 
@@ -1191,12 +1208,12 @@ Once linked, the remote sends a `PING` message every 500 ms. The base responds w
 
 **RSSI tracking:** the remote shall record the RSSI from each received frame (PONG, STATUS_UPDATE, ACK, NACK). The display shall show the average RSSI of the 3 most recently received frames.
 
-**Missed ping action (remote):** on each individual ping failure, the remote buzzer shall emit a single short beep (80 ms) and the RGB LED shall flash orange (50 ms) overlaid on the current state colour.
+**Missed ping action (remote):** on each individual ping failure, the remote buzzer shall emit a single short beep (150 ms) and the RGB LED shall flash orange (50 ms) overlaid on the current state colour.
 
 **PONG validation:** the remote shall verify that the `ping_timestamp` echoed in the PONG matches the timestamp sent in the corresponding PING. A PONG with a mismatched timestamp is discarded silently and does NOT count as a successful ping. The failure counter continues.
 
 **Link loss action:** if 3 consecutive pings fail:
-- Remote: display "LINK LOST" warning, buzzer alarm pattern (200 ms on / 200 ms off, repeating), RGB LED yellow fast blink, transition to LINK_LOST state.
+- Remote: display "LINK LOST" warning, buzzer alarm pattern (400 ms on / 400 ms off, repeating), RGB LED yellow fast blink, transition to LINK_LOST state.
 - Base: immediately disarm all channels, de-energise all channel relays, activate siren for 4000 ms (500 on / 500 off, 4 cycles), RGB LED yellow fast blink, transition to LINK_LOST state.
 
 **Remote battery at base:** the base receives the remote's battery voltage via the PING message. If the remote battery is below `REMOTE_VBAT_MIN_OPERATE_MV`, the base should log an advisory warning. **Additionally, if the remote battery (as reported in PING) is below `REMOTE_VBAT_MIN_ARM_MV`, the base SHALL refuse ARM commands with NACK reason 0x0C ("REMOTE BATTERY LOW").** This provides defence-in-depth against a remote firmware bug that ignores its own battery threshold.
@@ -1855,7 +1872,7 @@ Both units SHALL execute the following initialisation sequence in order. If any 
 | 3 | Verify CRC32-C test vector | Yes | §6.2.2 |
 | 4 | Initialise ADC calibration | Yes | §5.4.7, §5.4.2 |
 | 5 | Initialise ESP-NOW, set PMK, register peer | Yes | §6.2.1, §6.2.3 — retry 3× on failure |
-| 6 | Initialise display, read-back display ID | Yes (remote only) | §5.5.5 |
+| 6 | Initialise display, read-back display ID | Yes (remote only) | §5.5.6 |
 | 7 | Configure all input GPIOs (including arm switch sense §5.4.3), start debounce engine | Yes | §5.3 |
 | 8 | Configure hardware watchdog and TWDT | Yes | §9.6 |
 | 9 | Start FreeRTOS tasks | Yes | §9.10 |
@@ -1867,7 +1884,7 @@ Both units SHALL execute the following initialisation sequence in order. If any 
 
 ### 10.1 Display Hardware
 
-See §5.5.5 for hardware details.
+See §5.5.6 for hardware details.
 
 ### 10.2 Screen Layouts
 
@@ -2128,14 +2145,14 @@ The remote uses an active buzzer for audible feedback. Patterns are implemented 
 
 | Pattern Name | Sequence (ms) | Usage |
 |---|---|---|
-| `BEEP_SHORT` | 100 on | Single confirmation beep |
-| `BEEP_DOUBLE` | 100 on, 100 off, 100 on | Arm confirmed |
-| `BEEP_TRIPLE` | 100 on, 80 off, 100 on, 80 off, 100 on | Error / NACK received |
+| `BEEP_SHORT` | 200 on | Single confirmation beep |
+| `BEEP_DOUBLE` | 250 on, 300 off, 250 on | Arm confirmed |
+| `BEEP_TRIPLE` | 250 on, 250 off, 250 on, 250 off, 250 on | Error / NACK received |
 | `BEEP_LONG` | 500 on | Disarm event |
-| `BEEP_PING_FAIL` | 80 on | Ping failure |
-| `BEEP_CONTINUITY_LOST` | 200 on, 100 off, 200 on, 100 off, 200 on | Continuity → OPEN disarm (distinctive pattern) |
-| `ALARM_LINK_LOST` | 200 on, 200 off, repeating | Link lost alarm |
-| `ALARM_CRITICAL` | 100 on, 100 off, repeating | Critical error alarm |
+| `BEEP_PING_FAIL` | 150 on | Ping failure |
+| `BEEP_CONTINUITY_LOST` | 300 on, 300 off, 300 on, 300 off, 300 on | Continuity → OPEN disarm (distinctive pattern) |
+| `ALARM_LINK_LOST` | 400 on, 400 off, repeating | Link lost alarm |
+| `ALARM_CRITICAL` | 250 on, 250 off, repeating | Critical error alarm |
 
 ### 12.2 Siren Patterns (Base only)
 
@@ -2631,10 +2648,10 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm
 | Encoder DT (B) | 5 | Digital input, pull-up, interrupt |
 | Encoder SW (push) | 6 | Digital input, pull-up |
 | Arm/disarm switch | 7 | Digital input, pull-up |
-| Arm switch LED (red) | 8 | Digital output |
+| Arm switch LED (red) | 8 | Digital output (built-in series resistor) |
 | Fire button | 15 | Digital input, pull-up |
-| Fire button LED (red) | 17 | Digital output |
-| Fire button LED (green) | 18 | Digital output |
+| Fire button LED (red) | 17 | Digital output (built-in series resistor) |
+| Fire button LED (green) | 18 | Digital output (built-in series resistor) |
 | Battery voltage ADC | 1 | ADC1_CH0 — safe with Wi-Fi/ESP-NOW |
 | Buzzer | 16 | Digital output |
 | Display SPI MOSI | 11 | SPI2 MOSI |

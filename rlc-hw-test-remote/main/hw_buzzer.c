@@ -47,36 +47,36 @@ void buzzer_pattern(uint32_t on_ms, uint32_t off_ms, int count)
 
 void buzzer_test(void)
 {
-    printf("BEEP_SHORT (100ms)...\r\n");
-    buzzer_beep(100);
+    printf("BEEP_SHORT (200ms)...\r\n");
+    buzzer_beep(200);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    printf("BEEP_DOUBLE (100/100/100)...\r\n");
-    buzzer_pattern(100, 100, 2);
+    printf("BEEP_DOUBLE (250/300/250)...\r\n");
+    buzzer_pattern(250, 300, 2);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    printf("BEEP_TRIPLE (100/80/100/80/100)...\r\n");
-    buzzer_pattern(100, 80, 3);
+    printf("BEEP_TRIPLE (250/250 x3)...\r\n");
+    buzzer_pattern(250, 250, 3);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
     printf("BEEP_LONG (500ms)...\r\n");
     buzzer_beep(500);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    printf("BEEP_PING_FAIL (80ms)...\r\n");
-    buzzer_beep(80);
+    printf("BEEP_PING_FAIL (150ms)...\r\n");
+    buzzer_beep(150);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    printf("BEEP_CONTINUITY_LOST (200/100 x3)...\r\n");
-    buzzer_pattern(200, 100, 3);
+    printf("BEEP_CONTINUITY_LOST (300/300 x3)...\r\n");
+    buzzer_pattern(300, 300, 3);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    printf("ALARM_LINK_LOST (200/200 x3)...\r\n");
-    buzzer_pattern(200, 200, 3);
+    printf("ALARM_LINK_LOST (400/400 x3)...\r\n");
+    buzzer_pattern(400, 400, 3);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    printf("ALARM_CRITICAL (100/100 x3)...\r\n");
-    buzzer_pattern(100, 100, 3);
+    printf("ALARM_CRITICAL (250/250 x5)...\r\n");
+    buzzer_pattern(250, 250, 5);
 
     printf("Buzzer test complete.\r\n");
 }

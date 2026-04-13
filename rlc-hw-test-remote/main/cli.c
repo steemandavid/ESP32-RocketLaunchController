@@ -204,6 +204,23 @@ static void cmd_enc(char *toks[], int ntok)
         uart_puts("Encoder count reset to 0.\r\n");
         return;
     }
+    if (strcmp(toks[1], "raw") == 0) {
+        uart_puts("Raw encoder pins (CLK=GPIO4, DT=GPIO5) — rotate slowly CW, any key stops.\r\n");
+        uint8_t dummy;
+        uint8_t prev = 0xFF;
+        while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
+            uint8_t clk = gpio_get_level(PIN_ENCODER_A);
+            uint8_t dt  = gpio_get_level(PIN_ENCODER_B);
+            uint8_t state = (clk << 1) | dt;
+            if (state != prev) {
+                printf("CLK=%d DT=%d  state=%d\r\n", clk, dt, state);
+                prev = state;
+            }
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
+        uart_puts("Stopped.\r\n");
+        return;
+    }
     if (strcmp(toks[1], "monitor") == 0) {
         uart_puts("Monitoring encoder — press any key to stop.\r\n");
         int last = enc_get_count();
@@ -248,7 +265,7 @@ static void cmd_enc(char *toks[], int ntok)
             int raw = enc_sw_read_raw();
             int db  = enc_sw_read_debounced();
             printf("SW: raw=%d  debounced=%s\r\n", raw, db ? "PRESSED" : "RELEASED");
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
         uart_puts("Stopped.\r\n");
         return;
