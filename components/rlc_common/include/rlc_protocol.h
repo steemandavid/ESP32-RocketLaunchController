@@ -42,7 +42,8 @@ typedef enum {
     NACK_REPLAY_DETECTED       = 0x08,
     NACK_LOW_BATTERY           = 0x09,
     NACK_CHANNEL_ALREADY_ARMED = 0x0A,
-    NACK_RELAY_FAULT           = 0x0B,
+    NACK_ARM_SENSE_FAULT       = 0x0B,
+    NACK_REMOTE_BATTERY_LOW    = 0x0C,
 } rlc_nack_reason_t;
 
 /* ── Error Flags (bitmask in STATUS_UPDATE) ───────────────────── */
@@ -50,7 +51,7 @@ typedef enum {
 #define ERR_VBAT_LOW                    (1 << 0)
 #define ERR_VBAT_CRITICAL               (1 << 1)
 #define ERR_RELAY_FAULT                 (1 << 2)
-#define ERR_CONTINUITY_LOST_WHILE_ARMED (1 << 3)
+/* Bit 3 reserved (was ERR_CONTINUITY_LOST_WHILE_ARMED — removed v1.8) */
 #define ERR_COMM_DEGRADED               (1 << 4)
 #define ERR_WATCHDOG_RESET              (1 << 5)
 #define ERR_INTERNAL                    (1 << 6)
@@ -73,7 +74,7 @@ typedef enum {
 
 #pragma pack(push, 1)
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint8_t  protocol_version;
     uint8_t  msg_type;
     uint16_t payload_length;
@@ -82,60 +83,61 @@ typedef struct {
 } rlc_msg_header_t;
 _Static_assert(sizeof(rlc_msg_header_t) == 12, "Header size mismatch");
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint8_t remote_firmware_version[3];  /* [0]=major, [1]=minor, [2]=patch */
     uint8_t remote_mac[6];
 } rlc_payload_link_request_t;
 _Static_assert(sizeof(rlc_payload_link_request_t) == 9, "LINK_REQUEST size mismatch");
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint32_t session_token;
     uint8_t  base_firmware_version[3];   /* [0]=major, [1]=minor, [2]=patch */
     uint8_t  num_channels;
 } rlc_payload_link_ack_t;
 _Static_assert(sizeof(rlc_payload_link_ack_t) == 8, "LINK_ACK size mismatch");
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint32_t ping_timestamp;
     uint16_t remote_battery_voltage_mv;
 } rlc_payload_ping_t;
 _Static_assert(sizeof(rlc_payload_ping_t) == 6, "PING size mismatch");
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint32_t ping_timestamp;
     uint32_t pong_timestamp;
 } rlc_payload_pong_t;
 _Static_assert(sizeof(rlc_payload_pong_t) == 8, "PONG size mismatch");
 
-typedef struct {
-    uint8_t  channel;
+/* Command structs: integrity_crc first for natural 4-byte alignment (FSD §6.3.3) */
+typedef struct __attribute__((packed)) {
     uint32_t integrity_crc;
+    uint8_t  channel;
 } rlc_payload_cmd_arm_t;
 _Static_assert(sizeof(rlc_payload_cmd_arm_t) == 5, "CMD_ARM size mismatch");
 
-typedef struct {
-    uint8_t  channel;
+typedef struct __attribute__((packed)) {
     uint32_t integrity_crc;
+    uint8_t  channel;
 } rlc_payload_cmd_disarm_t;
 _Static_assert(sizeof(rlc_payload_cmd_disarm_t) == 5, "CMD_DISARM size mismatch");
 
-typedef struct {
-    uint8_t  channel;
+typedef struct __attribute__((packed)) {
     uint32_t integrity_crc;
+    uint8_t  channel;
 } rlc_payload_cmd_fire_t;
 _Static_assert(sizeof(rlc_payload_cmd_fire_t) == 5, "CMD_FIRE size mismatch");
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint32_t integrity_crc;
 } rlc_payload_cmd_cease_fire_t;
 _Static_assert(sizeof(rlc_payload_cmd_cease_fire_t) == 4, "CMD_CEASE_FIRE size mismatch");
 
-typedef struct {
-    uint16_t continuity_bitmask;
-    uint16_t channel_armed_bitmask;
-    uint16_t channel_firing_bitmask;
-    uint8_t  base_arm_switch;
-    uint8_t  low_side_relay;
+typedef struct __attribute__((packed)) {
+    uint16_t continuity_bands;          /* 2 bits/ch: 00=OPEN,01=GOOD,10=MARGINAL,11=SHORT */
+    uint16_t channel_armed_bitmask;     /* bits 0-7: armed channels */
+    uint16_t channel_firing_bitmask;    /* bits 0-7: firing channels */
+    uint8_t  base_arm_switch;           /* debounced arm sense */
+    uint8_t  arm_switch_hw;             /* raw arm sense GPIO (arm relay COM output) */
     uint16_t battery_voltage_mv;
     uint8_t  base_state;
     uint8_t  error_flags;
@@ -143,14 +145,14 @@ typedef struct {
 } rlc_payload_status_update_t;
 _Static_assert(sizeof(rlc_payload_status_update_t) == 14, "STATUS_UPDATE size mismatch");
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint8_t  acked_msg_type;
     uint32_t acked_sequence_number;
     uint8_t  channel;
 } rlc_payload_cmd_ack_t;
 _Static_assert(sizeof(rlc_payload_cmd_ack_t) == 6, "CMD_ACK size mismatch");
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint8_t  nacked_msg_type;
     uint32_t nacked_sequence_number;
     uint8_t  reason_code;
@@ -178,7 +180,8 @@ static inline const char *rlc_nack_reason_str(uint8_t reason)
         case NACK_REPLAY_DETECTED:        return "REPLAY DETECTED";
         case NACK_LOW_BATTERY:            return "LOW BATTERY";
         case NACK_CHANNEL_ALREADY_ARMED:  return "ALREADY ARMED";
-        case NACK_RELAY_FAULT:            return "RELAY FAULT";
+        case NACK_ARM_SENSE_FAULT:        return "ARM SENSE FAULT";
+        case NACK_REMOTE_BATTERY_LOW:     return "REMOTE BATTERY LOW";
         default:                          return "UNKNOWN ERROR";
     }
 }

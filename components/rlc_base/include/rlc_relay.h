@@ -2,6 +2,7 @@
  * RLC Relay Control
  *
  * Encapsulated relay drive functions with configurable polarity.
+ * FSD §7.4.1: relay_fire_set / relay_fire_all_off / arm_relay_set / relay_all_safe.
  */
 
 #pragma once
@@ -10,40 +11,34 @@
 #include <stdbool.h>
 
 /**
- * Initialise all relay GPIOs to safe (inactive) state.
- * MUST be called before any other peripheral init (§9.7).
+ * Initialise all relay GPIOs (channel SPDT + arm relay) to safe (inactive) state.
+ * MUST be called before any other peripheral init (FSD §9.7).
  */
 void relay_init(void);
 
 /**
- * Set a single channel relay on or off.
+ * Energise or de-energise one channel SPDT relay.
  *
- * @param channel  Channel number (1–8)
- * @param state    true = active (relay closed), false = inactive (relay open)
+ * @param channel  Channel number (1-8)
+ * @param state    true = energised (NO/fire position), false = de-energised (NC/continuity)
  */
-void relay_channel_set(uint8_t channel, bool state);
+void relay_fire_set(uint8_t channel, bool state);
 
 /**
- * Set all channel relays to inactive (open).
+ * De-energise all channel SPDT relays (return to NC/continuity position).
  */
-void relay_channel_all_off(void);
+void relay_fire_all_off(void);
 
 /**
- * Set the low-side relay.
+ * Energise or de-energise the arm relay (GPIO 47, via IRLZ44N MOSFET).
+ * Primary fire path interlock — hardware AND gate with physical key switch.
  *
- * @param state  true = closed (current can flow), false = open (safe)
+ * @param state  true = energised (fire path enabled), false = de-energised (safe)
  */
-void relay_lowside_set(bool state);
+void arm_relay_set(bool state);
 
 /**
- * Emergency safe: all channel relays off + low-side relay open.
+ * Emergency safe: de-energise arm relay + all channel relays.
  * Called at boot, on disarm, on error, on link loss.
  */
 void relay_all_safe(void);
-
-/**
- * Check relay feedback input.
- *
- * @return true if safe (no current detected on firing bus), false if fault
- */
-bool relay_feedback_is_safe(void);

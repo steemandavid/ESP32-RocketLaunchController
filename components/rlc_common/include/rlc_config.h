@@ -11,7 +11,7 @@
 
 /* ── Timing Constants ─────────────────────────────────────────── */
 
-#define HEARTBEAT_INTERVAL_MS          1000
+#define HEARTBEAT_INTERVAL_MS          500
 #define HEARTBEAT_TIMEOUT_MS           500
 #define HEARTBEAT_FAIL_THRESHOLD       3
 #define HEARTBEAT_WINDOW_SIZE          10
@@ -21,8 +21,8 @@
 #define STATUS_STALE_TIMEOUT_MS        5000
 
 #define LINK_REQUEST_INTERVAL_MS       2000
-#define LINK_REQUEST_MAX_RETRIES       15
-#define LINK_REQUEST_SLOW_INTERVAL_MS  5000
+#define LINK_REQUEST_MAX_RETRIES       5
+#define LINK_REQUEST_SLOW_INTERVAL_MS  2000
 
 #define CMD_ACK_TIMEOUT_MS             500
 #define CMD_RETRY_COUNT                1
@@ -30,9 +30,11 @@
 #define FIRE_REPEAT_INTERVAL_MS        200
 #define FIRE_AUTHORIZATION_TIMEOUT_MS  500
 
-#define PRE_FIRE_DELAY_MS              5000
-#define FIRE_PULSE_DURATION_MS         2000
+#define PRE_FIRE_DELAY_MS              2000
+#define FIRE_PULSE_DURATION_MS         1000
 #define POST_FIRE_COOLDOWN_MS          2000
+
+#define ARM_TIMEOUT_MS                 10000
 
 #define SIREN_LINK_LOST_DURATION_MS    4000
 #define NACK_DISPLAY_DURATION_MS       3000

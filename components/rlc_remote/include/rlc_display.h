@@ -2,6 +2,8 @@
  * RLC Display Driver (Remote Unit)
  *
  * ILI9488 480x320 SPI LCD — Phase 4 implementation.
+ * FSD §10.2.0: colour constants use RGB888 notation for readability.
+ * Driver transmits as RGB666 to ILI9488.
  */
 
 #pragma once
@@ -10,15 +12,17 @@
 #include <stdbool.h>
 
 /**
- * Display colour constants (RGB565).
+ * Display colour constants (RGB888 — FSD §10.2.0).
+ * Blue used instead of green for continuity GOOD (colour-blind accessibility).
  */
-#define DISP_COLOR_GREEN         0x0640
-#define DISP_COLOR_RED           0xF800
-#define DISP_COLOR_CYAN          0x06DF
-#define DISP_COLOR_RED_BG        0xB000
-#define DISP_COLOR_YELLOW        0xFEE0
-#define DISP_COLOR_WHITE         0xFFFF
-#define DISP_COLOR_BLACK         0x0000
+#define DISP_COLOR_CONT_GOOD      { 0, 120, 255 }   /* Blue — continuity GOOD */
+#define DISP_COLOR_CONT_OPEN      { 255, 0, 0 }     /* Red — continuity OPEN / error */
+#define DISP_COLOR_CONT_SHORT     { 255, 140, 0 }   /* Orange — continuity SHORT */
+#define DISP_COLOR_CONT_MARGINAL  { 255, 220, 0 }   /* Yellow — continuity MARGINAL */
+#define DISP_COLOR_SELECTED       { 0, 220, 255 }   /* Cyan — selected channel */
+#define DISP_COLOR_ARMED_BG       { 180, 0, 0 }     /* Red — armed channel background */
+#define DISP_COLOR_WHITE          { 255, 255, 255 }
+#define DISP_COLOR_BLACK          { 0, 0, 0 }
 
 /**
  * Initialise the ILI9488 display.

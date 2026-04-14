@@ -2017,7 +2017,7 @@ The display shall support the following screens, determined by the remote FSM st
 │              CONTROLLER  v1.0.0                  │
 │                                                  │
 │              Connecting to base...               │
-│              Attempt 3 / 15                      │
+│              Attempt 3 / 5                       │
 │                                                  │
 │              ████████░░░░░░░░░░░░  40%           │
 │                                                  │
@@ -2228,7 +2228,7 @@ Both units have an on-board WS2812 (NeoPixel) addressable RGB LED on GPIO 48, dr
 | FIRING | Red (255,0,0) | Solid | Fire command active |
 | LINK_LOST | Yellow (255,180,0) | Fast blink (200ms on/200ms off) | Lost contact |
 | ERROR | Red (255,0,0) | Triple flash | Fault |
-| Ping failure | Orange (255,100,0) | Single flash (50ms) overlaid on current pattern | Brief indicator |
+| Ping failure | Orange (255,100,0) | Single flash (250ms) overlaid on current pattern | Brief indicator |
 
 ### 11.3 Implementation
 
@@ -2236,7 +2236,7 @@ Both units have an on-board WS2812 (NeoPixel) addressable RGB LED on GPIO 48, dr
 - GPIO: 48 (fixed, on-board, defined as `RGB_LED = 48`).
 - Brightness: configurable in `rlc_config.h` (`RGB_LED_BRIGHTNESS`, default: 30 out of 255).
 - Pattern engine: implemented in `rlc_common` as a FreeRTOS task that accepts state changes and drives the LED accordingly. Patterns are defined as arrays of (colour, duration_ms) pairs with repeat flags.
-- The ping-failure orange flash is implemented as a brief override that temporarily replaces the current pattern for 50 ms, then restores it.
+- The ping-failure orange flash is implemented as a brief override that temporarily replaces the current pattern for 250 ms, then restores it.
 
 ---
 
@@ -2796,7 +2796,7 @@ This appendix provides a comprehensive reference of all protocol exceptions and 
 
 | Exception | Scenario | Handling |
 |---|---|---|
-| PONG not received within 500 ms | Single packet loss | Increment failure counter. Remote buzzer: 80 ms beep. RGB LED: orange flash. |
+| PONG not received within 500 ms | Single packet loss | Increment failure counter. Remote buzzer: 150 ms beep. RGB LED: orange flash (250 ms). |
 | 3 consecutive PONG failures | Sustained link loss | Both units → LINK_LOST. Base disarms. Siren. Buzzer alarm. |
 | PONG with wrong ping_timestamp | Stale/mismatched pong | Discard silently. Do NOT count as success. Failure counter continues. |
 | PING received after link loss | Remote recovering | Base responds with PONG. Both → IDLE. |
