@@ -133,12 +133,16 @@ static int32_t sample_channel(int ch_idx)
 
     int32_t avg_raw = sum / CONT_OVERSAMPLE_COUNT;
 
-    /* Convert to millivolts using calibration */
+    /* Convert to millivolts using calibration (if available and valid).
+     * Use raw conversion as fallback — band classification has wide margins
+     * and does not require calibrated voltages. */
     int voltage_mv = 0;
-    if (s_cali_handles[ch_idx]) {
-        adc_cali_raw_to_voltage(s_cali_handles[ch_idx], avg_raw, &voltage_mv);
+    if (s_cali_handles[ch_idx] != NULL) {
+        esp_err_t ret = adc_cali_raw_to_voltage(s_cali_handles[ch_idx], avg_raw, &voltage_mv);
+        if (ret != ESP_OK) {
+            voltage_mv = (avg_raw * 3300) / 4095;
+        }
     } else {
-        /* Fallback: rough estimate for 12-bit, 12dB attenuation (0-3.3V) */
         voltage_mv = (avg_raw * 3300) / 4095;
     }
 
@@ -214,24 +218,13 @@ void continuity_init(void)
             continue;
         }
 
-        /* Create calibration handle for this channel */
+        /* Calibration disabled for continuity channels.
+         * The ESP-IDF adc_cali_create_scheme_curve_fitting produces corrupted
+         * handles for some ADC1 channels on ESP32-S3, causing LoadProhibited
+         * panics in adc_cali_raw_to_voltage. Raw conversion is sufficient for
+         * band classification (SHORT/GOOD/MARGINAL/OPEN) which has wide
+         * threshold margins. */
         s_cali_handles[i] = NULL;
-#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
-        adc_cali_curve_fitting_config_t cali_cfg = {
-            .unit_id  = ADC_UNIT_1,
-            .chan     = s_adc_chan[i],
-            .atten    = ADC_ATTEN_DB_12,
-            .bitwidth = ADC_BITWIDTH_12,
-        };
-        adc_cali_create_scheme_curve_fitting(&cali_cfg, &s_cali_handles[i]);
-#elif ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
-        adc_cali_line_fitting_config_t cali_cfg = {
-            .unit_id  = ADC_UNIT_1,
-            .atten    = ADC_ATTEN_DB_12,
-            .bitwidth = ADC_BITWIDTH_12,
-        };
-        adc_cali_create_scheme_line_fitting(&cali_cfg, &s_cali_handles[i]);
-#endif
     }
 
     ESP_LOGI(TAG, "continuity ADC initialised (%d channels)", NUM_CHANNELS);

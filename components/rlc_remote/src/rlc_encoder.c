@@ -131,12 +131,15 @@ void encoder_poll_button(void)
     int level = gpio_get_level(PIN_ENCODER_SW);
     rlc_debounce_update(&s_button_db, level, button_change_cb, NULL);
 
-    /* Check for long-press timeout */
-    if (s_button_debounced_pressed && !s_long_press_fired && s_long_press_cb) {
+    /* Check for long-press timeout — detect regardless of callback registration */
+    if (s_button_debounced_pressed && !s_long_press_fired) {
         int64_t elapsed_us = esp_timer_get_time() - s_press_start_us;
         if (elapsed_us >= (int64_t)ENCODER_LONG_PRESS_MS * 1000) {
             s_long_press_fired = true;
-            s_long_press_cb();
+            ESP_LOGI(TAG, "LONG PRESS detected (ch=%d)", s_channel);
+            if (s_long_press_cb) {
+                s_long_press_cb();
+            }
         }
     }
 }

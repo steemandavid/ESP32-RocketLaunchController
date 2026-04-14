@@ -657,6 +657,12 @@ rlc_link_state_t rlc_link_get_state(void)
 
 void rlc_link_set_remote_battery_mv(uint16_t mv)
 {
+    if (s_state_mutex == NULL) {
+        /* Link manager not initialised yet — store value directly.
+         * Safe because no other task is reading it yet. */
+        s_remote_battery_mv = mv;
+        return;
+    }
     lock();
     s_remote_battery_mv = mv;
     unlock();

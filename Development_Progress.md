@@ -17,7 +17,7 @@
 |-------|------|--------|
 | 0 | Hardware Validation | COMPLETE |
 | 1 | Foundation and Communication | COMPLETE |
-| 2 | Input/Output and Debouncing | NOT STARTED |
+| 2 | Input/Output and Debouncing | COMPLETE |
 | 3 | State Machines and Command Processing | NOT STARTED |
 | 4 | Display | NOT STARTED |
 | 5 | Hardening and Final Testing | NOT STARTED |
@@ -272,7 +272,7 @@ Full code review against FSD v1.14 — see `Phase1_Code_Review.md`.
 ## Phase 2 — Input/Output and Debouncing
 
 **FSD ref:** §4.3 Phase 2, §5 (Hardware Interface), §5.3 (Debounce), §5.4 (Base I/O), §5.5 (Remote I/O)
-**Status:** NOT STARTED
+**Status:** COMPLETE
 
 ### Phase 2 Development Tasks
 
@@ -281,22 +281,131 @@ Full code review against FSD v1.14 — see `Phase1_Code_Review.md`.
 | 1 | Shift-register debounce engine (already exists in rlc_common) | §5.3 | DONE |
 | 2 | Battery ADC driver base (already exists) | §5.4.7 | DONE |
 | 3 | Battery ADC driver remote (already exists) | §5.5 | DONE |
-| 4 | Base: 8 channel SPDT relay GPIO configuration | §5.4.1 | TODO |
-| 5 | Base: Arm switch sense GPIO (GPIO 21, voltage divider + zener) | §5.4.3 | TODO |
-| 6 | Base: Arm relay output (GPIO 47) | §5.4.9 | TODO |
-| 7 | Base: Siren output (GPIO 40) | §5.4.10 | TODO |
-| 8 | Base: 8-channel continuity ADC (GPIO 2-9, 64-sample oversampling) | §5.4.4 | TODO |
-| 9 | Base: Continuity 4-band classification (SHORT/GOOD/MARGINAL/OPEN) | §5.4.4 | TODO |
-| 10 | Base: Continuity hysteresis | §5.4.4 | TODO |
-| 11 | Base: Relay feedback monitoring (check at arm-time) | §5.4.6 | TODO |
-| 12 | Base: MOSFET driver outputs (10x IRLZ44N, active-high) | §5.4.10 | TODO |
-| 13 | Remote: Rotary encoder driver (interrupt-driven, channel 1-8 wrap) | §5.5.3 | TODO |
-| 14 | Remote: Fire button driver (8-bit debounce, fresh-press detection) | §5.5.4 | TODO |
-| 15 | Remote: Arm switch monitoring (16-bit debounce, 10 ms poll) | §5.5.2 | TODO |
-| 16 | Remote: Battery monitoring with 3 thresholds | §8.3.4 | TODO |
+| 4 | Base: 8 channel SPDT relay GPIO configuration | §5.4.1 | DONE |
+| 5 | Base: Arm switch sense GPIO (GPIO 21, voltage divider + zener) | §5.4.3 | DONE |
+| 6 | Base: Arm relay output (GPIO 47) | §5.4.9 | DONE |
+| 7 | Base: Siren output (GPIO 40) | §5.4.10 | DONE |
+| 8 | Base: 8-channel continuity ADC (GPIO 2-9, 64-sample oversampling) | §5.4.4 | DONE |
+| 9 | Base: Continuity 4-band classification (SHORT/GOOD/MARGINAL/OPEN) | §5.4.4 | DONE |
+| 10 | Base: Continuity hysteresis | §5.4.4 | DONE |
+| 11 | Base: Relay feedback monitoring (check at arm-time) | §5.4.6 | DONE |
+| 12 | Base: MOSFET driver outputs (10x IRLZ44N, active-high) | §5.4.10 | DONE |
+| 13 | Remote: Rotary encoder driver (interrupt-driven, channel 1-8 wrap) | §5.5.3 | DONE |
+| 14 | Remote: Fire button driver (8-bit debounce, fresh-press detection) | §5.5.4 | DONE |
+| 15 | Remote: Arm switch monitoring (16-bit debounce, 10 ms poll) | §5.5.2 | DONE |
+| 16 | Remote: Battery monitoring with 3 thresholds | §8.3.4 | DONE |
 | 17 | Remote battery voltage in PING payload (already wired) | §6.3.5 | DONE |
-| 18 | STATUS_UPDATE with real continuity bands + armed bitmask | §6.3.3 | TODO |
-| 19 | Debounce 16-bit unit test (T-U06) | §15.5 | TODO |
+| 18 | STATUS_UPDATE with real continuity bands + armed bitmask | §6.3.3 | DONE |
+| 19 | Debounce 16-bit unit test (T-U06) | §15.5 | DONE |
+
+### Phase 2 Code Review
+
+Full code review against FSD v1.14 — see `Phase2_Code_Review.md`.
+
+Verdict: PASS WITH NOTES. 3 major findings (M1–M3), 4 minor (m1–m4). All addressed.
+
+### Phase 2 Bugs Found and Fixed During Testing
+
+| # | Bug | Root Cause | Fix |
+|---|-----|-----------|-----|
+| 1 | Remote boot crash: NULL mutex in `rlc_link_set_remote_battery_mv()` | Battery task started before `rlc_link_init()` — mutex was NULL | NULL guard on `s_state_mutex` before `xSemaphoreTake` |
+| 2 | Remote boot crash: stack overflow in `battery_task` | 2048-byte stack insufficient for ADC + `ESP_LOGW` formatting | Increased to 3072 bytes (both base and remote battery tasks) |
+| 3 | Base boot crash: `LoadProhibited` in `adc_cali_raw_to_voltage` | ESP-IDF `adc_cali_create_scheme_curve_fitting` produces corrupted handles for some ADC1 channels on ESP32-S3 | Disabled ADC calibration for continuity channels — raw conversion sufficient for band classification |
+| 4 | Encoder long-press not detected | Long-press timeout check gated on `s_long_press_cb != NULL` — no callback registered in Phase 2 | Separated detection from callback invocation — always detect, only invoke callback if registered |
+
+### Phase 2 Boot Self-Tests (on-target, run every boot)
+
+| Suite | Test | Status | Notes |
+|-------|------|--------|-------|
+| 1 | Struct field offset verification (25 checks) | PASS | All packed struct offsets match spec |
+| 2 | CRC32-C test vector | PASS | `"123456789"` → `0xE3069283` |
+| 3 | Message serialisation round-trip | PASS | Build PING, parse, verify header + payload fields |
+| 4 | Sequence number validation | PASS | Accepts increasing, rejects equal/lower/zero/NULL |
+| 5 | Debounce logic (8-bit) | PASS | 7 LOWs → no trigger; 8th LOW → active; 8 HIGHs → inactive |
+| 6 | Debounce logic (16-bit) | PASS | 15 LOWs no trigger, 16th triggers; 8 LOWs no trigger in 16-bit mode |
+| 7 | Version comparison | PASS | v1.0.0 matches, non-zero check |
+| 8 | Integrity CRC determinism | PASS | Same input → same CRC; modified input → different CRC |
+| 9 | Continuity band classification (T-U10) | PASS | 11 known microvolt values classified correctly |
+| 10 | Continuity hysteresis (T-U11) | PASS | No spurious transitions near band boundaries |
+| 11 | Continuity bands encoding (T-U12) | PASS | 2-bit-per-channel packing into uint16_t |
+| 12 | Update sequence gap / wrap (T-U09, T-U16) | TODO | Deferred to Phase 3 |
+
+### Phase 2 On-Target Tests
+
+#### Base Unit — Continuity Sensing
+
+| ID | Test | Status | Notes |
+|----|------|--------|-------|
+| B2-C01 | All channels floating = OPEN | PASS | `cont=0x0000` |
+| B2-C02 | CH1 with ~2Ω resistor = GOOD | PASS | 32000–33000 uV, band 0→1 |
+| B2-C03 | CH1 resistor removed = OPEN | PASS | 3300000 uV, band 1→0 |
+| B2-C04 | CH1 resistor reconnect = GOOD | PASS | `cont=0x0001` in status log |
+| B2-C05 | Round-robin timing | PASS | ~800ms per full 8-channel sweep (100ms/ch) |
+| B2-C06 | Event-driven STATUS_UPDATE on band change | PASS | Immediate trigger, not waiting for 2s timer |
+
+#### Base Unit — Arm Sense & Battery
+
+| ID | Test | Status | Notes |
+|----|------|--------|-------|
+| B2-A01 | Arm sense ARMED/DISARMED transitions | PASS | GPIO 21, 16-bit debounce, clean transitions |
+| B2-A02 | Contact welding detection | PASS | `CONTACT WELD DETECTED` logged when sense HIGH with relay OFF. Fault callback triggers STATUS_UPDATE |
+| B2-B01 | Battery ~12V, stable reading | PASS | 12001–12022 mV across sessions |
+| B2-B02 | Battery no false warnings | PASS | No LOW/CRITICAL warnings at 12V |
+
+#### Remote Unit — Fire Button
+
+| ID | Test | Status | Notes |
+|----|------|--------|-------|
+| R2-F01 | Press/release detection | PASS | `fire=0`→`fire=1`→`fire=0` in status log |
+| R2-F02 | LED control (red=pressed, green=released) | PASS | Visual confirmation |
+| R2-F03 | Fire while armed | PASS | `arm=1 fire=1` detected correctly |
+
+#### Remote Unit — Arm Switch
+
+| ID | Test | Status | Notes |
+|----|------|--------|-------|
+| R2-A01 | ARMED/DISARMED toggle (6+ cycles) | PASS | Clean debounce, ~160ms settle |
+| R2-A02 | LED indicator | PASS | On when armed, off when disarmed |
+
+#### Remote Unit — Encoder
+
+| ID | Test | Status | Notes |
+|----|------|--------|-------|
+| R2-E01 | CW rotation (ch 1→5) | PASS | Channel increments correctly |
+| R2-E02 | CCW rotation (ch 5→2, wrap 1→8) | PASS | Channel decrements and wraps correctly |
+| R2-E03 | Short press (<500ms) | PASS | `long_press_fired=0` on release |
+| R2-E04 | Long press (>500ms) | PASS | `LONG PRESS detected` fires at 500ms; `long_press_fired=1` on release |
+
+#### Remote Unit — Battery
+
+| ID | Test | Status | Notes |
+|----|------|--------|-------|
+| R2-B01 | Battery ~3.3V stable reading | PASS | 3267–3298 mV across sessions |
+| R2-B02 | CRITICAL warning at 3.3V supply | PASS | Expected — thresholds designed for ~7.4V LiPo |
+
+#### Integration — Both Units Linked
+
+| ID | Test | Status | Notes |
+|----|------|--------|-------|
+| R2-INT01 | Link established after boot | PASS | LINK_REQUEST/ACK, session token assigned |
+| R2-INT02 | Link stability (~5 min total) | PASS | `missed=0` across all sessions, RSSI -30 to -50 dBm |
+| R2-INT03 | STATUS_UPDATE with real data | PASS | `cont`, `arm`, `vbat` populated with real sensor values |
+| R2-INT04 | No crashes | PASS | Zero panics/overflows/watchdog resets after bug fixes |
+
+### Phase 2 FSD Unit Tests (§15.5)
+
+| ID | Module | Test | Status | Notes |
+|----|--------|------|--------|-------|
+| T-U09 | Update sequence gap | Feed update_sequence numbers with gaps. Verify warning at gap > 2. | TODO | Phase 3 feature |
+| T-U10 | Continuity band classification | Known microvolt values → correct band | PASS | Covered in boot self-test suite 9 (11 points) |
+| T-U11 | Continuity hysteresis | Oscillating near threshold — no spurious transitions | PASS | Covered in boot self-test suite 10 |
+| T-U12 | Continuity bands encoding | 2-bit-per-channel packing into uint16 | PASS | Covered in boot self-test suite 11 |
+| T-U16 | Update sequence wrap-around | 65535→0 not treated as gap | TODO | Phase 3 feature |
+
+### Phase 2 Key Commits
+
+- `aafacd0` Phase 2: Input/Output and Debouncing
+- `7e55b99` Phase 2 code review fixes — address all review findings
 
 ---
 
