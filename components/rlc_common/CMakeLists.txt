@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "src/rlc_espnow.c"
+        "src/rlc_link.c"
         "src/rlc_message.c"
         "src/rlc_debounce.c"
         "src/rlc_battery.c"

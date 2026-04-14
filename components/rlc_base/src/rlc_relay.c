@@ -1,5 +1,9 @@
 /**
- * RLC Relay Control Implementation
+ * RLC Relay Control — FSD v1.10+ topology.
+ *
+ * Eight channel SPDT relays driven via IRLZ44N low-side MOSFETs.
+ * One arm relay (GPIO 47) provides the primary fire-path interlock in
+ * series with the physical key switch (hardware AND gate).
  */
 
 #include "rlc_relay.h"
@@ -11,90 +15,66 @@
 
 static const char *TAG = "rlc_relay";
 
-/* Channel relay GPIO lookup table */
-static const int s_relay_pins[NUM_CHANNELS] = {
+static const int s_channel_pins[NUM_CHANNELS] = {
     PIN_RELAY_CH1, PIN_RELAY_CH2, PIN_RELAY_CH3, PIN_RELAY_CH4,
     PIN_RELAY_CH5, PIN_RELAY_CH6, PIN_RELAY_CH7, PIN_RELAY_CH8,
 };
 
-/**
- * Drive a GPIO output considering polarity.
- * active=true means "relay should be engaged".
- */
 static inline void drive_output(int gpio, bool active, int active_level)
 {
     int level = active ? active_level : !active_level;
     gpio_set_level(gpio, level);
 }
 
-void relay_init(void)
+static void configure_output(int gpio)
 {
-    /* Configure all channel relay outputs — inactive state FIRST (§9.7) */
-    for (int i = 0; i < NUM_CHANNELS; i++) {
-        gpio_config_t cfg = {
-            .pin_bit_mask = (1ULL << s_relay_pins[i]),
-            .mode         = GPIO_MODE_OUTPUT,
-            .pull_up_en   = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_DISABLE,
-            .intr_type    = GPIO_INTR_DISABLE,
-        };
-        gpio_config(&cfg);
-        drive_output(s_relay_pins[i], false, PIN_RELAY_CH_ACTIVE);
-    }
-
-    /* Low-side relay — inactive (open) */
-    gpio_config_t ls_cfg = {
-        .pin_bit_mask = (1ULL << PIN_LOWSIDE_RELAY),
+    gpio_config_t cfg = {
+        .pin_bit_mask = (1ULL << gpio),
         .mode         = GPIO_MODE_OUTPUT,
         .pull_up_en   = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type    = GPIO_INTR_DISABLE,
     };
-    gpio_config(&ls_cfg);
-    drive_output(PIN_LOWSIDE_RELAY, false, PIN_LOWSIDE_RELAY_ACTIVE);
-
-    /* Relay feedback input — pull-up, digital input */
-    gpio_config_t fb_cfg = {
-        .pin_bit_mask = (1ULL << PIN_RELAY_FEEDBACK),
-        .mode         = GPIO_MODE_INPUT,
-        .pull_up_en   = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type    = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&fb_cfg);
-
-    ESP_LOGI(TAG, "Relay GPIOs initialised — all safe");
+    gpio_config(&cfg);
 }
 
-void relay_channel_set(uint8_t channel, bool state)
+void relay_init(void)
+{
+    /* §9.7 — outputs come up in their safe (inactive) state first. */
+    for (int i = 0; i < NUM_CHANNELS; i++) {
+        configure_output(s_channel_pins[i]);
+        drive_output(s_channel_pins[i], false, PIN_RELAY_CH_ACTIVE);
+    }
+
+    configure_output(PIN_ARM_RELAY);
+    drive_output(PIN_ARM_RELAY, false, PIN_ARM_RELAY_ACTIVE);
+
+    ESP_LOGI(TAG, "relay GPIOs initialised — channels + arm relay safe");
+}
+
+void relay_fire_set(uint8_t channel, bool state)
 {
     if (channel < 1 || channel > NUM_CHANNELS) {
-        ESP_LOGE(TAG, "Invalid channel: %d", channel);
+        ESP_LOGE(TAG, "invalid channel %u", channel);
         return;
     }
-    drive_output(s_relay_pins[channel - 1], state, PIN_RELAY_CH_ACTIVE);
+    drive_output(s_channel_pins[channel - 1], state, PIN_RELAY_CH_ACTIVE);
 }
 
-void relay_channel_all_off(void)
+void relay_fire_all_off(void)
 {
     for (int i = 0; i < NUM_CHANNELS; i++) {
-        drive_output(s_relay_pins[i], false, PIN_RELAY_CH_ACTIVE);
+        drive_output(s_channel_pins[i], false, PIN_RELAY_CH_ACTIVE);
     }
 }
 
-void relay_lowside_set(bool state)
+void arm_relay_set(bool state)
 {
-    drive_output(PIN_LOWSIDE_RELAY, state, PIN_LOWSIDE_RELAY_ACTIVE);
+    drive_output(PIN_ARM_RELAY, state, PIN_ARM_RELAY_ACTIVE);
 }
 
 void relay_all_safe(void)
 {
-    relay_channel_all_off();
-    relay_lowside_set(false);
-}
-
-bool relay_feedback_is_safe(void)
-{
-    /* HIGH = no current (safe), LOW = current detected (fault) */
-    return gpio_get_level(PIN_RELAY_FEEDBACK) == 1;
+    relay_fire_all_off();
+    arm_relay_set(false);
 }

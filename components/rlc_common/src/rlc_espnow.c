@@ -1,5 +1,13 @@
 /**
  * RLC ESP-NOW Communication Driver
+ *
+ * Wi-Fi + ESP-NOW initialisation, encrypted peer registration, send/recv.
+ *
+ * Receive path decoupling (FSD §6.4.1b):
+ *   The Wi-Fi recv callback runs in Wi-Fi task context and must return
+ *   quickly. Frames are copied into a FreeRTOS queue (depth >= 16) and
+ *   drained by a dedicated worker task that invokes the user callback
+ *   in task context. Frames larger than RLC_ESPNOW_RX_MAX are dropped.
  */
 
 #include "rlc_espnow.h"
@@ -13,24 +21,68 @@
 #include "esp_netif.h"
 #include "nvs_flash.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+
 static const char *TAG = "rlc_espnow";
+
+#define RLC_ESPNOW_RX_MAX        250
+#define RLC_ESPNOW_RX_QUEUE_LEN  16
+
+typedef struct {
+    uint8_t src_mac[6];
+    int     rssi;
+    int     len;
+    uint8_t data[RLC_ESPNOW_RX_MAX];
+} rlc_espnow_rx_item_t;
 
 static rlc_espnow_recv_cb_t s_recv_cb = NULL;
 static rlc_espnow_send_cb_t s_send_cb = NULL;
 
+static QueueHandle_t s_rx_queue = NULL;
+static TaskHandle_t  s_rx_task  = NULL;
+
 static void espnow_recv_cb(const esp_now_recv_info_t *recv_info,
                            const uint8_t *data, int data_len)
 {
-    if (s_recv_cb && recv_info) {
-        int rssi = recv_info->rx_ctrl->rssi;
-        s_recv_cb(recv_info->src_addr, data, data_len, rssi);
+    if (!recv_info || !data || data_len <= 0) return;
+    if (data_len > RLC_ESPNOW_RX_MAX) {
+        ESP_LOGW(TAG, "rx oversize (%d), dropped", data_len);
+        return;
     }
+    if (!s_rx_queue) return;
+
+    rlc_espnow_rx_item_t item;
+    memcpy(item.src_mac, recv_info->src_addr, 6);
+    item.rssi = recv_info->rx_ctrl ? recv_info->rx_ctrl->rssi : 0;
+    item.len  = data_len;
+    memcpy(item.data, data, data_len);
+
+    BaseType_t hpw = pdFALSE;
+    if (xQueueSendFromISR(s_rx_queue, &item, &hpw) != pdTRUE) {
+        ESP_LOGW(TAG, "rx queue full, dropped");
+    }
+    if (hpw) portYIELD_FROM_ISR();
 }
 
 static void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
     if (s_send_cb) {
         s_send_cb(mac_addr, status == ESP_NOW_SEND_SUCCESS);
+    }
+}
+
+static void espnow_rx_task(void *arg)
+{
+    (void)arg;
+    rlc_espnow_rx_item_t item;
+    while (1) {
+        if (xQueueReceive(s_rx_queue, &item, portMAX_DELAY) == pdTRUE) {
+            if (s_recv_cb) {
+                s_recv_cb(item.src_mac, item.data, item.len, item.rssi);
+            }
+        }
     }
 }
 
@@ -55,24 +107,38 @@ int rlc_espnow_init(void)
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    /* Set Wi-Fi channel */
+    /* Pin to the configured Wi-Fi channel so ESP-NOW never wanders. */
     ESP_ERROR_CHECK(esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE));
 
-    /* Disable power saving for low latency */
+    /* Disable power saving for low-latency heartbeats. */
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
     /* Initialise ESP-NOW */
     ESP_ERROR_CHECK(esp_now_init());
 
-    /* Set PMK for encryption */
+    /* Set PMK for encryption (LMK configured per-peer on add). */
     uint8_t pmk[] = ESPNOW_PMK;
     ESP_ERROR_CHECK(esp_now_set_pmk(pmk));
 
-    /* Register callbacks */
+    /* Create rx queue + worker task before registering callback
+       so no frame can arrive before the queue exists. */
+    s_rx_queue = xQueueCreate(RLC_ESPNOW_RX_QUEUE_LEN, sizeof(rlc_espnow_rx_item_t));
+    if (!s_rx_queue) {
+        ESP_LOGE(TAG, "rx queue alloc failed");
+        return -1;
+    }
+    if (xTaskCreate(espnow_rx_task, "espnow_rx", 4096, NULL, 8, &s_rx_task) != pdPASS) {
+        ESP_LOGE(TAG, "rx task create failed");
+        return -1;
+    }
+
     ESP_ERROR_CHECK(esp_now_register_recv_cb(espnow_recv_cb));
     ESP_ERROR_CHECK(esp_now_register_send_cb(espnow_send_cb));
 
-    ESP_LOGI(TAG, "ESP-NOW initialised on channel %d", WIFI_CHANNEL);
+    uint8_t mac[6] = {0};
+    esp_wifi_get_mac(WIFI_IF_STA, mac);
+    ESP_LOGI(TAG, "ESP-NOW init ch %d, MAC %02x:%02x:%02x:%02x:%02x:%02x",
+             WIFI_CHANNEL, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     return 0;
 }
 
@@ -88,11 +154,11 @@ int rlc_espnow_add_peer(const uint8_t *peer_mac)
 
     esp_err_t ret = esp_now_add_peer(&peer);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to add peer: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "add_peer failed: %s", esp_err_to_name(ret));
         return -1;
     }
 
-    ESP_LOGI(TAG, "Peer added: %02x:%02x:%02x:%02x:%02x:%02x",
+    ESP_LOGI(TAG, "peer added: %02x:%02x:%02x:%02x:%02x:%02x",
              peer_mac[0], peer_mac[1], peer_mac[2],
              peer_mac[3], peer_mac[4], peer_mac[5]);
     return 0;
@@ -112,7 +178,7 @@ int rlc_espnow_send(const uint8_t *peer_mac, const uint8_t *data, int len)
 {
     esp_err_t ret = esp_now_send(peer_mac, data, len);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Send failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "send failed: %s", esp_err_to_name(ret));
         return -1;
     }
     return 0;
@@ -123,5 +189,13 @@ void rlc_espnow_deinit(void)
     esp_now_deinit();
     esp_wifi_stop();
     esp_wifi_deinit();
+    if (s_rx_task) {
+        vTaskDelete(s_rx_task);
+        s_rx_task = NULL;
+    }
+    if (s_rx_queue) {
+        vQueueDelete(s_rx_queue);
+        s_rx_queue = NULL;
+    }
     ESP_LOGI(TAG, "ESP-NOW de-initialised");
 }
