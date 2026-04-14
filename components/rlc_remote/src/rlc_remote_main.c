@@ -1,10 +1,10 @@
 /**
  * RLC Remote Unit — Application Entry Point
  *
- * Phase 1: Boot, initialise display and inputs, run self-tests, bring up
- * ESP-NOW, start the link manager, and let it drive LINK_REQUEST/heartbeat
- * transmission on its own task. This function is a housekeeping loop
- * (watchdog, battery sample, status log).
+ * Phase 2: All I/O tasks running — fire button, arm switch, encoder,
+ * battery monitoring, and link manager driving communication.
+ *
+ * Boot sequence follows FSD §9.13.
  */
 
 #include "rlc_remote.h"
@@ -22,6 +22,11 @@
 #include "rlc_config.h"
 #include "rlc_version.h"
 #include "pin_config.h"
+
+/* Phase 2 headers */
+#include "rlc_fire_button.h"
+#include "rlc_arm_switch.h"
+#include "rlc_remote_battery.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -50,8 +55,10 @@ void remote_app_main(void)
     encoder_init();
     buzzer_init();
 
+    /* §9.13 Step 4: Initialise ADC calibration + battery */
     rlc_battery_init(PIN_VBAT_ADC, REMOTE_VBAT_DIVIDER_RATIO);
 
+    /* §9.13 Step 5: Initialise ESP-NOW */
     if (rlc_espnow_init() != 0) {
         ESP_LOGE(TAG, "ESP-NOW init failed");
         rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
@@ -72,28 +79,43 @@ void remote_app_main(void)
         return;
     }
 
+    /* §9.13 Step 7: Configure input GPIOs */
+    fire_button_init();
+    arm_switch_init();
+
+    /* §9.13 Step 8: Configure hardware watchdog + TWDT */
+    rlc_watchdog_init();
+
+    /* §9.13 Step 9: Start FreeRTOS tasks */
+    /* Priority 7 — fire button (highest safety) */
+    fire_button_start_task();
+    /* Priority 6 — arm switch */
+    arm_switch_start_task();
+    /* Priority 3 — battery monitoring */
+    remote_battery_start_task();
+
+    /* §9.13 Step 10: Begin link establishment */
     if (rlc_link_init(RLC_LINK_ROLE_REMOTE, base_mac) != 0) {
         ESP_LOGE(TAG, "link manager init failed");
         rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
         return;
     }
 
-    rlc_watchdog_init();
-    ESP_LOGI(TAG, "remote ready — link manager driving handshake");
+    ESP_LOGI(TAG, "remote ready — all Phase 2 tasks running, waiting for link");
 
+    /* Housekeeping loop — watchdog + status log */
     int64_t last_log_ms = 0;
     while (1) {
         rlc_watchdog_feed();
-
-        uint16_t vbat = rlc_battery_sample();
-        rlc_link_set_remote_battery_mv(vbat);
 
         int64_t now = esp_timer_get_time() / 1000;
         if (now - last_log_ms >= 5000) {
             rlc_link_status_t ls;
             rlc_link_get_status(&ls);
-            ESP_LOGI(TAG, "state=%d rssi=%d missed=%u vbat=%u mv",
-                     ls.state, ls.rssi_avg_dbm, ls.missed_pings, vbat);
+            ESP_LOGI(TAG, "state=%d rssi=%d missed=%u vbat=%u mv arm=%d fire=%d",
+                     ls.state, ls.rssi_avg_dbm, ls.missed_pings,
+                     rlc_battery_get_voltage_mv(), arm_switch_is_armed(),
+                     fire_button_is_pressed());
             last_log_ms = now;
         }
 

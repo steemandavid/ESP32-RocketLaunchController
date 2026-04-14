@@ -3,7 +3,8 @@
  *
  * Verifies struct packing offsets, CRC32-C correctness, message
  * serialisation, sequence validation, sequence overflow, debounce
- * logic (8-bit and 16-bit), and version comparison at power-on.
+ * logic (8-bit and 16-bit), version comparison, continuity band
+ * classification, and continuity band encoding at power-on.
  */
 
 #include "rlc_selftest.h"
@@ -11,6 +12,7 @@
 #include "rlc_message.h"
 #include "rlc_debounce.h"
 #include "rlc_version.h"
+#include "rlc_config.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -466,6 +468,148 @@ static int test_integrity_crc(void)
     return failures;
 }
 
+/* ── Continuity band classification test (§5.4.2) ──────────────── */
+
+/* Replicate the classification logic inline for self-test —
+ * must match rlc_continuity.c exactly. */
+typedef enum {
+    TEST_CONT_OPEN = 0,
+    TEST_CONT_GOOD = 1,
+    TEST_CONT_MARGINAL = 2,
+    TEST_CONT_SHORT = 3,
+} test_cont_band_t;
+
+static test_cont_band_t test_classify_initial(int32_t uv)
+{
+    if (uv < CONT_SHORT_UV)      return TEST_CONT_SHORT;
+    if (uv < CONT_MARGINAL_UV)   return TEST_CONT_GOOD;
+    if (uv < CONT_OPEN_UV)       return TEST_CONT_MARGINAL;
+    return TEST_CONT_OPEN;
+}
+
+static int test_continuity_classification(void)
+{
+    int failures = 0;
+
+    /* Test points: µV values and expected bands */
+    struct { int32_t uv; test_cont_band_t expected; } tests[] = {
+        { 0,        TEST_CONT_SHORT },    /* Zero ohm dead short */
+        { 300,      TEST_CONT_SHORT },    /* Below SHORT threshold */
+        { 500,      TEST_CONT_GOOD },     /* At SHORT boundary */
+        { 1000,     TEST_CONT_GOOD },     /* Solid good reading */
+        { 30000,    TEST_CONT_GOOD },     /* Still good */
+        { 66000,    TEST_CONT_MARGINAL }, /* At MARGINAL boundary */
+        { 100000,   TEST_CONT_MARGINAL }, /* Marginal */
+        { 500000,   TEST_CONT_MARGINAL }, /* Still marginal */
+        { 1500000,  TEST_CONT_OPEN },     /* At OPEN boundary */
+        { 2000000,  TEST_CONT_OPEN },     /* Definitely open */
+        { 3190000,  TEST_CONT_OPEN },     /* Max ADC range */
+    };
+
+    const int count = sizeof(tests) / sizeof(tests[0]);
+    for (int i = 0; i < count; i++) {
+        test_cont_band_t result = test_classify_initial(tests[i].uv);
+        if (result != tests[i].expected) {
+            ESP_LOGE(TAG, "FAIL: classify(%ld uV) = %d, expected %d",
+                     (long)tests[i].uv, result, tests[i].expected);
+            failures++;
+        }
+    }
+
+    /* Verify enum values match wire encoding (§5.4.2) */
+    if (TEST_CONT_OPEN != 0 || TEST_CONT_GOOD != 1 ||
+        TEST_CONT_MARGINAL != 2 || TEST_CONT_SHORT != 3) {
+        ESP_LOGE(TAG, "FAIL: continuity band enum values don't match wire encoding");
+        failures++;
+    }
+
+    if (failures == 0) {
+        ESP_LOGI(TAG, "Continuity classification self-test: PASS (%d points)", count);
+    } else {
+        ESP_LOGE(TAG, "Continuity classification self-test: FAIL (%d)", failures);
+    }
+    return failures;
+}
+
+/* ── Continuity bands encoding test ─────────────────────────────── */
+
+static int test_continuity_bands_encoding(void)
+{
+    int failures = 0;
+
+    /* Verify 2-bit-per-channel packing:
+     * ch1 in bits 1:0, ch2 in bits 3:2, ..., ch8 in bits 15:14 */
+    uint8_t bands[8] = {
+        TEST_CONT_GOOD,     /* ch1: 01 */
+        TEST_CONT_SHORT,    /* ch2: 11 */
+        TEST_CONT_OPEN,     /* ch3: 00 */
+        TEST_CONT_MARGINAL, /* ch4: 10 */
+        TEST_CONT_GOOD,     /* ch5: 01 */
+        TEST_CONT_OPEN,     /* ch6: 00 */
+        TEST_CONT_SHORT,    /* ch7: 11 */
+        TEST_CONT_MARGINAL, /* ch8: 10 */
+    };
+
+    uint16_t packed = 0;
+    for (int i = 0; i < 8; i++) {
+        packed |= ((uint16_t)bands[i] << (i * 2));
+    }
+
+    /* Expected: ch1=01, ch2=11, ch3=00, ch4=10, ch5=01, ch6=00, ch7=11, ch8=10
+     * Bits: 10_11_00_01_10_00_11_01 = 0xB24D */
+    uint16_t expected = 0;
+    expected |= (0x01UL << 0);   /* ch1: GOOD=1 */
+    expected |= (0x03UL << 2);   /* ch2: SHORT=3 */
+    expected |= (0x00UL << 4);   /* ch3: OPEN=0 */
+    expected |= (0x02UL << 6);   /* ch4: MARGINAL=2 */
+    expected |= (0x01UL << 8);   /* ch5: GOOD=1 */
+    expected |= (0x00UL << 10);  /* ch6: OPEN=0 */
+    expected |= (0x03UL << 12);  /* ch7: SHORT=3 */
+    expected |= (0x02UL << 14);  /* ch8: MARGINAL=2 */
+
+    if (packed != expected) {
+        ESP_LOGE(TAG, "FAIL: bands encoding 0x%04X, expected 0x%04X", packed, expected);
+        failures++;
+    }
+
+    /* Verify individual channel extraction */
+    for (int i = 0; i < 8; i++) {
+        uint8_t extracted = (packed >> (i * 2)) & 0x03;
+        if (extracted != bands[i]) {
+            ESP_LOGE(TAG, "FAIL: ch%d extracted %d, expected %d",
+                     i + 1, extracted, bands[i]);
+            failures++;
+        }
+    }
+
+    /* All OPEN should give 0x0000 */
+    uint16_t all_open = 0;
+    for (int i = 0; i < 8; i++) {
+        all_open |= ((uint16_t)TEST_CONT_OPEN << (i * 2));
+    }
+    if (all_open != 0x0000) {
+        ESP_LOGE(TAG, "FAIL: all-OPEN should be 0x0000, got 0x%04X", all_open);
+        failures++;
+    }
+
+    /* All SHORT should give 0xFFFF */
+    uint16_t all_short = 0;
+    for (int i = 0; i < 8; i++) {
+        all_short |= ((uint16_t)TEST_CONT_SHORT << (i * 2));
+    }
+    if (all_short != 0xFFFF) {
+        ESP_LOGE(TAG, "FAIL: all-SHORT should be 0xFFFF, got 0x%04X", all_short);
+        failures++;
+    }
+
+    if (failures == 0) {
+        ESP_LOGI(TAG, "Continuity bands encoding self-test: PASS (packed=0x%04X)", packed);
+    } else {
+        ESP_LOGE(TAG, "Continuity bands encoding self-test: FAIL (%d)", failures);
+    }
+    return failures;
+}
+
 /* ── Public entry point ──────────────────────────────────────────── */
 
 int rlc_selftest_run(void)
@@ -482,9 +626,11 @@ int rlc_selftest_run(void)
     failures += test_debounce_16bit();
     failures += test_version_comparison();
     failures += test_integrity_crc();
+    failures += test_continuity_classification();
+    failures += test_continuity_bands_encoding();
 
     if (failures == 0) {
-        ESP_LOGI(TAG, "All self-tests PASSED (9 test suites)");
+        ESP_LOGI(TAG, "All self-tests PASSED (11 test suites)");
     } else {
         ESP_LOGE(TAG, "%d self-test(s) FAILED — firmware may be corrupt", failures);
     }

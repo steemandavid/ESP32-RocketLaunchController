@@ -56,6 +56,16 @@ typedef enum {
 #define ERR_WATCHDOG_RESET              (1 << 5)
 #define ERR_INTERNAL                    (1 << 6)
 
+/* ── Continuity Band Classification (§5.4.2) ──────────────────── */
+/* Enum values intentionally match 2-bit wire encoding in STATUS_UPDATE */
+
+typedef enum {
+    CONT_OPEN     = 0,  /* > 500 Ω or no igniter — blocks arming */
+    CONT_GOOD     = 1,  /* 0.5–20 Ω — normal igniter */
+    CONT_MARGINAL = 2,  /* 20–500 Ω — high resistance, warning only */
+    CONT_SHORT    = 3,  /* < 0.5 Ω — possible wiring fault, info only */
+} rlc_continuity_band_t;
+
 /* ── FSM States (transmitted in STATUS_UPDATE) ────────────────── */
 
 typedef enum {

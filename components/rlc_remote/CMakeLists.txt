@@ -5,6 +5,9 @@ if(CONFIG_RLC_UNIT_REMOTE)
         "src/rlc_buzzer.c"
         "src/rlc_display.c"
         "src/rlc_remote_state.c"
+        "src/rlc_arm_switch.c"
+        "src/rlc_fire_button.c"
+        "src/rlc_remote_battery.c"
     )
 else()
     set(REMOTE_SRCS "")

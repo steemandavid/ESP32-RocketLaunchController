@@ -1,5 +1,8 @@
 /**
  * RLC Rotary Encoder Driver
+ *
+ * Interrupt-driven quadrature decoder with push button.
+ * Long-press detection (500 ms) for ARM confirm (FSD §5.5.1).
  */
 
 #include "rlc_encoder.h"
@@ -14,11 +17,19 @@
 
 static const char *TAG = "rlc_enc";
 
+#define ENCODER_LONG_PRESS_MS  500
+
 static uint8_t s_channel = 1;
 static rlc_encoder_rotate_cb_t s_rotate_cb = NULL;
 static rlc_encoder_press_cb_t s_press_cb = NULL;
+static rlc_encoder_long_press_cb_t s_long_press_cb = NULL;
 static rlc_debounce_t s_button_db;
 static int64_t s_last_rotate_us = 0;
+
+/* Long-press state tracking */
+static bool s_button_debounced_pressed = false;
+static int64_t s_press_start_us = 0;
+static bool s_long_press_fired = false;
 
 #define ENCODER_LOCKOUT_US  5000  /* 5 ms lockout for A/B */
 
@@ -46,9 +57,19 @@ static void IRAM_ATTR encoder_isr(void *arg)
 
 static void button_change_cb(int gpio_num, bool new_state, void *user_data)
 {
-    if (new_state && s_press_cb) {
-        /* Button pressed (LOW = active) */
-        s_press_cb();
+    if (new_state) {
+        /* Button pressed (LOW = active) — start long-press timer */
+        s_button_debounced_pressed = true;
+        s_press_start_us = esp_timer_get_time();
+        s_long_press_fired = false;
+    } else {
+        /* Button released */
+        if (s_button_debounced_pressed && !s_long_press_fired && s_press_cb) {
+            /* Short press — button released before 500 ms */
+            s_press_cb();
+        }
+        s_button_debounced_pressed = false;
+        s_long_press_fired = false;
     }
 }
 
@@ -95,6 +116,11 @@ void encoder_register_press_cb(rlc_encoder_press_cb_t cb)
     s_press_cb = cb;
 }
 
+void encoder_register_long_press_cb(rlc_encoder_long_press_cb_t cb)
+{
+    s_long_press_cb = cb;
+}
+
 uint8_t encoder_get_channel(void)
 {
     return s_channel;
@@ -104,4 +130,13 @@ void encoder_poll_button(void)
 {
     int level = gpio_get_level(PIN_ENCODER_SW);
     rlc_debounce_update(&s_button_db, level, button_change_cb, NULL);
+
+    /* Check for long-press timeout */
+    if (s_button_debounced_pressed && !s_long_press_fired && s_long_press_cb) {
+        int64_t elapsed_us = esp_timer_get_time() - s_press_start_us;
+        if (elapsed_us >= (int64_t)ENCODER_LONG_PRESS_MS * 1000) {
+            s_long_press_fired = true;
+            s_long_press_cb();
+        }
+    }
 }

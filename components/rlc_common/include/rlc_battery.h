@@ -54,3 +54,11 @@ uint16_t rlc_battery_get_voltage_mv(void);
 rlc_battery_status_t rlc_battery_check(uint16_t min_arm_mv,
                                         uint16_t min_operate_mv,
                                         uint16_t critical_mv);
+
+/**
+ * Get the shared ADC1 oneshot handle.
+ * Used by the continuity module to configure additional ADC1 channels
+ * without creating a second unit handle (ESP-IDF only allows one per unit).
+ */
+#include "esp_adc/adc_oneshot.h"
+adc_oneshot_unit_handle_t rlc_battery_get_adc_handle(void);

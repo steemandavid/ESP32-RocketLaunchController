@@ -17,9 +17,15 @@
 typedef void (*rlc_encoder_rotate_cb_t)(uint8_t channel);
 
 /**
- * Callback for encoder button press.
+ * Callback for encoder button short press (< 500 ms).
  */
 typedef void (*rlc_encoder_press_cb_t)(void);
+
+/**
+ * Callback for encoder button long press (>= 500 ms hold).
+ * FSD §5.5.1: 500 ms long-press to ARM in IDLE with arm switch ON.
+ */
+typedef void (*rlc_encoder_long_press_cb_t)(void);
 
 /**
  * Initialise the rotary encoder GPIOs and interrupts.
@@ -27,10 +33,11 @@ typedef void (*rlc_encoder_press_cb_t)(void);
 void encoder_init(void);
 
 /**
- * Register callbacks for rotation and button press.
+ * Register callbacks for rotation, short press, and long press.
  */
 void encoder_register_rotate_cb(rlc_encoder_rotate_cb_t cb);
 void encoder_register_press_cb(rlc_encoder_press_cb_t cb);
+void encoder_register_long_press_cb(rlc_encoder_long_press_cb_t cb);
 
 /**
  * Get the currently selected channel (1–8).

@@ -107,3 +107,10 @@ void rlc_link_set_remote_battery_mv(uint16_t mv);
  * during ARMED/PRE_FIRE/FIRING/POST_FIRE (FSD §6.4.1).
  */
 void rlc_link_set_guard(rlc_link_guard_cb_t cb);
+
+/**
+ * Send a STATUS_UPDATE with a pre-populated payload.
+ * For use by the base unit's status_update_task to send real I/O data.
+ * Only call when linked (does nothing otherwise).
+ */
+void rlc_link_send_status_update(const rlc_payload_status_update_t *payload);

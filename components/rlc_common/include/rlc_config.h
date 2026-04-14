@@ -41,6 +41,7 @@
 
 #define WATCHDOG_TIMEOUT_S             2
 #define DEBOUNCE_POLL_INTERVAL_MS      10
+#define CONT_RELAY_DROPOUT_MS          50    /* Relay settling before first ADC sample (§5.4.6) */
 
 /* ── Voltage Thresholds (millivolts) ──────────────────────────── */
 
@@ -78,6 +79,23 @@
 /* Peer MAC addresses — actual hardware MACs */
 #define BASE_MAC_ADDR    { 0x94, 0xA9, 0x90, 0x31, 0x18, 0x38 }
 #define REMOTE_MAC_ADDR  { 0x44, 0x1B, 0xF6, 0x81, 0xF1, 0x70 }
+
+/* ── Continuity Sensing (Base only, §14.5) ───────────────────── */
+
+#define CONT_R_REF_OHM                 3300    /* Total series resistance (1.5k + 1.8k fusible) */
+#define CONT_R_PULL_OHM                100000  /* Pull-down per channel (Ω) */
+#define CONT_SAMPLE_INTERVAL_MS        100     /* Per-channel ADC interval */
+#define CONT_OVERSAMPLE_COUNT          64      /* ADC samples averaged per reading */
+
+/* Thresholds in microvolts (µV) — multiply ADC millivolts by 1000 */
+#define CONT_SHORT_UV                  500     /* Below = SHORT (< 0.5 Ω) */
+#define CONT_MARGINAL_UV               66000   /* Above = MARGINAL (> ~20 Ω) */
+#define CONT_OPEN_UV                   1500000 /* Above = OPEN (> ~500 Ω) */
+
+/* Hysteresis bands (µV) — prevents oscillation at boundaries */
+#define CONT_HYSTERESIS_SHORT_UV       200
+#define CONT_HYSTERESIS_MARGINAL_UV    5000
+#define CONT_HYSTERESIS_OPEN_UV        50000
 
 /* ── RGB LED ──────────────────────────────────────────────────── */
 

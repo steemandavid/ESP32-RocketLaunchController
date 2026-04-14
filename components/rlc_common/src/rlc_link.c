@@ -237,6 +237,29 @@ static void send_status_update(void)
     }
 }
 
+void rlc_link_send_status_update(const rlc_payload_status_update_t *payload)
+{
+    if (s_state != RLC_LINK_STATE_LINKED || s_role != RLC_LINK_ROLE_BASE) {
+        return;
+    }
+
+    uint32_t seq;
+    if (!seq_next(&seq)) {
+        s_tx_seq = 0;
+        seq = ++s_tx_seq;
+    }
+
+    uint8_t buf[RLC_MSG_MAX_SIZE];
+    rlc_payload_status_update_t p = *payload;
+    p.update_sequence = s_status_update_seq++;
+
+    int len = rlc_msg_build(buf, MSG_STATUS_UPDATE,
+                            seq, s_session_token, &p, sizeof(p));
+    if (len > 0) {
+        rlc_espnow_send(s_peer_mac, buf, len);
+    }
+}
+
 static void send_ping(uint16_t battery_mv)
 {
     uint32_t seq;

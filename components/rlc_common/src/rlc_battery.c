@@ -132,3 +132,8 @@ rlc_battery_status_t rlc_battery_check(uint16_t min_arm_mv,
     if (s_voltage_mv < min_arm_mv)     return BATTERY_LOW;
     return BATTERY_OK;
 }
+
+adc_oneshot_unit_handle_t rlc_battery_get_adc_handle(void)
+{
+    return s_adc_handle;
+}
