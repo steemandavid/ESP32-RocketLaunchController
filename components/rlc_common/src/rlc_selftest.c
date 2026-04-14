@@ -470,45 +470,48 @@ static int test_integrity_crc(void)
 
 /* ── Continuity band classification test (§5.4.2) ──────────────── */
 
-/* Replicate the classification logic inline for self-test —
- * must match rlc_continuity.c exactly. */
-typedef enum {
-    TEST_CONT_OPEN = 0,
-    TEST_CONT_GOOD = 1,
-    TEST_CONT_MARGINAL = 2,
-    TEST_CONT_SHORT = 3,
-} test_cont_band_t;
+/* Verify the production enum matches the wire encoding spec (§5.4.2) */
+_Static_assert(CONT_OPEN == 0, "CONT_OPEN must be 0 (wire encoding)");
+_Static_assert(CONT_GOOD == 1, "CONT_GOOD must be 1 (wire encoding)");
+_Static_assert(CONT_MARGINAL == 2, "CONT_MARGINAL must be 2 (wire encoding)");
+_Static_assert(CONT_SHORT == 3, "CONT_SHORT must be 3 (wire encoding)");
 
-static test_cont_band_t test_classify_initial(int32_t uv)
+/**
+ * Threshold classification — same logic as rlc_continuity.c classify_initial().
+ * Uses the same CONT_*_UV constants from rlc_config.h, so any threshold
+ * change is tested here automatically. The _Static_asserts above ensure
+ * enum values stay aligned with wire encoding.
+ */
+static rlc_continuity_band_t selftest_classify_uv(int32_t uv)
 {
-    if (uv < CONT_SHORT_UV)      return TEST_CONT_SHORT;
-    if (uv < CONT_MARGINAL_UV)   return TEST_CONT_GOOD;
-    if (uv < CONT_OPEN_UV)       return TEST_CONT_MARGINAL;
-    return TEST_CONT_OPEN;
+    if (uv < CONT_SHORT_UV)      return CONT_SHORT;
+    if (uv < CONT_MARGINAL_UV)   return CONT_GOOD;
+    if (uv < CONT_OPEN_UV)       return CONT_MARGINAL;
+    return CONT_OPEN;
 }
 
 static int test_continuity_classification(void)
 {
     int failures = 0;
 
-    /* Test points: µV values and expected bands */
-    struct { int32_t uv; test_cont_band_t expected; } tests[] = {
-        { 0,        TEST_CONT_SHORT },    /* Zero ohm dead short */
-        { 300,      TEST_CONT_SHORT },    /* Below SHORT threshold */
-        { 500,      TEST_CONT_GOOD },     /* At SHORT boundary */
-        { 1000,     TEST_CONT_GOOD },     /* Solid good reading */
-        { 30000,    TEST_CONT_GOOD },     /* Still good */
-        { 66000,    TEST_CONT_MARGINAL }, /* At MARGINAL boundary */
-        { 100000,   TEST_CONT_MARGINAL }, /* Marginal */
-        { 500000,   TEST_CONT_MARGINAL }, /* Still marginal */
-        { 1500000,  TEST_CONT_OPEN },     /* At OPEN boundary */
-        { 2000000,  TEST_CONT_OPEN },     /* Definitely open */
-        { 3190000,  TEST_CONT_OPEN },     /* Max ADC range */
+    /* Test the threshold classification logic using config constants */
+    struct { int32_t uv; rlc_continuity_band_t expected; } tests[] = {
+        { 0,        CONT_SHORT },    /* Zero ohm dead short */
+        { 300,      CONT_SHORT },    /* Below SHORT threshold */
+        { 500,      CONT_GOOD },     /* At SHORT boundary */
+        { 1000,     CONT_GOOD },     /* Solid good reading */
+        { 30000,    CONT_GOOD },     /* Still good */
+        { 66000,    CONT_MARGINAL }, /* At MARGINAL boundary */
+        { 100000,   CONT_MARGINAL }, /* Marginal */
+        { 500000,   CONT_MARGINAL }, /* Still marginal */
+        { 1500000,  CONT_OPEN },     /* At OPEN boundary */
+        { 2000000,  CONT_OPEN },     /* Definitely open */
+        { 3190000,  CONT_OPEN },     /* Max ADC range */
     };
 
     const int count = sizeof(tests) / sizeof(tests[0]);
     for (int i = 0; i < count; i++) {
-        test_cont_band_t result = test_classify_initial(tests[i].uv);
+        rlc_continuity_band_t result = selftest_classify_uv(tests[i].uv);
         if (result != tests[i].expected) {
             ESP_LOGE(TAG, "FAIL: classify(%ld uV) = %d, expected %d",
                      (long)tests[i].uv, result, tests[i].expected);
@@ -516,17 +519,117 @@ static int test_continuity_classification(void)
         }
     }
 
-    /* Verify enum values match wire encoding (§5.4.2) */
-    if (TEST_CONT_OPEN != 0 || TEST_CONT_GOOD != 1 ||
-        TEST_CONT_MARGINAL != 2 || TEST_CONT_SHORT != 3) {
-        ESP_LOGE(TAG, "FAIL: continuity band enum values don't match wire encoding");
-        failures++;
-    }
-
     if (failures == 0) {
         ESP_LOGI(TAG, "Continuity classification self-test: PASS (%d points)", count);
     } else {
         ESP_LOGE(TAG, "Continuity classification self-test: FAIL (%d)", failures);
+    }
+    return failures;
+}
+
+/* ── Continuity hysteresis test (§5.4.2, T-U11) ───────────────── */
+
+/**
+ * Inline hysteresis classifier — mirrors the production logic in
+ * rlc_continuity.c classify_with_hysteresis(). Tests that hysteresis
+ * prevents spurious transitions near band boundaries.
+ */
+static rlc_continuity_band_t test_classify_hysteresis(int32_t uv,
+                                                       rlc_continuity_band_t current)
+{
+    switch (current) {
+    case CONT_SHORT:
+        if (uv > CONT_SHORT_UV + CONT_HYSTERESIS_SHORT_UV) {
+            if (uv < CONT_MARGINAL_UV) return CONT_GOOD;
+            if (uv < CONT_OPEN_UV)     return CONT_MARGINAL;
+            return CONT_OPEN;
+        }
+        return CONT_SHORT;
+
+    case CONT_GOOD:
+        if (uv < CONT_SHORT_UV - CONT_HYSTERESIS_SHORT_UV)
+            return CONT_SHORT;
+        if (uv > CONT_MARGINAL_UV + CONT_HYSTERESIS_MARGINAL_UV) {
+            if (uv < CONT_OPEN_UV) return CONT_MARGINAL;
+            return CONT_OPEN;
+        }
+        return CONT_GOOD;
+
+    case CONT_MARGINAL:
+        if (uv < CONT_MARGINAL_UV - CONT_HYSTERESIS_MARGINAL_UV) {
+            if (uv < CONT_SHORT_UV) return CONT_SHORT;
+            return CONT_GOOD;
+        }
+        if (uv > CONT_OPEN_UV + CONT_HYSTERESIS_OPEN_UV)
+            return CONT_OPEN;
+        return CONT_MARGINAL;
+
+    case CONT_OPEN:
+        if (uv < CONT_OPEN_UV - CONT_HYSTERESIS_OPEN_UV) {
+            if (uv < CONT_MARGINAL_UV) {
+                if (uv < CONT_SHORT_UV) return CONT_SHORT;
+                return CONT_GOOD;
+            }
+            return CONT_MARGINAL;
+        }
+        return CONT_OPEN;
+    }
+
+    return CONT_OPEN;
+}
+
+static int test_continuity_hysteresis(void)
+{
+    int failures = 0;
+
+    /* Test 1: GOOD near SHORT boundary — should stay GOOD within hysteresis */
+    rlc_continuity_band_t band = CONT_GOOD;
+
+    /* Voltage just above SHORT threshold but within hysteresis — should stay GOOD */
+    band = test_classify_hysteresis(CONT_SHORT_UV + CONT_HYSTERESIS_SHORT_UV / 2, band);
+    if (band != CONT_GOOD) {
+        ESP_LOGE(TAG, "FAIL: hysteresis GOOD near SHORT boundary — got %d, expected GOOD", band);
+        failures++;
+    }
+
+    /* Voltage below SHORT threshold minus hysteresis — should transition to SHORT */
+    band = test_classify_hysteresis(CONT_SHORT_UV - CONT_HYSTERESIS_SHORT_UV - 1, band);
+    if (band != CONT_SHORT) {
+        ESP_LOGE(TAG, "FAIL: hysteresis GOOD->SHORT transition — got %d, expected SHORT", band);
+        failures++;
+    }
+
+    /* Test 2: OPEN near MARGINAL boundary — should stay OPEN within hysteresis */
+    band = CONT_OPEN;
+
+    /* Voltage just below OPEN threshold but within hysteresis — should stay OPEN */
+    band = test_classify_hysteresis(CONT_OPEN_UV - CONT_HYSTERESIS_OPEN_UV / 2, band);
+    if (band != CONT_OPEN) {
+        ESP_LOGE(TAG, "FAIL: hysteresis OPEN near MARGINAL boundary — got %d, expected OPEN", band);
+        failures++;
+    }
+
+    /* Voltage below OPEN threshold minus hysteresis — should transition to MARGINAL */
+    band = test_classify_hysteresis(CONT_OPEN_UV - CONT_HYSTERESIS_OPEN_UV - 1, band);
+    if (band != CONT_MARGINAL) {
+        ESP_LOGE(TAG, "FAIL: hysteresis OPEN->MARGINAL transition — got %d, expected MARGINAL", band);
+        failures++;
+    }
+
+    /* Test 3: SHORT near GOOD boundary — should stay SHORT within hysteresis */
+    band = CONT_SHORT;
+
+    /* Voltage just above SHORT threshold but within hysteresis — should stay SHORT */
+    band = test_classify_hysteresis(CONT_SHORT_UV + CONT_HYSTERESIS_SHORT_UV / 2, band);
+    if (band != CONT_SHORT) {
+        ESP_LOGE(TAG, "FAIL: hysteresis SHORT stability — got %d, expected SHORT", band);
+        failures++;
+    }
+
+    if (failures == 0) {
+        ESP_LOGI(TAG, "Continuity hysteresis self-test: PASS");
+    } else {
+        ESP_LOGE(TAG, "Continuity hysteresis self-test: FAIL (%d)", failures);
     }
     return failures;
 }
@@ -539,15 +642,15 @@ static int test_continuity_bands_encoding(void)
 
     /* Verify 2-bit-per-channel packing:
      * ch1 in bits 1:0, ch2 in bits 3:2, ..., ch8 in bits 15:14 */
-    uint8_t bands[8] = {
-        TEST_CONT_GOOD,     /* ch1: 01 */
-        TEST_CONT_SHORT,    /* ch2: 11 */
-        TEST_CONT_OPEN,     /* ch3: 00 */
-        TEST_CONT_MARGINAL, /* ch4: 10 */
-        TEST_CONT_GOOD,     /* ch5: 01 */
-        TEST_CONT_OPEN,     /* ch6: 00 */
-        TEST_CONT_SHORT,    /* ch7: 11 */
-        TEST_CONT_MARGINAL, /* ch8: 10 */
+    rlc_continuity_band_t bands[8] = {
+        CONT_GOOD,     /* ch1: 01 */
+        CONT_SHORT,    /* ch2: 11 */
+        CONT_OPEN,     /* ch3: 00 */
+        CONT_MARGINAL, /* ch4: 10 */
+        CONT_GOOD,     /* ch5: 01 */
+        CONT_OPEN,     /* ch6: 00 */
+        CONT_SHORT,    /* ch7: 11 */
+        CONT_MARGINAL, /* ch8: 10 */
     };
 
     uint16_t packed = 0;
@@ -585,7 +688,7 @@ static int test_continuity_bands_encoding(void)
     /* All OPEN should give 0x0000 */
     uint16_t all_open = 0;
     for (int i = 0; i < 8; i++) {
-        all_open |= ((uint16_t)TEST_CONT_OPEN << (i * 2));
+        all_open |= ((uint16_t)CONT_OPEN << (i * 2));
     }
     if (all_open != 0x0000) {
         ESP_LOGE(TAG, "FAIL: all-OPEN should be 0x0000, got 0x%04X", all_open);
@@ -595,7 +698,7 @@ static int test_continuity_bands_encoding(void)
     /* All SHORT should give 0xFFFF */
     uint16_t all_short = 0;
     for (int i = 0; i < 8; i++) {
-        all_short |= ((uint16_t)TEST_CONT_SHORT << (i * 2));
+        all_short |= ((uint16_t)CONT_SHORT << (i * 2));
     }
     if (all_short != 0xFFFF) {
         ESP_LOGE(TAG, "FAIL: all-SHORT should be 0xFFFF, got 0x%04X", all_short);
@@ -627,10 +730,11 @@ int rlc_selftest_run(void)
     failures += test_version_comparison();
     failures += test_integrity_crc();
     failures += test_continuity_classification();
+    failures += test_continuity_hysteresis();
     failures += test_continuity_bands_encoding();
 
     if (failures == 0) {
-        ESP_LOGI(TAG, "All self-tests PASSED (11 test suites)");
+        ESP_LOGI(TAG, "All self-tests PASSED (12 test suites)");
     } else {
         ESP_LOGE(TAG, "%d self-test(s) FAILED — firmware may be corrupt", failures);
     }

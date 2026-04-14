@@ -46,8 +46,16 @@ bool arm_sense_get_raw(void);
 
 /**
  * Register a callback invoked on debounced state transitions.
- * Also called with fault=true on contact-welding detection.
  *
  * @param cb  Callback: cb(armed) where armed=true means arm relay closed
  */
 void arm_sense_register_cb(void (*cb)(bool armed));
+
+/**
+ * Register a callback for contact-welding fault detection.
+ * Called when arm sense reads HIGH while the arm relay GPIO is known LOW
+ * (de-energised) — indicating welded arm relay contacts.
+ *
+ * @param cb  Callback invoked on fault detection (no parameters)
+ */
+void arm_sense_register_fault_cb(void (*cb)(void));

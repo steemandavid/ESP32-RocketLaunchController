@@ -51,7 +51,9 @@ static void battery_task(void *arg)
 
 void remote_battery_start_task(void)
 {
-    xTaskCreatePinnedToCore(battery_task, "battery_task", 2048, NULL, 3, NULL, 0);
+    TaskHandle_t handle;
+    xTaskCreatePinnedToCore(battery_task, "battery_task", 2048, NULL, 3, &handle, 0);
+    rlc_watchdog_add_task(handle);
     ESP_LOGI(TAG, "remote battery task started (prio 3, core 0)");
 }
 

@@ -54,6 +54,17 @@ static void on_arm_change_cb(bool armed)
     status_update_trigger();
 }
 
+/**
+ * Contact welding fault callback — triggered when arm sense reads HIGH
+ * while arm relay is known to be de-energised. Triggers STATUS_UPDATE
+ * so the remote is informed of the fault condition.
+ */
+static void on_arm_fault_cb(void)
+{
+    ESP_LOGE(TAG, "ARM RELAY CONTACT WELD FAULT — triggering status update");
+    status_update_trigger();
+}
+
 void base_app_main(void)
 {
     ESP_LOGI(TAG, "=== RLC Base Unit v%s ===", RLC_VERSION_STRING);
@@ -103,6 +114,7 @@ void base_app_main(void)
     /* Register I/O change callbacks for event-driven STATUS_UPDATE */
     continuity_register_change_cb(on_io_change);
     arm_sense_register_cb(on_arm_change_cb);
+    arm_sense_register_fault_cb(on_arm_fault_cb);
 
     /* §9.13 Step 8: Configure hardware watchdog + TWDT */
     rlc_watchdog_init();

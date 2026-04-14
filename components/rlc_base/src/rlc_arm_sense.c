@@ -40,6 +40,9 @@ static volatile bool s_armed = false;
 /* User callback on debounced state change */
 static void (*s_on_change_cb)(bool armed) = NULL;
 
+/* User callback on contact-welding fault */
+static void (*s_on_fault_cb)(void) = NULL;
+
 /* Task handle */
 static TaskHandle_t s_task_handle = NULL;
 
@@ -100,11 +103,8 @@ static void weld_check(void)
 
     if (arm_sense_level != 0) {
         ESP_LOGE(TAG, "CONTACT WELD DETECTED: arm relay OFF but sense reads HIGH");
-        if (s_on_change_cb) {
-            /* Report fault via callback. The integrator decides the response.
-             * We signal this as armed=true when it should not be, so the
-             * state machine can trigger a critical fault. */
-            s_on_change_cb(true);
+        if (s_on_fault_cb) {
+            s_on_fault_cb();
         }
     }
 }
@@ -193,4 +193,9 @@ bool arm_sense_get_raw(void)
 void arm_sense_register_cb(void (*cb)(bool armed))
 {
     s_on_change_cb = cb;
+}
+
+void arm_sense_register_fault_cb(void (*cb)(void))
+{
+    s_on_fault_cb = cb;
 }

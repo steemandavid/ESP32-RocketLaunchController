@@ -103,10 +103,13 @@ void remote_app_main(void)
 
     ESP_LOGI(TAG, "remote ready — all Phase 2 tasks running, waiting for link");
 
-    /* Housekeeping loop — watchdog + status log */
+    /* Housekeeping loop — watchdog, encoder poll, status log */
     int64_t last_log_ms = 0;
     while (1) {
         rlc_watchdog_feed();
+
+        /* Poll encoder push button debounce + long-press timer (10 ms) */
+        encoder_poll_button();
 
         int64_t now = esp_timer_get_time() / 1000;
         if (now - last_log_ms >= 5000) {
@@ -119,6 +122,6 @@ void remote_app_main(void)
             last_log_ms = now;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
