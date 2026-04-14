@@ -76,8 +76,8 @@ All pin assignments match the main RLC FSD (RLC-FSPEC-001 v1.11, Appendix C.1).
 | Channel 6 SPDT relay output | 16 | Digital output | Active HIGH via IRLZ44N MOSFET |
 | Channel 7 SPDT relay output | 17 | Digital output | Active HIGH via IRLZ44N MOSFET |
 | Channel 8 SPDT relay output | 18 | Digital output | Active HIGH via IRLZ44N MOSFET |
-| Arm switch sense input | 21 | Digital input | External 10kΩ + 3.3V zener + 100kΩ pull-down. HIGH=armed. |
-| Arm relay output | 47 | Digital output | Active HIGH via IRLZ44N MOSFET |
+| Arm sense input | 21 | Digital input | 27kΩ/10kΩ voltage divider + 3.3V zener clamp. Senses ARM SENSE node (arm relay COM output). HIGH=arm relay closed, VBAT on fire path. |
+| Arm relay output | 47 | Digital output | Active HIGH via IRLZ44N MOSFET. Arm relay coil driven through physical key switch AND MOSFET (hardware AND gate). Primary fire path interlock. |
 | Siren output | 40 | Digital output | Active HIGH via IRLZ44N MOSFET |
 | RGB LED strip (status) | 48 | WS2812 | 8-pixel LED strip, RMT peripheral |
 
@@ -99,7 +99,7 @@ rlc-hw-test-base/
 │   ├── hw_continuity.h
 │   ├── hw_battery.c          # Battery voltage ADC
 │   ├── hw_battery.h
-│   ├── hw_inputs.c           # Arm switch sense input
+│   ├── hw_inputs.c           # Arm sense input (ARM SENSE node)
 │   ├── hw_inputs.h
 │   ├── hw_siren.c            # Siren output control (via IRLZ44N MOSFET)
 │   ├── hw_siren.h
@@ -123,7 +123,7 @@ The firmware SHALL provide a UART0 command-line interface at **115200 baud** (8N
 | Command | Description |
 |---|---|
 | `help` | Print all available commands with brief descriptions |
-| `status` | Print complete system status: arm switch sense, battery voltage, all continuity channels |
+| `status` | Print complete system status: arm sense, arm relay, battery voltage, all continuity channels |
 | `safe` | Immediately de-energise all SPDT relays. Equivalent to `relay_all_safe()`. |
 | `pins` | Print all pin assignments and their current logical/physical states |
 
@@ -158,7 +158,7 @@ Continuity sensing is always active when relays are de-energised (NC position). 
 
 | Command | Description |
 |---|---|
-| `arm` | Poll arm switch sense input (GPIO 21). Displays raw GPIO level and debounced state (ARMED=HIGH, DISARMED=LOW). Continuously polls until key press. |
+| `arm` | Poll arm sense input (GPIO 21, ARM SENSE node). Displays raw GPIO level and debounced state (ARMED=HIGH, arm relay closed; DISARMED=LOW, arm relay open). Continuously polls until key press. |
 
 ### 5.6 Siren Commands
 
@@ -194,7 +194,7 @@ Continuity sensing is always active when relays are de-energised (NC position). 
 At boot, before any other operation:
 1. Configure all 8 channel SPDT relay GPIOs (11–18) as outputs, drive inactive (de-energised / NC position).
 2. Configure siren GPIO (40) as output, drive inactive.
-3. Only then initialise ADC, arm switch sense input, RGB LED, UART CLI, and other peripherals.
+3. Only then initialise ADC, arm sense input, arm relay output, RGB LED, UART CLI, and other peripherals.
 
 This mirrors the main FSD §9.7 boot safety requirement.
 
@@ -238,11 +238,15 @@ The fire timer SHALL use a hardware timer (not `vTaskDelay`). The timer callback
 
 WS2812 single-pixel driver using ESP32-S3 RMT peripheral on GPIO 47. Brightness scaling configurable. The `led test` command SHALL cycle through all patterns defined in the main FSD §11.1.
 
-### 6.7 Arm Switch Sense
+### 6.7 Arm Sense Input
 
-The arm switch sense input on GPIO 21 uses an external circuit (10 kΩ series + 3.3V zener clamp + 100 kΩ pull-down) per FSD §5.4.3. No internal pull-up/pull-down is used. HIGH = VBAT present on fire path (arm switch ON). LOW = no VBAT (arm switch OFF or battery disconnected).
+The arm sense input on GPIO 21 reads the ARM SENSE node (arm relay COM output) via an external circuit (27 kΩ / 10 kΩ voltage divider + 3.3V zener clamp) per FSD §5.4.3. No internal pull-up/pull-down is used. HIGH = arm relay closed, VBAT present on fire path (key switch ON AND software drive active). LOW = arm relay de-energised or key switch OFF (R2 10 kΩ pulls GPIO to GND).
 
-**Note:** The test firmware uses a simplified 3-sample majority-vote debounce (5 ms intervals, ~15 ms total) rather than the production 16-bit shift-register debounce specified in the FSD. This is sufficient for hardware validation — the test only needs to reliably detect the arm switch state, not meet production-grade debounce timing requirements.
+The test firmware can drive the arm relay (GPIO 47) to simulate the armed condition. The hardware AND gate (key switch + MOSFET) is validated by verifying that arm sense reads HIGH only when both conditions are met.
+
+**Contact welding detection:** When the arm relay is known to be de-energised (GPIO 47 LOW), arm sense should read LOW. If it reads HIGH, the arm relay contacts may be welded shut.
+
+**Note:** The test firmware uses a simplified 3-sample majority-vote debounce (5 ms intervals, ~15 ms total) rather than the production 16-bit shift-register debounce specified in the FSD. This is sufficient for hardware validation — the test only needs to reliably detect the arm relay state, not meet production-grade debounce timing requirements.
 
 ### 6.8 SPDT Relay and IRLZ44N MOSFET Drivers
 
@@ -294,14 +298,15 @@ Requires test resistors connected to channel terminals via SPDT relay NC contact
 | B-B02 | Battery ADC stability | `batt raw 64`. | Standard deviation < 20 mV. Mean matches expected. |
 | B-B03 | Divider ratio | Measure actual voltage with multimeter. Compare to `batt` output. | Ratio matches `DIVIDER_RATIO` ±2%. |
 
-### 7.4 Arm Switch Sense Tests
+### 7.4 Arm Sense Tests
 
 | ID | Test | Procedure | Pass Criteria |
 |---|---|---|---|
-| B-I01 | Arm switch — disarmed | Leave arm switch OFF. `arm`. | Reports DISARMED, GPIO LOW (0). |
-| B-I02 | Arm switch — armed | Turn arm switch ON. `arm`. | Reports ARMED, GPIO HIGH (1). VBAT present on fire path. |
-| B-I03 | Arm switch — toggle | `arm` (continuous). Toggle switch multiple times. | State changes detected cleanly, no bouncing. |
-| B-I04 | Arm sense with battery disconnected | Arm switch ON but battery disconnected. `arm`. | Reports DISARMED (LOW) — correctly detects no VBAT on fire path even with switch ON. |
+| B-I01 | Arm relay de-energised | Ensure arm relay OFF (`arm sim off`). `arm`. | Reports DISARMED, GPIO LOW (0). ARM SENSE node pulled to GND by R2. |
+| B-I02 | Arm relay energised (simulated) | `arm sim on` to energise arm relay. `arm`. | Reports ARMED, GPIO HIGH (1). ARM SENSE node at VBAT (divided to 2.4–3.3V). |
+| B-I03 | Arm sense toggle | `arm` (continuous). Toggle `arm sim on`/`arm sim off` repeatedly. | State changes detected cleanly, no bouncing. |
+| B-I04 | Arm sense with battery disconnected | Energise arm relay (`arm sim on`) but disconnect battery from ARM SENSE node. `arm`. | Reports DISARMED (LOW) — correctly detects no VBAT on fire path. |
+| B-I05 | Contact welding detection | Ensure arm relay OFF (`arm sim off`). Verify arm sense reads LOW. | Arm sense reads LOW when arm relay de-energised. If HIGH, contacts may be welded. |
 
 ### 7.5 Siren Tests
 

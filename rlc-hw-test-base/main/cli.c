@@ -110,7 +110,7 @@ static void cmd_help(void)
         "  batt                         Read battery voltage\r\n"
         "  batt raw [N]                 Take N raw samples (default 8)\r\n"
         "\r\nInputs:\r\n"
-        "  arm                          Poll arm switch sense until key press\r\n"
+        "  arm                          Poll arm sense input (ARM SENSE node) until key press\r\n"
         "  arm sim on|off               Energise/de-energise arm relay (GPIO 47)\r\n");
     uart_puts(
         "\r\nSiren (via IRLZ44N MOSFET):\r\n"
@@ -135,7 +135,7 @@ static void cmd_status(void)
 {
     uart_puts("=== System Status ===\r\n");
 
-    /* Arm switch sense */
+    /* Arm sense input */
     int armed = arm_sense_read_debounced();
     printf("Arm sense  : %s (GPIO raw=%d)\r\n", armed ? "ARMED" : "DISARMED",
            arm_sense_read_raw());
@@ -170,10 +170,10 @@ static void cmd_pins(void)
         printf("SPDT relay CH%d  : GPIO %2d  level=%d  (active HIGH via IRLZ44N MOSFET)\r\n",
                i + 1, relays[i], gpio_get_level(relays[i]));
     }
-    printf("Arm switch sense: GPIO %d  level=%d  (%s)\r\n",
+    printf("Arm sense       : GPIO %d  level=%d  (%s)\r\n",
            PIN_ARM_SENSE, gpio_get_level(PIN_ARM_SENSE),
-           gpio_get_level(PIN_ARM_SENSE) ? "ARMED" : "DISARMED");
-    printf("Arm relay       : GPIO %d  (IRLZ44N MOSFET)\r\n", PIN_ARM_SIM_RELAY);
+           gpio_get_level(PIN_ARM_SENSE) ? "ARMED (arm relay closed)" : "DISARMED (arm relay open)");
+    printf("Arm relay       : GPIO %d  (IRLZ44N MOSFET, fire path interlock)\r\n", PIN_ARM_SIM_RELAY);
     printf("Siren           : GPIO %d  (via IRLZ44N MOSFET)\r\n", PIN_SIREN);
     printf("RGB LED strip   : GPIO %d  (WS2812, %d pixels + on-board mirror)\r\n", PIN_RGB_LED, NUM_RGB_LEDS);
     printf("Spare GPIOs     : 38, 39, 41, 42\r\n");
@@ -299,7 +299,7 @@ static void cmd_arm(char *toks[], int ntok)
         return;
     }
 
-    uart_puts("Polling arm switch sense (GPIO 21) — press any key to stop.\r\n");
+    uart_puts("Polling arm sense (GPIO 21, ARM SENSE node) — press any key to stop.\r\n");
     uart_puts("HIGH = ARMED (VBAT on fire path), LOW = DISARMED\r\n");
     uint8_t dummy;
     int last = -1;

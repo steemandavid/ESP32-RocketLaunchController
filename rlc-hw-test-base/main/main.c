@@ -30,10 +30,10 @@ void app_main(void)
     hw_battery_init();
     hw_continuity_init();
 
-    /* Digital inputs — arm switch sense (GPIO 21) */
+    /* Digital inputs — arm sense (GPIO 21, ARM SENSE node) */
     hw_inputs_init();
 
-    /* Arm relay output — GPIO 47 (IRLZ44N MOSFET) */
+    /* Arm relay output — GPIO 47 (IRLZ44N MOSFET, primary fire path interlock) */
     arm_sim_init();
 
     /* RGB LED */

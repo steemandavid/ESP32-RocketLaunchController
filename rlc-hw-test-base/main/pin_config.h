@@ -2,14 +2,13 @@
 
 /* -----------------------------------------------------------------------
  * pin_config.h — All GPIO assignments and polarity for RLC base unit HW test
- * RLC-HWTEST-BASE-001 v1.1 — aligned with FSD v1.11
+ * RLC-HWTEST-BASE-001 v1.1 — aligned with FSD v1.13
  *
- * v1.10 changes: removed low-side relay (GPIO 21 repurposed as arm switch
- * sense), removed relay feedback (GPIO 38), removed arm switch digital
- * input (GPIO 39), removed continuity MOSFET (GPIO 41).  SPDT relays
- * driven via IRLZ44N MOSFETs (active HIGH).  Arm switch sensed exclusively
- * via zener-clamped sense circuit on GPIO 21.
- * Freed GPIOs: 38, 39, 41, 42.
+ * Arm relay redesign (v1.13): physical key switch (SPDT) now controls arm
+ * relay coil drive path (not directly in fire path). Arm relay (GPIO 47
+ * via IRLZ44N) is primary fire path interlock. Arm sense (GPIO 21) reads
+ * ARM SENSE node (arm relay COM output) via 27kΩ/10kΩ divider + zener.
+ * Hardware AND gate: key switch ON AND software MOSFET drive required.
  * ----------------------------------------------------------------------- */
 
 /* --- ADC inputs -------------------------------------------------------- */
@@ -59,16 +58,20 @@
 #define PIN_RELAY_CH8           18
 #define PIN_RELAY_CH8_ACTIVE    1
 
-/* --- Arm switch sense input (§5.4.3) ---------------------------------- */
-/* External circuit: 10 kΩ series + 3.3V zener clamp + 100 kΩ pull-down.
- * HIGH (~3.3V clamped) = arm switch ON / VBAT present on fire path.
- * LOW  (~0V)           = arm switch OFF / no VBAT on fire path.           */
+/* --- Arm sense input (§5.4.3) ----------------------------------------- */
+/* External circuit: 27 kΩ / 10 kΩ voltage divider + 3.3V zener clamp.
+ * Senses ARM SENSE node (arm relay COM output).
+ * HIGH (2.4–3.3V) = arm relay closed, VBAT present on fire path.
+ * LOW  (~0V)      = arm relay de-energised, R2 pulls to GND.             */
 #define PIN_ARM_SENSE           21
 
 /* --- Arm relay output (GPIO 47, via IRLZ44N MOSFET) -------------------- */
 /* GPIO HIGH drives IRLZ44N MOSFET, energising the arm relay coil.
- * Relay contacts feed/remove voltage into the arm sense circuit to
- * simulate the physical arm switch toggle.                              */
+ * In production: arm relay coil positive terminal connected through
+ * physical key switch (hardware AND gate: key ON AND software drive).
+ * In test firmware: simulates the armed condition directly.
+ * Arm relay is the primary fire path interlock — when energised, VBAT
+ * is connected to the ARM SENSE node (fire path for all channels).       */
 #define PIN_ARM_SIM_RELAY       47
 #define PIN_ARM_SIM_RELAY_ACTIVE 1
 
