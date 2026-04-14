@@ -87,9 +87,18 @@
 #define BATT_DIVIDER_RATIO      4.3f
 
 /* --- Continuity thresholds (µV) --------------------------------------- */
-#define CONT_SHORT_UV               500
-#define CONT_MARGINAL_UV            66000
-#define CONT_OPEN_UV                1500000
+/*
+ * KNOWN ISSUE: Cannot distinguish between wire shorts and actual igniters.
+ * See memory/continuity_circuit_issue.md for details.
+ *
+ * Using original FSD v1.14 values. Both wire shorts (0 Ω) and igniters (1-2 Ω)
+ * read ~35000 µV due to relay NC contact resistance or circuit topology.
+ * SHORT detection is not functional - will classify as GOOD.
+ * This is acceptable because SHORT is informational only (does not block arming).
+ */
+#define CONT_SHORT_UV               500     /* < 0.5 mV = SHORT (FSD default - not functional) */
+#define CONT_MARGINAL_UV            66000   /* > 66 mV = MARGINAL */
+#define CONT_OPEN_UV                1500000 /* > 1500 mV = OPEN */
 #define CONT_HYSTERESIS_SHORT_UV    200
 #define CONT_HYSTERESIS_MARGINAL_UV 5000
 #define CONT_HYSTERESIS_OPEN_UV     50000
