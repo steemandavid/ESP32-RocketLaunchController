@@ -2,8 +2,8 @@
  * RLC Boot Self-Tests
  *
  * Verifies struct packing offsets, CRC32-C correctness, message
- * serialisation, sequence validation, debounce logic, and version
- * comparison at power-on.
+ * serialisation, sequence validation, sequence overflow, debounce
+ * logic (8-bit and 16-bit), and version comparison at power-on.
  */
 
 #include "rlc_selftest.h"
@@ -14,6 +14,7 @@
 
 #include <stddef.h>
 #include <string.h>
+#include <limits.h>
 #include "esp_log.h"
 
 static const char *TAG = "rlc_selftest";
@@ -233,6 +234,51 @@ static int test_sequence_validation(void)
     return failures;
 }
 
+/* ── Sequence overflow tests ─────────────────────────────────────── */
+
+static int test_sequence_overflow(void)
+{
+    int failures = 0;
+
+    /* Accept UINT32_MAX - 1 when last = 0 */
+    uint32_t last = 0;
+    if (!rlc_seq_validate(UINT32_MAX - 1, &last) || last != UINT32_MAX - 1) {
+        ESP_LOGE(TAG, "FAIL: seq UINT32_MAX-1 should pass from 0");
+        failures++;
+    }
+
+    /* Accept UINT32_MAX when last = UINT32_MAX - 1 */
+    if (!rlc_seq_validate(UINT32_MAX, &last) || last != UINT32_MAX) {
+        ESP_LOGE(TAG, "FAIL: seq UINT32_MAX should pass from UINT32_MAX-1");
+        failures++;
+    }
+
+    /* Reject UINT32_MAX (equal) when last = UINT32_MAX */
+    if (rlc_seq_validate(UINT32_MAX, &last)) {
+        ESP_LOGE(TAG, "FAIL: seq UINT32_MAX (equal) should fail");
+        failures++;
+    }
+
+    /* Reject UINT32_MAX - 1 (lower) when last = UINT32_MAX */
+    if (rlc_seq_validate(UINT32_MAX - 1, &last)) {
+        ESP_LOGE(TAG, "FAIL: seq UINT32_MAX-1 (lower) should fail");
+        failures++;
+    }
+
+    /* Reject 0 (wrap) when last = UINT32_MAX */
+    if (rlc_seq_validate(0, &last)) {
+        ESP_LOGE(TAG, "FAIL: seq 0 (wrap) should fail after UINT32_MAX");
+        failures++;
+    }
+
+    if (failures == 0) {
+        ESP_LOGI(TAG, "Sequence overflow self-test: PASS");
+    } else {
+        ESP_LOGE(TAG, "Sequence overflow self-test: FAIL (%d)", failures);
+    }
+    return failures;
+}
+
 /* ── Debounce logic tests ───────────────────────────────────────── */
 
 static int test_debounce(void)
@@ -277,9 +323,72 @@ static int test_debounce(void)
     (void)callback_count;
 
     if (failures == 0) {
-        ESP_LOGI(TAG, "Debounce self-test: PASS");
+        ESP_LOGI(TAG, "Debounce 8-bit self-test: PASS");
     } else {
-        ESP_LOGE(TAG, "Debounce self-test: FAIL (%d)", failures);
+        ESP_LOGE(TAG, "Debounce 8-bit self-test: FAIL (%d)", failures);
+    }
+    return failures;
+}
+
+/* ── 16-bit debounce logic tests ───────────────────────────────── */
+
+static int test_debounce_16bit(void)
+{
+    int failures = 0;
+    rlc_debounce_t db;
+
+    rlc_debounce_init(&db, 2, DEBOUNCE_16BIT);
+
+    /* Feed 15 LOWs — should not trigger yet (need 16) */
+    for (int i = 0; i < 15; i++) {
+        if (rlc_debounce_update(&db, 0, NULL, NULL)) {
+            ESP_LOGE(TAG, "FAIL: 16-bit debounce triggered too early (step %d)", i);
+            failures++;
+            break;
+        }
+    }
+    /* 16th LOW should trigger active */
+    if (!rlc_debounce_update(&db, 0, NULL, NULL)) {
+        ESP_LOGE(TAG, "FAIL: 16-bit debounce should trigger on 16th LOW");
+        failures++;
+    }
+    if (!rlc_debounce_get_state(&db)) {
+        ESP_LOGE(TAG, "FAIL: 16-bit debounce should be active after 16 LOWs");
+        failures++;
+    }
+
+    /* Feed 15 HIGHs — should not transition yet */
+    for (int i = 0; i < 15; i++) {
+        rlc_debounce_update(&db, 1, NULL, NULL);
+    }
+    /* 16th HIGH should transition to inactive */
+    if (!rlc_debounce_update(&db, 1, NULL, NULL)) {
+        ESP_LOGE(TAG, "FAIL: 16-bit debounce should trigger on 16th HIGH");
+        failures++;
+    }
+    if (rlc_debounce_get_state(&db)) {
+        ESP_LOGE(TAG, "FAIL: 16-bit debounce should be inactive after 16 HIGHs");
+        failures++;
+    }
+
+    /* Verify that 8 consecutive LOWs in 16-bit mode does NOT trigger */
+    rlc_debounce_init(&db, 3, DEBOUNCE_16BIT);
+    for (int i = 0; i < 8; i++) {
+        if (rlc_debounce_update(&db, 0, NULL, NULL)) {
+            ESP_LOGE(TAG, "FAIL: 16-bit debounce triggered after only 8 LOWs");
+            failures++;
+            break;
+        }
+    }
+    if (rlc_debounce_get_state(&db)) {
+        ESP_LOGE(TAG, "FAIL: 16-bit debounce should not be active after 8 LOWs");
+        failures++;
+    }
+
+    if (failures == 0) {
+        ESP_LOGI(TAG, "Debounce 16-bit self-test: PASS");
+    } else {
+        ESP_LOGE(TAG, "Debounce 16-bit self-test: FAIL (%d)", failures);
     }
     return failures;
 }
@@ -368,12 +477,14 @@ int rlc_selftest_run(void)
     failures += test_crc32c();
     failures += test_message_serialisation();
     failures += test_sequence_validation();
+    failures += test_sequence_overflow();
     failures += test_debounce();
+    failures += test_debounce_16bit();
     failures += test_version_comparison();
     failures += test_integrity_crc();
 
     if (failures == 0) {
-        ESP_LOGI(TAG, "All self-tests PASSED (7 test suites)");
+        ESP_LOGI(TAG, "All self-tests PASSED (9 test suites)");
     } else {
         ESP_LOGE(TAG, "%d self-test(s) FAILED — firmware may be corrupt", failures);
     }
