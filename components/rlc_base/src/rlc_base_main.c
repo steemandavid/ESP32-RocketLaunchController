@@ -1,10 +1,11 @@
 /**
  * RLC Base Unit — Application Entry Point
  *
- * Phase 1: Boot, initialise GPIOs (safe state first), bring up ESP-NOW,
- * start the link manager, and respond to heartbeats. The link manager
- * runs on its own task; this function becomes a housekeeping loop that
- * samples the battery, feeds the watchdog, and logs status.
+ * Phase 1: Boot, initialise GPIOs (safe state first), run self-tests,
+ * bring up ESP-NOW, start the link manager, and respond to heartbeats.
+ * The link manager runs on its own task; this function becomes a
+ * housekeeping loop that samples the battery, feeds the watchdog,
+ * and logs status.
  */
 
 #include "rlc_base.h"
@@ -17,6 +18,7 @@
 #include "rlc_battery.h"
 #include "rlc_rgb_led.h"
 #include "rlc_watchdog.h"
+#include "rlc_selftest.h"
 #include "rlc_config.h"
 #include "rlc_version.h"
 #include "pin_config.h"
@@ -37,8 +39,16 @@ void base_app_main(void)
     siren_init();
     ESP_LOGI(TAG, "safety outputs initialised — all relays safe");
 
+    /* §9.13: Boot self-tests (CRC32-C, struct offsets) */
+    if (rlc_selftest_run() != 0) {
+        ESP_LOGE(TAG, "self-tests FAILED — halting");
+        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
+        vTaskDelay(portMAX_DELAY);
+    }
+
     rlc_rgb_led_init();
     rlc_rgb_led_set_pattern(LED_PATTERN_BOOT);
+    rlc_rgb_led_set_pixel_count(8);  /* Base unit has 8-pixel strip */
 
     rlc_battery_init(PIN_VBAT_ADC, BASE_VBAT_DIVIDER_RATIO);
 

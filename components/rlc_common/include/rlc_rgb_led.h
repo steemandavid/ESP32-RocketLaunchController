@@ -51,6 +51,14 @@ void rlc_rgb_led_set_pattern(rlc_led_pattern_t pattern);
 void rlc_rgb_led_flash_overlay(uint8_t r, uint8_t g, uint8_t b, uint16_t duration_ms);
 
 /**
+ * Set the number of active pixels (1 for remote, 8 for base unit).
+ * Must be called after rlc_rgb_led_init().  Default is 1.
+ *
+ * @param count  Number of pixels (1-8)
+ */
+void rlc_rgb_led_set_pixel_count(int count);
+
+/**
  * Set pattern based on FSM state (convenience).
  */
 void rlc_rgb_led_set_state(rlc_state_t state);

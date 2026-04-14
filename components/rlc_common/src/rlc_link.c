@@ -4,6 +4,14 @@
  * Single-task-owner model: `link_task` owns all link state, receives frames
  * from an internal queue (fed by rlc_link_on_rx from the ESP-NOW recv
  * worker task), and drives all heartbeat timing via queue-receive timeouts.
+ *
+ * Fixes applied (per Phase 1 code review):
+ *   - LINK_REQUEST retry count tracking with "NO LINK" indication
+ *   - Sequence number overflow guard (re-link on 0xFFFFFFFF)
+ *   - App-state guard callback for LINK_REQUEST rejection
+ *   - 5-consecutive-send-failure immediate link loss
+ *   - TWDT registration for link task
+ *   - Orange ping-failure flash colour corrected to (255,100,0)
  */
 
 #include "rlc_link.h"
@@ -13,14 +21,17 @@
 #include "rlc_config.h"
 #include "rlc_version.h"
 #include "rlc_rgb_led.h"
+#include "rlc_watchdog.h"
 
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>
 
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "esp_mac.h"
+#include "esp_task_wdt.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -73,6 +84,12 @@ static uint32_t          s_last_ping_timestamp = 0; /* remote: stamp in last PIN
 static bool              s_ping_outstanding = false;
 static int64_t           s_last_ping_rx_ms = 0;     /* base: when last PING received */
 static uint16_t          s_missed_pings = 0;
+
+/* LINK_REQUEST retry counter (remote). */
+static uint16_t          s_linkreq_attempts = 0;
+
+/* App-state guard callback (for LINK_REQUEST rejection). */
+static rlc_link_guard_cb_t s_guard_cb = NULL;
 
 /* ── Helpers ───────────────────────────────────────────────────── */
 
@@ -142,6 +159,19 @@ static bool version_matches(const uint8_t fw[3])
            fw[2] == RLC_VERSION_PATCH;
 }
 
+/**
+ * Increment sequence counter with overflow guard (FSD §6.2.2).
+ * Returns true if the increment succeeded, false if overflow detected.
+ */
+static bool seq_next(uint32_t *out_seq)
+{
+    if (s_tx_seq >= UINT32_MAX) {
+        return false;  /* Caller must re-link */
+    }
+    *out_seq = ++s_tx_seq;
+    return true;
+}
+
 /* ── Frame builders ────────────────────────────────────────────── */
 
 static void send_link_request(void)
@@ -160,7 +190,8 @@ static void send_link_request(void)
     if (len > 0) {
         rlc_espnow_send(s_peer_mac, buf, len);
         s_last_linkreq_ms = now_ms();
-        ESP_LOGI(TAG, "LINK_REQUEST sent");
+        s_linkreq_attempts++;
+        ESP_LOGI(TAG, "LINK_REQUEST sent (attempt %u)", s_linkreq_attempts);
     }
 }
 
@@ -187,13 +218,20 @@ static uint16_t s_status_update_seq = 0;
 
 static void send_status_update(void)
 {
+    uint32_t seq;
+    if (!seq_next(&seq)) {
+        /* Overflow — would need to re-link, but status updates are not commands */
+        s_tx_seq = 0;
+        seq = ++s_tx_seq;
+    }
+
     uint8_t buf[RLC_MSG_MAX_SIZE];
     rlc_payload_status_update_t p = {0};
     p.base_state = STATE_IDLE;
     p.update_sequence = s_status_update_seq++;
 
     int len = rlc_msg_build(buf, MSG_STATUS_UPDATE,
-                            ++s_tx_seq, s_session_token, &p, sizeof(p));
+                            seq, s_session_token, &p, sizeof(p));
     if (len > 0) {
         rlc_espnow_send(s_peer_mac, buf, len);
     }
@@ -201,13 +239,21 @@ static void send_status_update(void)
 
 static void send_ping(uint16_t battery_mv)
 {
+    uint32_t seq;
+    if (!seq_next(&seq)) {
+        ESP_LOGW(TAG, "seq overflow in send_ping — re-linking");
+        set_state(RLC_LINK_STATE_LINKING);
+        send_link_request();
+        return;
+    }
+
     uint8_t buf[RLC_MSG_MAX_SIZE];
     rlc_payload_ping_t p = {0};
     p.ping_timestamp = (uint32_t)now_ms();
     p.remote_battery_voltage_mv = battery_mv;
 
     int len = rlc_msg_build(buf, MSG_PING,
-                            ++s_tx_seq, s_session_token, &p, sizeof(p));
+                            seq, s_session_token, &p, sizeof(p));
     if (len > 0) {
         rlc_espnow_send(s_peer_mac, buf, len);
         s_last_ping_sent_ms = now_ms();
@@ -218,13 +264,19 @@ static void send_ping(uint16_t battery_mv)
 
 static void send_pong(uint32_t echoed_ping_timestamp)
 {
+    uint32_t seq;
+    if (!seq_next(&seq)) {
+        ESP_LOGW(TAG, "seq overflow in send_pong — ignoring");
+        return;
+    }
+
     uint8_t buf[RLC_MSG_MAX_SIZE];
     rlc_payload_pong_t p = {0};
     p.ping_timestamp = echoed_ping_timestamp;
     p.pong_timestamp = (uint32_t)now_ms();
 
     int len = rlc_msg_build(buf, MSG_PONG,
-                            ++s_tx_seq, s_session_token, &p, sizeof(p));
+                            seq, s_session_token, &p, sizeof(p));
     if (len > 0) {
         rlc_espnow_send(s_peer_mac, buf, len);
     }
@@ -244,6 +296,12 @@ static void handle_link_request(const uint8_t *payload, uint16_t plen)
              req->remote_firmware_version[0],
              req->remote_firmware_version[1],
              req->remote_firmware_version[2]);
+
+    /* FSD §6.4.1: reject if app-state guard says busy (ARMED/PRE_FIRE/FIRING/POST_FIRE). */
+    if (s_guard_cb && !s_guard_cb()) {
+        ESP_LOGI(TAG, "LINK_REQUEST rejected by app-state guard (busy)");
+        return;
+    }
 
     /* Atomically invalidate old session before generating the new token
        (FSD §6.2.2). Sequence counters reset to 0. */
@@ -277,6 +335,7 @@ static void handle_link_ack(const uint8_t *payload, uint16_t plen)
     }
 
     reset_session(ack->session_token);
+    s_linkreq_attempts = 0;  /* Reset retry counter on successful link */
     ESP_LOGI(TAG, "LINK_ACK accepted, token=0x%08lx", (unsigned long)ack->session_token);
     set_state(RLC_LINK_STATE_LINKED);
 }
@@ -326,16 +385,6 @@ static void process_frame(const link_rx_item_t *it)
 
     update_rssi(it->rssi);
 
-    /* Link recovery: any valid frame from peer while LOST bumps us back
-       toward IDLE. For Base, recovery happens here on receipt of the
-       first PING. For Remote, any valid PONG/LINK_ACK also recovers. */
-    if (s_state == RLC_LINK_STATE_LOST) {
-        if (hdr.msg_type == MSG_PING || hdr.msg_type == MSG_PONG ||
-            hdr.msg_type == MSG_LINK_REQUEST || hdr.msg_type == MSG_LINK_ACK) {
-            ESP_LOGI(TAG, "link recovery frame 0x%02x", hdr.msg_type);
-        }
-    }
-
     switch (hdr.msg_type) {
         case MSG_LINK_REQUEST:
             if (s_role == RLC_LINK_ROLE_BASE) {
@@ -361,6 +410,7 @@ static void process_frame(const link_rx_item_t *it)
                 }
                 s_rx_last_seq = hdr.sequence_number;
                 if (s_state == RLC_LINK_STATE_LOST) {
+                    ESP_LOGI(TAG, "link recovery — PING received");
                     set_state(RLC_LINK_STATE_LINKED);
                 }
                 handle_ping(payload, plen);
@@ -372,6 +422,7 @@ static void process_frame(const link_rx_item_t *it)
                 if (hdr.sequence_number <= s_rx_last_seq && s_rx_last_seq != 0) return;
                 s_rx_last_seq = hdr.sequence_number;
                 if (s_state == RLC_LINK_STATE_LOST) {
+                    ESP_LOGI(TAG, "link recovery — PONG received");
                     set_state(RLC_LINK_STATE_LINKED);
                 }
                 handle_pong(payload, plen);
@@ -388,6 +439,18 @@ static void process_frame(const link_rx_item_t *it)
     }
 }
 
+/* ── ESP-NOW send failure callback (FSD §6.4.1a) ─────────────── */
+
+static void espnow_send_failure_handler(void)
+{
+    lock();
+    if (s_state == RLC_LINK_STATE_LINKED) {
+        ESP_LOGE(TAG, "5 consecutive send failures — immediate link loss");
+        set_state(RLC_LINK_STATE_LOST);
+    }
+    unlock();
+}
+
 /* ── Link task main loop ───────────────────────────────────────── */
 
 static void tick_remote(void)
@@ -402,6 +465,11 @@ static void tick_remote(void)
         s_state == RLC_LINK_STATE_LOST) {
         if (t - s_last_linkreq_ms >= LINK_REQUEST_INTERVAL_MS) {
             send_link_request();
+            /* FSD §6.4.1: after 5 attempts, display "NO LINK" and keep retrying */
+            if (s_linkreq_attempts == LINK_REQUEST_MAX_RETRIES) {
+                ESP_LOGW(TAG, "NO LINK — %u attempts failed, retrying at %d ms",
+                         s_linkreq_attempts, LINK_REQUEST_SLOW_INTERVAL_MS);
+            }
         }
         return;
     }
@@ -415,8 +483,8 @@ static void tick_remote(void)
         s_missed_pings++;
         ESP_LOGW(TAG, "PING miss %u", s_missed_pings);
 
-        /* Brief orange overlay per FSD §6.4.2 (250 ms in v1.14). */
-        rlc_rgb_led_flash_overlay(255, 120, 0, 250);
+        /* FSD §11.2 / §6.4.2: brief orange overlay (250 ms). Colour (255,100,0). */
+        rlc_rgb_led_flash_overlay(255, 100, 0, 250);
 
         if (s_missed_pings >= HEARTBEAT_FAIL_THRESHOLD) {
             ESP_LOGE(TAG, "LINK LOST (3 missed pings)");
@@ -449,6 +517,9 @@ static void link_task(void *arg)
 {
     (void)arg;
 
+    /* Register with TWDT (FSD §9.6) */
+    esp_task_wdt_add(NULL);
+
     /* Enter initial state */
     if (s_role == RLC_LINK_ROLE_REMOTE) {
         set_state(RLC_LINK_STATE_LINKING);
@@ -474,6 +545,9 @@ static void link_task(void *arg)
             tick_base();
         }
         unlock();
+
+        /* Feed TWDT each loop iteration */
+        esp_task_wdt_reset();
     }
 }
 
@@ -500,6 +574,7 @@ int rlc_link_init(rlc_link_role_t role, const uint8_t *peer_mac)
     }
 
     rlc_espnow_register_recv_cb(espnow_recv_trampoline);
+    rlc_espnow_register_send_failure_cb(espnow_send_failure_handler);
 
     if (xTaskCreate(link_task, "rlc_link", 4096, NULL, 6, &s_link_task) != pdPASS) {
         ESP_LOGE(TAG, "task create failed");
@@ -533,6 +608,7 @@ void rlc_link_get_status(rlc_link_status_t *out)
     out->rssi_avg_dbm   = s_rssi_avg;
     out->last_rssi_dbm  = s_rssi_last;
     out->missed_pings   = s_missed_pings;
+    out->linkreq_attempts = s_linkreq_attempts;
     memcpy(out->peer_fw, s_peer_fw, 3);
     out->peer_fw_known  = s_peer_fw_known;
     unlock();
@@ -560,5 +636,12 @@ void rlc_link_set_remote_battery_mv(uint16_t mv)
 {
     lock();
     s_remote_battery_mv = mv;
+    unlock();
+}
+
+void rlc_link_set_guard(rlc_link_guard_cb_t cb)
+{
+    lock();
+    s_guard_cb = cb;
     unlock();
 }

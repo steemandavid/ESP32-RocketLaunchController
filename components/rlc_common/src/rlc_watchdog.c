@@ -38,3 +38,13 @@ void rlc_watchdog_feed(void)
 {
     esp_task_wdt_reset();
 }
+
+int rlc_watchdog_add_task(TaskHandle_t task)
+{
+    esp_err_t ret = esp_task_wdt_add(task);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Watchdog add task failed: %s", esp_err_to_name(ret));
+        return -1;
+    }
+    return 0;
+}

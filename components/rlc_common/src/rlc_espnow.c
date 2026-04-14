@@ -8,6 +8,10 @@
  *   quickly. Frames are copied into a FreeRTOS queue (depth >= 16) and
  *   drained by a dedicated worker task that invokes the user callback
  *   in task context. Frames larger than RLC_ESPNOW_RX_MAX are dropped.
+ *
+ * Send failure tracking (FSD §6.4.1a):
+ *   5 consecutive ESP-NOW send callback failures trigger immediate
+ *   link loss via the send_failure_cb callback.
  */
 
 #include "rlc_espnow.h"
@@ -29,6 +33,7 @@ static const char *TAG = "rlc_espnow";
 
 #define RLC_ESPNOW_RX_MAX        250
 #define RLC_ESPNOW_RX_QUEUE_LEN  16
+#define ESPNOW_SEND_FAIL_THRESHOLD 5
 
 typedef struct {
     uint8_t src_mac[6];
@@ -39,6 +44,10 @@ typedef struct {
 
 static rlc_espnow_recv_cb_t s_recv_cb = NULL;
 static rlc_espnow_send_cb_t s_send_cb = NULL;
+
+/* FSD §6.4.1a: send failure tracking */
+static rlc_espnow_send_failure_cb_t s_send_failure_cb = NULL;
+static volatile int s_consecutive_send_failures = 0;
 
 static QueueHandle_t s_rx_queue = NULL;
 static TaskHandle_t  s_rx_task  = NULL;
@@ -59,15 +68,30 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info,
     item.len  = data_len;
     memcpy(item.data, data, data_len);
 
-    BaseType_t hpw = pdFALSE;
-    if (xQueueSendFromISR(s_rx_queue, &item, &hpw) != pdTRUE) {
+    /* esp_now_recv_cb runs in Wi-Fi task context (not ISR).
+     * Use xQueueSend, not xQueueSendFromISR. */
+    if (xQueueSend(s_rx_queue, &item, 0) != pdTRUE) {
         ESP_LOGW(TAG, "rx queue full, dropped");
     }
-    if (hpw) portYIELD_FROM_ISR();
 }
 
 static void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
+    if (status == ESP_NOW_SEND_SUCCESS) {
+        s_consecutive_send_failures = 0;
+    } else {
+        s_consecutive_send_failures++;
+        ESP_LOGW(TAG, "send fail #%d", s_consecutive_send_failures);
+
+        if (s_consecutive_send_failures >= ESPNOW_SEND_FAIL_THRESHOLD &&
+            s_send_failure_cb) {
+            ESP_LOGE(TAG, "%d consecutive send failures — immediate link loss",
+                     s_consecutive_send_failures);
+            s_send_failure_cb();
+            s_consecutive_send_failures = 0;
+        }
+    }
+
     if (s_send_cb) {
         s_send_cb(mac_addr, status == ESP_NOW_SEND_SUCCESS);
     }
@@ -172,6 +196,11 @@ void rlc_espnow_register_recv_cb(rlc_espnow_recv_cb_t cb)
 void rlc_espnow_register_send_cb(rlc_espnow_send_cb_t cb)
 {
     s_send_cb = cb;
+}
+
+void rlc_espnow_register_send_failure_cb(rlc_espnow_send_failure_cb_t cb)
+{
+    s_send_failure_cb = cb;
 }
 
 int rlc_espnow_send(const uint8_t *peer_mac, const uint8_t *data, int len)

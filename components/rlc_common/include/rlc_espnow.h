@@ -33,10 +33,16 @@ typedef void (*rlc_espnow_recv_cb_t)(const uint8_t *src_mac,
 typedef void (*rlc_espnow_send_cb_t)(const uint8_t *dst_mac, bool success);
 
 /**
+ * Callback invoked when 5 consecutive ESP-NOW send failures occur
+ * (FSD §6.4.1a — immediate link loss).
+ */
+typedef void (*rlc_espnow_send_failure_cb_t)(void);
+
+/**
  * Initialise ESP-NOW with Wi-Fi in station mode on the configured channel.
  * Sets up PMK encryption.
  *
- * @return ESP_OK on success
+ * @return 0 on success
  */
 int rlc_espnow_init(void);
 
@@ -44,7 +50,7 @@ int rlc_espnow_init(void);
  * Register the peer (the other unit) with LMK encryption.
  *
  * @param peer_mac  6-byte MAC address of the peer
- * @return ESP_OK on success
+ * @return 0 on success
  */
 int rlc_espnow_add_peer(const uint8_t *peer_mac);
 
@@ -55,12 +61,19 @@ void rlc_espnow_register_recv_cb(rlc_espnow_recv_cb_t cb);
 void rlc_espnow_register_send_cb(rlc_espnow_send_cb_t cb);
 
 /**
+ * Register callback for 5 consecutive send failures (FSD §6.4.1a).
+ * The callback fires at most once per failure burst; the counter
+ * resets on any successful send.
+ */
+void rlc_espnow_register_send_failure_cb(rlc_espnow_send_failure_cb_t cb);
+
+/**
  * Send a raw message to the peer.
  *
  * @param peer_mac  Destination MAC (6 bytes)
  * @param data      Message buffer (header + payload)
  * @param len       Length in bytes
- * @return ESP_OK on success
+ * @return 0 on success
  */
 int rlc_espnow_send(const uint8_t *peer_mac, const uint8_t *data, int len);
 

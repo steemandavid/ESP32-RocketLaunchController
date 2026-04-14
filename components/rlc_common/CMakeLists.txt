@@ -7,6 +7,7 @@ idf_component_register(
         "src/rlc_battery.c"
         "src/rlc_rgb_led.c"
         "src/rlc_watchdog.c"
+        "src/rlc_selftest.c"
     INCLUDE_DIRS
         "include"
     REQUIRES

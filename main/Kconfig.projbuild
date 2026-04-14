@@ -17,4 +17,11 @@ menu "Rocket Launch Controller"
                 Build firmware for the remote (operator) unit.
     endchoice
 
+    config RLC_SERIAL_DEBUG_LOGGING
+        bool "Enable serial debug logging"
+        default y
+        help
+            Enable UART0 log output at runtime. When disabled, no serial
+            logging is produced (field operation mode).
+
 endmenu

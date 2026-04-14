@@ -46,7 +46,11 @@ uint16_t rlc_battery_get_voltage_mv(void);
  * Check battery status against configured thresholds.
  *
  * @param min_arm_mv     Minimum voltage to allow arming
+ * @param min_operate_mv Minimum voltage for safe operation (remote only;
+ *                       triggers BATTERY_WARNING when below this but above critical)
  * @param critical_mv    Critical low voltage
  * @return               Battery status
  */
-rlc_battery_status_t rlc_battery_check(uint16_t min_arm_mv, uint16_t critical_mv);
+rlc_battery_status_t rlc_battery_check(uint16_t min_arm_mv,
+                                        uint16_t min_operate_mv,
+                                        uint16_t critical_mv);

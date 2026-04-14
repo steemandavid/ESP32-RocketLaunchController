@@ -1,9 +1,10 @@
 /**
  * RLC Remote Unit — Application Entry Point
  *
- * Phase 1: Boot, bring up ESP-NOW, start the link manager, and let it
- * drive LINK_REQUEST/heartbeat transmission on its own task. This
- * function is a housekeeping loop (watchdog, battery sample, status log).
+ * Phase 1: Boot, initialise display and inputs, run self-tests, bring up
+ * ESP-NOW, start the link manager, and let it drive LINK_REQUEST/heartbeat
+ * transmission on its own task. This function is a housekeeping loop
+ * (watchdog, battery sample, status log).
  */
 
 #include "rlc_remote.h"
@@ -17,6 +18,7 @@
 #include "rlc_battery.h"
 #include "rlc_rgb_led.h"
 #include "rlc_watchdog.h"
+#include "rlc_selftest.h"
 #include "rlc_config.h"
 #include "rlc_version.h"
 #include "pin_config.h"
@@ -32,8 +34,17 @@ void remote_app_main(void)
 {
     ESP_LOGI(TAG, "=== RLC Remote Unit v%s ===", RLC_VERSION_STRING);
 
+    /* Visual feedback first (remote has no relays/safety GPIOs). */
     rlc_rgb_led_init();
     rlc_rgb_led_set_pattern(LED_PATTERN_BOOT);
+    rlc_rgb_led_set_pixel_count(1);  /* Remote has single pixel */
+
+    /* §9.13: Boot self-tests (CRC32-C, struct offsets) */
+    if (rlc_selftest_run() != 0) {
+        ESP_LOGE(TAG, "self-tests FAILED — halting");
+        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
+        vTaskDelay(portMAX_DELAY);
+    }
 
     display_init();
     encoder_init();

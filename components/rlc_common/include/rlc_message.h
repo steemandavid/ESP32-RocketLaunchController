@@ -2,7 +2,7 @@
  * RLC Message Serialisation / Deserialisation
  *
  * Build and parse protocol messages with header, sequence numbers,
- * session tokens, and integrity CRC.
+ * session tokens, and integrity CRC (CRC32-C Castagnoli).
  */
 
 #pragma once
@@ -46,13 +46,30 @@ bool rlc_msg_parse(const uint8_t *data,
                    uint16_t *payload_len);
 
 /**
- * Compute the CRC32 integrity check for a command payload.
+ * Compute the CRC32-C integrity check for a command message.
  *
+ * CRC input: header_bytes || payload_bytes (excluding CRC field) || integrity_key
+ * Polynomial: CRC32-C (Castagnoli) 0x1EDC6F41
+ * Initial value: 0xFFFFFFFF, final XOR: 0xFFFFFFFF
+ *
+ * @param header       Message header bytes (12 bytes)
+ * @param header_len   Length of header
  * @param payload      Payload bytes (excluding the CRC field)
  * @param payload_len  Length of payload without CRC
- * @return             CRC32 value
+ * @return             CRC32-C value
  */
-uint32_t rlc_compute_integrity_crc(const void *payload, uint16_t payload_len);
+uint32_t rlc_compute_integrity_crc(const void *header,    uint16_t header_len,
+                                   const void *payload,   uint16_t payload_len);
+
+/**
+ * Standalone CRC32-C computation (for self-test).
+ * Computes CRC32-C over a buffer with standard init/XOR.
+ *
+ * @param buf   Data buffer
+ * @param len   Length of data
+ * @return      CRC32-C value
+ */
+uint32_t rlc_crc32c(const uint8_t *buf, uint32_t len);
 
 /**
  * Validate sequence number (must be strictly greater than last accepted).

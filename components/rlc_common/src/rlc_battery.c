@@ -123,9 +123,12 @@ uint16_t rlc_battery_get_voltage_mv(void)
     return s_voltage_mv;
 }
 
-rlc_battery_status_t rlc_battery_check(uint16_t min_arm_mv, uint16_t critical_mv)
+rlc_battery_status_t rlc_battery_check(uint16_t min_arm_mv,
+                                        uint16_t min_operate_mv,
+                                        uint16_t critical_mv)
 {
-    if (s_voltage_mv < critical_mv) return BATTERY_CRITICAL;
-    if (s_voltage_mv < min_arm_mv)  return BATTERY_LOW;
+    if (s_voltage_mv < critical_mv)    return BATTERY_CRITICAL;
+    if (s_voltage_mv < min_operate_mv) return BATTERY_WARNING;
+    if (s_voltage_mv < min_arm_mv)     return BATTERY_LOW;
     return BATTERY_OK;
 }

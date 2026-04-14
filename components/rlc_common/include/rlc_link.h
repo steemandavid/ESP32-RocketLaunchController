@@ -8,10 +8,12 @@
  *   - LINK_REQUEST / LINK_ACK handshake with strict MAJOR.MINOR.PATCH check
  *   - Session token generation (base) and storage (remote)
  *   - Per-peer sequence counter management (reset to 0 on new session)
- *   - PING (remote→base) / PONG (base→remote) at 500 ms
+ *   - PING (remote->base) / PONG (base->remote) at 500 ms
  *   - 3-missed-ping link loss detection, recovery on PING/PONG return
  *   - RSSI tracking (3-frame moving average)
  *   - Firmware version mismatch lock-out
+ *   - 5-consecutive-send-failure immediate link loss (FSD §6.4.1a)
+ *   - App-state guard callback for LINK_REQUEST rejection (FSD §6.4.1)
  *
  * Thread model:
  *   A single `link_task` owns the link state. Incoming frames arrive via
@@ -46,9 +48,17 @@ typedef struct {
     int              rssi_avg_dbm;     /* average of last 3 frames, 0 if unknown */
     int              last_rssi_dbm;
     uint16_t         missed_pings;     /* consecutive failures in current window */
+    uint16_t         linkreq_attempts; /* LINK_REQUEST retry count (remote) */
     uint8_t          peer_fw[3];       /* major, minor, patch reported by peer */
     bool             peer_fw_known;
 } rlc_link_status_t;
+
+/**
+ * Guard callback for LINK_REQUEST rejection during safety-critical states.
+ * Return false to silently ignore the LINK_REQUEST (FSD §6.4.1).
+ * If not set (NULL), all LINK_REQUESTs are accepted.
+ */
+typedef bool (*rlc_link_guard_cb_t)(void);
 
 /**
  * Initialise the link manager. Must be called AFTER rlc_espnow_init()
@@ -88,3 +98,12 @@ rlc_link_state_t rlc_link_get_state(void);
  * application periodically; 0 means "unknown" until first battery sample.
  */
 void rlc_link_set_remote_battery_mv(uint16_t mv);
+
+/**
+ * Set the guard callback for LINK_REQUEST rejection.
+ * When set, the callback is invoked before processing a LINK_REQUEST.
+ * If it returns false, the request is silently ignored.
+ * This allows the application state machine to block session resets
+ * during ARMED/PRE_FIRE/FIRING/POST_FIRE (FSD §6.4.1).
+ */
+void rlc_link_set_guard(rlc_link_guard_cb_t cb);
