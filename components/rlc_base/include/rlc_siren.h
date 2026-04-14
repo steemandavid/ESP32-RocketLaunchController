@@ -32,3 +32,9 @@ void siren_start_link_lost(void);
  * Turn siren off.
  */
 void siren_off(void);
+
+/**
+ * Set siren to error pattern (3 short blasts, 200ms on/200ms off).
+ * Used on entry to ERROR state.
+ */
+void siren_start_error(void);

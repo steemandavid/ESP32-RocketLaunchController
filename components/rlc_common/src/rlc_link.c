@@ -1,22 +1,23 @@
 /**
- * RLC Link Manager — Phase 1 implementation.
+ * RLC Link Manager — Phase 1 + Phase 3 extensions.
  *
  * Single-task-owner model: `link_task` owns all link state, receives frames
  * from an internal queue (fed by rlc_link_on_rx from the ESP-NOW recv
  * worker task), and drives all heartbeat timing via queue-receive timeouts.
  *
- * Fixes applied (per Phase 1 code review):
- *   - LINK_REQUEST retry count tracking with "NO LINK" indication
- *   - Sequence number overflow guard (re-link on 0xFFFFFFFF)
- *   - App-state guard callback for LINK_REQUEST rejection
- *   - 5-consecutive-send-failure immediate link loss
- *   - TWDT registration for link task
- *   - Orange ping-failure flash colour corrected to (255,100,0)
+ * Phase 3 additions:
+ *   - Command frame forwarding to state machine via s_cmd_queue
+ *   - Integrity CRC verification for command messages
+ *   - Dead-man timestamp tracking (last CMD_FIRE received)
+ *   - Link health tracking (ERR_COMM_DEGRADED)
+ *   - Public APIs for command sending, session token, health queries
+ *   - Link state change notifications to FSM
  */
 
 #include "rlc_link.h"
 #include "rlc_message.h"
 #include "rlc_protocol.h"
+#include "rlc_fsm_events.h"
 #include "rlc_espnow.h"
 #include "rlc_config.h"
 #include "rlc_version.h"
@@ -49,6 +50,7 @@ typedef struct {
     uint8_t src_mac[6];
     int     rssi;
     int     len;
+    int64_t received_ms;    /* C3: wire-receive timestamp (captured in ESP-NOW callback) */
     uint8_t data[LINK_RX_MAX];
 } link_rx_item_t;
 
@@ -91,6 +93,17 @@ static uint16_t          s_linkreq_attempts = 0;
 /* App-state guard callback (for LINK_REQUEST rejection). */
 static rlc_link_guard_cb_t s_guard_cb = NULL;
 
+/* Phase 3: Command queue for state machine task. */
+static QueueHandle_t     s_cmd_queue = NULL;
+
+/* Phase 3: Link health tracking — sliding window of ping results
+ * for ERR_COMM_DEGRADED detection (FSD §7.2.2 guard 10).
+ * Populated on both base (from PING receipts) and remote (from PONG receipts). */
+static bool              s_ping_window[HEARTBEAT_WINDOW_SIZE];
+static int               s_ping_window_idx = 0;
+static int               s_ping_window_count = 0;
+static int64_t           s_base_next_expected_ping_ms = 0;  /* M9: base-side slot tracking */
+
 /* ── Helpers ───────────────────────────────────────────────────── */
 
 static inline int64_t now_ms(void)
@@ -117,6 +130,8 @@ static void set_state(rlc_link_state_t st)
 {
     if (s_state == st) return;
     ESP_LOGI(TAG, "link state %d -> %d", s_state, st);
+
+    rlc_link_state_t prev = s_state;
     s_state = st;
 
     switch (st) {
@@ -138,6 +153,28 @@ static void set_state(rlc_link_state_t st)
         case RLC_LINK_STATE_VERSION_MISMATCH:
             rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
             break;
+    }
+
+    /* Phase 3: Notify FSM of link state transitions. */
+    if (s_cmd_queue) {
+        rlc_fsm_event_t evt = {0};
+        bool send = false;
+
+        if (prev != RLC_LINK_STATE_LINKED && st == RLC_LINK_STATE_LINKED) {
+            if (prev == RLC_LINK_STATE_LOST) {
+                evt.type = EVT_LINK_RECOVERED;
+            } else {
+                evt.type = EVT_LINK_ESTABLISHED;
+            }
+            send = true;
+        } else if (st == RLC_LINK_STATE_LOST) {
+            evt.type = EVT_LINK_LOST;
+            send = true;
+        }
+
+        if (send) {
+            (void)xQueueSend(s_cmd_queue, &evt, 0);
+        }
     }
 }
 
@@ -370,6 +407,12 @@ static void handle_ping(const uint8_t *payload, uint16_t plen)
 
     s_last_ping_rx_ms = now_ms();
     s_missed_pings = 0;
+
+    /* M9: Track ping success in health window (base side). */
+    s_ping_window[s_ping_window_idx] = true;
+    s_ping_window_idx = (s_ping_window_idx + 1) % HEARTBEAT_WINDOW_SIZE;
+    if (s_ping_window_count < HEARTBEAT_WINDOW_SIZE) s_ping_window_count++;
+
     send_pong(p->ping_timestamp);
 }
 
@@ -388,6 +431,11 @@ static void handle_pong(const uint8_t *payload, uint16_t plen)
 
     s_ping_outstanding = false;
     s_missed_pings = 0;
+
+    /* Phase 3: Track ping success in health window. */
+    s_ping_window[s_ping_window_idx] = true;
+    s_ping_window_idx = (s_ping_window_idx + 1) % HEARTBEAT_WINDOW_SIZE;
+    if (s_ping_window_count < HEARTBEAT_WINDOW_SIZE) s_ping_window_count++;
 }
 
 static void process_frame(const link_rx_item_t *it)
@@ -452,11 +500,107 @@ static void process_frame(const link_rx_item_t *it)
             }
             break;
         case MSG_STATUS_UPDATE:
-            /* Phase 1: received but not acted upon (Phase 2/3/4 own UI). */
+            /* Remote receives STATUS_UPDATE from base — forward to FSM. */
             if (s_role == RLC_LINK_ROLE_REMOTE) {
                 if (hdr.session_token != s_session_token) return;
+                if (hdr.sequence_number <= s_rx_last_seq && s_rx_last_seq != 0) return;
+                s_rx_last_seq = hdr.sequence_number;
+                if (plen >= sizeof(rlc_payload_status_update_t)) {
+                    rlc_fsm_event_t evt = {0};
+                    evt.type = EVT_STATUS_UPDATE;
+                    memcpy(&evt.data.status_update.status, payload,
+                           sizeof(rlc_payload_status_update_t));
+                    if (s_cmd_queue) {
+                        (void)xQueueSend(s_cmd_queue, &evt, 0);
+                    }
+                }
             }
             break;
+
+        /* Phase 3: Command messages — verify CRC/session/seq, forward to FSM.
+         * Guards 5/6/7 (integrity CRC, session token, sequence number anti-replay)
+         * are enforced here before commands reach the FSM queue (FSD §7.2.2). */
+        case MSG_CMD_ARM:
+        case MSG_CMD_FIRE:
+        case MSG_CMD_DISARM:
+        case MSG_CMD_CEASE_FIRE:
+            if (s_role == RLC_LINK_ROLE_BASE) {
+                if (hdr.session_token != s_session_token) return;
+                if (hdr.sequence_number <= s_rx_last_seq && s_rx_last_seq != 0) return;
+
+                /* Integrity CRC verification (FSD §6.2.2).
+                 * CRC is first 4 bytes of payload, computed over
+                 * header + payload_after_crc + CMD_INTEGRITY_KEY. */
+                if (plen < 4) return;
+                uint32_t received_crc;
+                memcpy(&received_crc, payload, 4);
+                uint16_t payload_after_crc_len = plen - 4;
+                uint32_t computed_crc = rlc_compute_integrity_crc(
+                    &hdr, sizeof(rlc_msg_header_t),
+                    payload + 4, payload_after_crc_len);
+                if (received_crc != computed_crc) {
+                    ESP_LOGW(TAG, "CMD integrity CRC mismatch (type 0x%02x)", hdr.msg_type);
+                    return;
+                }
+
+                s_rx_last_seq = hdr.sequence_number;
+
+                /* Forward to FSM with wire-receive timestamp (C3: captured in
+                 * rlc_link_on_rx, not deferred to processing time). */
+                if (s_cmd_queue) {
+                    rlc_fsm_event_t evt = {0};
+                    uint8_t channel = 0;
+                    if (plen >= 5) channel = payload[4];  /* channel byte after CRC */
+
+                    switch (hdr.msg_type) {
+                        case MSG_CMD_ARM:         evt.type = EVT_CMD_ARM;         break;
+                        case MSG_CMD_FIRE:        evt.type = EVT_CMD_FIRE;        break;
+                        case MSG_CMD_DISARM:      evt.type = EVT_CMD_DISARM;      break;
+                        case MSG_CMD_CEASE_FIRE:  evt.type = EVT_CMD_CEASE_FIRE;  break;
+                        default: break;
+                    }
+                    evt.data.cmd.channel = channel;
+                    evt.data.cmd.seq_number = hdr.sequence_number;
+                    evt.data.cmd.integrity_crc = received_crc;
+                    evt.data.cmd.received_ms = it->received_ms;
+                    (void)xQueueSend(s_cmd_queue, &evt, 0);
+                }
+            }
+            break;
+
+        case MSG_CMD_ACK:
+        case MSG_CMD_NACK:
+            if (s_role == RLC_LINK_ROLE_REMOTE) {
+                if (hdr.session_token != s_session_token) return;
+                if (hdr.sequence_number <= s_rx_last_seq && s_rx_last_seq != 0) return;
+                s_rx_last_seq = hdr.sequence_number;
+
+                if (s_cmd_queue) {
+                    rlc_fsm_event_t evt = {0};
+                    if (hdr.msg_type == MSG_CMD_ACK) {
+                        evt.type = EVT_CMD_ACK;
+                        if (plen >= sizeof(rlc_payload_cmd_ack_t)) {
+                            const rlc_payload_cmd_ack_t *a =
+                                (const rlc_payload_cmd_ack_t *)payload;
+                            evt.data.ack.acked_msg_type = a->acked_msg_type;
+                            evt.data.ack.acked_seq_number = a->acked_sequence_number;
+                            evt.data.ack.channel = a->channel;
+                        }
+                    } else {
+                        evt.type = EVT_CMD_NACK;
+                        if (plen >= sizeof(rlc_payload_cmd_nack_t)) {
+                            const rlc_payload_cmd_nack_t *n =
+                                (const rlc_payload_cmd_nack_t *)payload;
+                            evt.data.nack.nacked_msg_type = n->nacked_msg_type;
+                            evt.data.nack.nacked_seq_number = n->nacked_sequence_number;
+                            evt.data.nack.reason_code = n->reason_code;
+                        }
+                    }
+                    (void)xQueueSend(s_cmd_queue, &evt, 0);
+                }
+            }
+            break;
+
         default:
             break;
     }
@@ -509,6 +653,11 @@ static void tick_remote(void)
         /* FSD §11.2 / §6.4.2: brief orange overlay (250 ms). Colour (255,100,0). */
         rlc_rgb_led_flash_overlay(255, 100, 0, 250);
 
+        /* Phase 3: Track ping failure in health window. */
+        s_ping_window[s_ping_window_idx] = false;
+        s_ping_window_idx = (s_ping_window_idx + 1) % HEARTBEAT_WINDOW_SIZE;
+        if (s_ping_window_count < HEARTBEAT_WINDOW_SIZE) s_ping_window_count++;
+
         if (s_missed_pings >= HEARTBEAT_FAIL_THRESHOLD) {
             ESP_LOGE(TAG, "LINK LOST (3 missed pings)");
             set_state(RLC_LINK_STATE_LOST);
@@ -528,6 +677,22 @@ static void tick_base(void)
     if (s_state != RLC_LINK_STATE_LINKED) return;
 
     int64_t t = now_ms();
+
+    /* M9: Track expected-but-missed PINGs in health window.
+     * Each HEARTBEAT_INTERVAL_MS slot that passes without a PING is a failure. */
+    if (s_base_next_expected_ping_ms == 0) {
+        s_base_next_expected_ping_ms = t + HEARTBEAT_INTERVAL_MS;
+    }
+    while (t >= s_base_next_expected_ping_ms) {
+        /* If the last PING arrived before this slot started, it's a miss */
+        if (s_last_ping_rx_ms < s_base_next_expected_ping_ms - HEARTBEAT_INTERVAL_MS) {
+            s_ping_window[s_ping_window_idx] = false;
+            s_ping_window_idx = (s_ping_window_idx + 1) % HEARTBEAT_WINDOW_SIZE;
+            if (s_ping_window_count < HEARTBEAT_WINDOW_SIZE) s_ping_window_count++;
+        }
+        s_base_next_expected_ping_ms += HEARTBEAT_INTERVAL_MS;
+    }
+
     int64_t since = t - s_last_ping_rx_ms;
     /* 3 consecutive 500ms intervals without a PING => link lost. */
     if (since >= (int64_t)HEARTBEAT_FAIL_THRESHOLD * HEARTBEAT_INTERVAL_MS) {
@@ -599,7 +764,7 @@ int rlc_link_init(rlc_link_role_t role, const uint8_t *peer_mac)
     rlc_espnow_register_recv_cb(espnow_recv_trampoline);
     rlc_espnow_register_send_failure_cb(espnow_send_failure_handler);
 
-    if (xTaskCreate(link_task, "rlc_link", 4096, NULL, 6, &s_link_task) != pdPASS) {
+    if (xTaskCreatePinnedToCore(link_task, "rlc_link", 4096, NULL, 6, &s_link_task, 0) != pdPASS) {
         ESP_LOGE(TAG, "task create failed");
         return -1;
     }
@@ -618,6 +783,7 @@ void rlc_link_on_rx(const uint8_t *src_mac,
     memcpy(it.src_mac, src_mac, 6);
     it.rssi = rssi;
     it.len  = len;
+    it.received_ms = now_ms();  /* C3: capture wire-receive timestamp, not deferred */
     memcpy(it.data, data, len);
     (void)xQueueSend(s_rx_queue, &it, 0);
 }
@@ -673,4 +839,68 @@ void rlc_link_set_guard(rlc_link_guard_cb_t cb)
     lock();
     s_guard_cb = cb;
     unlock();
+}
+
+/* ── Phase 3 Public APIs ───────────────────────────────────────── */
+
+void rlc_link_register_cmd_queue(QueueHandle_t q)
+{
+    lock();
+    s_cmd_queue = q;
+    unlock();
+}
+
+int rlc_link_send_cmd(uint8_t msg_type, const void *payload, uint16_t payload_len)
+{
+    if (s_state != RLC_LINK_STATE_LINKED) return -1;
+
+    lock();
+    uint32_t seq;
+    if (!seq_next(&seq)) {
+        unlock();
+        return -1;
+    }
+    uint32_t token = s_session_token;
+    unlock();
+
+    uint8_t buf[RLC_MSG_MAX_SIZE];
+    int len = rlc_msg_build(buf, msg_type, seq, token, payload, payload_len);
+    if (len <= 0) return -1;
+
+    return rlc_espnow_send(s_peer_mac, buf, len);
+}
+
+uint32_t rlc_link_get_session_token(void)
+{
+    uint32_t token;
+    lock();
+    token = s_session_token;
+    unlock();
+    return token;
+}
+
+uint32_t rlc_link_next_seq(void)
+{
+    uint32_t seq;
+    lock();
+    if (!seq_next(&seq)) {
+        seq = 0;
+    }
+    unlock();
+    return seq;
+}
+
+bool rlc_link_is_healthy(void)
+{
+    /* Compute degraded status from window. */
+    lock();
+    int fails = 0;
+    for (int i = 0; i < s_ping_window_count; i++) {
+        if (!s_ping_window[i]) fails++;
+    }
+    int count = s_ping_window_count;
+    unlock();
+
+    if (count < HEARTBEAT_WINDOW_SIZE) return true;  /* Not enough data yet */
+    return (fails * 100 / count) <= 30;
 }

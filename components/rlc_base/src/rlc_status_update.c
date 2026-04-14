@@ -40,9 +40,11 @@ static void send_update(void)
     /* Real continuity bands from ADC module */
     p.continuity_bands = continuity_get_bands();
 
-    /* Armed/firing bitmasks — Phase 3 state machine will populate these */
-    p.channel_armed_bitmask  = 0;
-    p.channel_firing_bitmask = 0;
+    /* Armed/firing bitmasks from FSM state */
+    uint8_t armed_ch = base_state_get_armed_channel();
+    uint8_t firing_ch = base_state_get_firing_channel();
+    p.channel_armed_bitmask  = (armed_ch > 0)  ? (1U << (armed_ch - 1))  : 0;
+    p.channel_firing_bitmask = (firing_ch > 0) ? (1U << (firing_ch - 1)) : 0;
 
     /* Arm switch sense */
     p.base_arm_switch = arm_sense_get_debounced() ? 1 : 0;
@@ -70,12 +72,13 @@ static void status_update_task(void *arg)
         int64_t now_ms = esp_timer_get_time() / 1000;
 
         bool periodic = (now_ms - last_send_ms) >= STATUS_UPDATE_INTERVAL_MS;
-        bool event    = s_trigger;
+        /* m7: Read and clear in one step to narrow the race window. */
+        bool event = s_trigger;
+        if (event) s_trigger = false;
 
         if ((periodic || event) && rlc_link_is_linked()) {
             send_update();
             last_send_ms = now_ms;
-            s_trigger = false;
         }
 
         esp_task_wdt_reset();

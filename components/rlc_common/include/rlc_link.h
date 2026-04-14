@@ -26,6 +26,8 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "rlc_protocol.h"
 
 typedef enum {
@@ -114,3 +116,38 @@ void rlc_link_set_guard(rlc_link_guard_cb_t cb);
  * Only call when linked (does nothing otherwise).
  */
 void rlc_link_send_status_update(const rlc_payload_status_update_t *payload);
+
+/* ── Phase 3: Command Queue Integration ─────────────────────────── */
+
+/**
+ * Register the state machine's command queue.
+ * The link manager will forward received command messages (CMD_ARM, CMD_FIRE,
+ * CMD_DISARM, CMD_CEASE_FIRE, CMD_ACK, CMD_NACK) and STATUS_UPDATE to this
+ * queue. The queue is owned by the state machine task.
+ */
+void rlc_link_register_cmd_queue(QueueHandle_t q);
+
+/**
+ * Send a command message (remote -> base).
+ * Uses the link's session token and auto-increments the sequence counter.
+ * @return 0 on success, -1 on error or not linked.
+ */
+int rlc_link_send_cmd(uint8_t msg_type, const void *payload, uint16_t payload_len);
+
+/**
+ * Get the current session token (for CRC computation on remote side).
+ */
+uint32_t rlc_link_get_session_token(void);
+
+/**
+ * Get the next TX sequence number (thread-safe).
+ * Returns 0 on overflow (caller should re-link).
+ */
+uint32_t rlc_link_next_seq(void);
+
+/**
+ * Check if the link is healthy enough for safety-critical operations.
+ * Returns false if ERR_COMM_DEGRADED should be set (>30% ping failures
+ * in the last HEARTBEAT_WINDOW_SIZE pings).
+ */
+bool rlc_link_is_healthy(void);

@@ -1,7 +1,8 @@
 /**
  * RLC Base Unit — Application Entry Point
  *
- * Phase 2: All I/O tasks running — continuity ADC, arm sense debounce,
+ * Phase 3: Full state machine with command processing.
+ * All I/O tasks running — continuity ADC, arm sense debounce,
  * battery monitoring, and STATUS_UPDATE generation with real data.
  *
  * Boot sequence follows FSD §9.13.
@@ -11,6 +12,7 @@
 #include "rlc_relay.h"
 #include "rlc_siren.h"
 #include "rlc_base_state.h"
+#include "rlc_base_fsm.h"
 #include "rlc_espnow.h"
 #include "rlc_link.h"
 #include "rlc_message.h"
@@ -27,6 +29,9 @@
 #include "rlc_arm_sense.h"
 #include "rlc_base_battery.h"
 #include "rlc_status_update.h"
+
+/* Phase 3 headers */
+#include "rlc_fsm_events.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -45,24 +50,25 @@ static void on_io_change(void)
 }
 
 /**
- * Arm sense callback wrapper — adapts arm_sense_register_cb signature
- * (void (*cb)(bool armed)) to the simple trigger function.
+ * Arm sense callback — forward to FSM as EVT_ARM_SENSE_CHANGED.
  */
 static void on_arm_change_cb(bool armed)
 {
-    (void)armed;
     status_update_trigger();
+    base_fsm_post_event(EVT_ARM_SENSE_CHANGED, armed);
 }
 
 /**
- * Contact welding fault callback — triggered when arm sense reads HIGH
- * while arm relay is known to be de-energised. Triggers STATUS_UPDATE
- * so the remote is informed of the fault condition.
+ * Contact welding fault callback — forward to FSM as EVT_ARM_SENSE_FAULT.
  */
 static void on_arm_fault_cb(void)
 {
-    ESP_LOGE(TAG, "ARM RELAY CONTACT WELD FAULT — triggering status update");
-    status_update_trigger();
+    ESP_LOGE(TAG, "ARM RELAY CONTACT WELD FAULT");
+    if (base_fsm_get_queue()) {
+        rlc_fsm_event_t evt = {0};
+        evt.type = EVT_ARM_SENSE_FAULT;
+        (void)xQueueSend(base_fsm_get_queue(), &evt, 0);
+    }
 }
 
 void base_app_main(void)
@@ -136,7 +142,28 @@ void base_app_main(void)
         return;
     }
 
-    ESP_LOGI(TAG, "base ready — all Phase 2 tasks running, waiting for LINK_REQUEST");
+    /* Phase 3: Initialise the base FSM (creates event queue).
+     * M8: Queue is registered AFTER both init calls to avoid race
+     * where link_task posts events before s_cmd_queue is set. */
+    if (base_fsm_init() != 0) {
+        ESP_LOGE(TAG, "base FSM init failed");
+        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
+        return;
+    }
+
+    /* M8: Register FSM queue with link manager now that both are initialised. */
+    rlc_link_register_cmd_queue(base_fsm_get_queue());
+
+    if (base_fsm_start() != 0) {
+        ESP_LOGE(TAG, "base FSM task start failed");
+        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
+        return;
+    }
+
+    /* Set link guard — reject LINK_REQUEST when FSM is busy */
+    rlc_link_set_guard(base_state_is_busy);
+
+    ESP_LOGI(TAG, "base ready — Phase 3 FSM active, waiting for commands");
 
     /* Housekeeping loop — watchdog + status log */
     int64_t last_status_log_ms = 0;
@@ -148,9 +175,12 @@ void base_app_main(void)
             rlc_link_status_t ls;
             rlc_link_get_status(&ls);
             uint16_t bands = continuity_get_bands();
-            ESP_LOGI(TAG, "state=%d rssi=%d vbat=%u mv cont=0x%04x arm=%d",
-                     ls.state, ls.rssi_avg_dbm, rlc_battery_get_voltage_mv(),
-                     bands, arm_sense_get_debounced());
+            ESP_LOGI(TAG, "state=%d armed=%u firing=%u rssi=%d vbat=%u mv cont=0x%04x arm=%d err=0x%02x",
+                     base_fsm_get_state(), base_fsm_get_armed_channel(),
+                     base_fsm_get_firing_channel(),
+                     ls.rssi_avg_dbm, rlc_battery_get_voltage_mv(),
+                     bands, arm_sense_get_debounced(),
+                     base_fsm_get_error_flags());
             last_status_log_ms = now;
         }
 

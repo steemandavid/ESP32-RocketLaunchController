@@ -89,3 +89,11 @@ void siren_off(void)
     esp_timer_stop(s_siren_timer);
     siren_drive(false);
 }
+
+void siren_start_error(void)
+{
+    esp_timer_stop(s_siren_timer);
+    s_pulse_count = 3;  /* 3 short blasts */
+    siren_drive(true);
+    esp_timer_start_periodic(s_siren_timer, 200 * 1000);  /* 200 ms on/off */
+}

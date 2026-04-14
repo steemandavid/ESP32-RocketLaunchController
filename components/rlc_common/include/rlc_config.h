@@ -43,6 +43,10 @@
 #define DEBOUNCE_POLL_INTERVAL_MS      10
 #define CONT_RELAY_DROPOUT_MS          50    /* Relay settling before first ADC sample (§5.4.6) */
 
+/* ── Fire Safety Configuration ─────────────────────────────────── */
+
+#define COMPLETE_PULSE_ON_LINK_LOSS    1     /* 1 = complete fire pulse on link loss, 0 = immediate abort */
+
 /* ── Voltage Thresholds (millivolts) ──────────────────────────── */
 
 #define BASE_VBAT_DIVIDER_RATIO        4.3f

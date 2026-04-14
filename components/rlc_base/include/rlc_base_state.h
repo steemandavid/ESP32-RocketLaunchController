@@ -1,10 +1,13 @@
 /**
- * RLC Base Unit State Machine
+ * RLC Base Unit State Machine — Public Getters
+ *
+ * Thread-safe reads of FSM state. Actual FSM logic is in rlc_base_fsm.c/h.
  */
 
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "rlc_protocol.h"
 
 /**
@@ -18,13 +21,22 @@ rlc_state_t base_state_get(void);
 uint8_t base_state_get_armed_channel(void);
 
 /**
- * Get the current continuity bands (2 bits per channel, FSD §5.4.2).
- * Ch1 in bits 1:0, Ch2 in bits 3:2, ..., Ch8 in bits 15:14.
- * Values: 0=OPEN, 1=GOOD, 2=MARGINAL, 3=SHORT.
+ * Get current continuity bands (deprecated — use continuity_get_bands()).
  */
-uint16_t base_state_get_continuity_bands(void);
+uint16_t base_state_get_continuity(void);
 
 /**
  * Get current error flags.
  */
 uint8_t base_state_get_error_flags(void);
+
+/**
+ * Get the currently firing channel (0 if none).
+ */
+uint8_t base_state_get_firing_channel(void);
+
+/**
+ * Check if the FSM is in a busy state (ARMED/PRE_FIRE/FIRING/POST_FIRE).
+ * Used by the link guard callback to reject LINK_REQUEST.
+ */
+bool base_state_is_busy(void);

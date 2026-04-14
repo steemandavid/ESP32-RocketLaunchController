@@ -1,20 +1,18 @@
 /**
- * RLC Remote Unit State Machine — Stub
+ * RLC Remote Unit State Machine — Public API
  *
- * Full implementation in Phase 3.
+ * Delegates to rlc_remote_fsm.c for actual state management.
  */
 
 #include "rlc_remote_state.h"
-
-static rlc_state_t s_state = STATE_BOOT;
-static uint8_t s_selected_channel = 1;
+#include "rlc_remote_fsm.h"
 
 rlc_state_t remote_state_get(void)
 {
-    return s_state;
+    return remote_fsm_get_state();
 }
 
 uint8_t remote_state_get_selected_channel(void)
 {
-    return s_selected_channel;
+    return remote_fsm_get_selected_channel();
 }

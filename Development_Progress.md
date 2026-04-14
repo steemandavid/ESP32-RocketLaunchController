@@ -18,7 +18,7 @@
 | 0 | Hardware Validation | COMPLETE |
 | 1 | Foundation and Communication | COMPLETE |
 | 2 | Input/Output and Debouncing | COMPLETE |
-| 3 | State Machines and Command Processing | NOT STARTED |
+| 3 | State Machines and Command Processing | CODE COMPLETE |
 | 4 | Display | NOT STARTED |
 | 5 | Hardening and Final Testing | NOT STARTED |
 
@@ -201,7 +201,7 @@ Full code review against FSD v1.14 — see `Phase1_Code_Review.md`.
 | T-C03 | Separate units beyond range (simulated via reset) | PASS | Remote reset: drought detected at 1548 ms. Base reset: 3 missed pings + send failures at ~1520 ms |
 | T-C04 | Return units after link loss (simulated via reset) | PASS | Re-link in 50–220 ms, new session token assigned, state 4→3 clean |
 | T-C05 | Send pings, measure loss rate (desk range ~0.5 m) | PASS | 360 pings over 3 min, 0 missed, 0% loss. RSSI -48 dBm rock-solid |
-| T-C06 | Replay captured ARM command | TODO | Requires Phase 3 command layer |
+| T-C06 | Replay captured ARM command | TODO | Phase 3 command layer implemented — needs on-target test |
 | T-C07 | Firmware version mismatch | PASS | Remote v1.0.1 rejected with "FW MISMATCH", red triple-flash LED |
 | T-C08 | RSSI averaging (3-frame, stable) | PASS | -41 to -57 dBm, stable display over 45 s |
 
@@ -462,35 +462,92 @@ They should be verified before Phase 3 work begins, or during Phase 5 hardening.
 ## Phase 3 — State Machines and Command Processing
 
 **FSD ref:** §4.3 Phase 3, §7 (Base FSM), §8 (Remote FSM), §6.3 (Commands)
-**Status:** NOT STARTED
+**Status:** CODE COMPLETE — On-target testing required
+
+### Phase 3 Architecture
+
+Command forwarding pattern: `link_task` continues to own ESP-NOW receive queue. In `process_frame()`, PING/PONG/LINK_REQUEST/LINK_ACK handled by link_task (unchanged). Command messages (CMD_ARM, CMD_FIRE, CMD_DISARM, CMD_CEASE_FIRE, CMD_ACK, CMD_NACK) and STATUS_UPDATE forwarded to a new command queue owned by the state machine task. Single-task-owner pattern per FSD §4.7 — FSM task owns all relay control exclusively.
+
+### Phase 3 Files Created
+
+| File | Purpose |
+|------|---------|
+| `components/rlc_common/include/rlc_fsm_events.h` | Shared event types, event struct, notification bit definitions |
+| `components/rlc_base/src/rlc_base_fsm.c` | Full base FSM: BOOT→IDLE→ARMED→PRE_FIRE→FIRING→POST_FIRE + LINK_LOST + ERROR |
+| `components/rlc_base/include/rlc_base_fsm.h` | Base FSM public API |
+| `components/rlc_base/src/rlc_fire_timer.c` | GPTimer fire pulse (1µs resolution, ISR→xTaskNotifyFromISR) |
+| `components/rlc_base/include/rlc_fire_timer.h` | Fire timer API |
+| `components/rlc_remote/src/rlc_remote_fsm.c` | Full remote FSM: BOOT→LINKING→IDLE→ARMED→PRE_FIRE→FIRING + LINK_LOST + ERROR |
+| `components/rlc_remote/include/rlc_remote_fsm.h` | Remote FSM public API |
+
+### Phase 3 Files Modified
+
+| File | Changes |
+|------|---------|
+| `components/rlc_common/src/rlc_link.c` | Command frame forwarding, integrity CRC verification, dead-man timestamp, link health tracking, 6 new public APIs |
+| `components/rlc_common/include/rlc_link.h` | Added `rlc_link_register_cmd_queue()`, `rlc_link_send_cmd()`, `rlc_link_get_session_token()`, `rlc_link_next_seq()`, `rlc_link_is_healthy()`, `rlc_link_get_last_fire_ms()` |
+| `components/rlc_base/src/rlc_base_state.c` | Replaced stub — delegates to `rlc_base_fsm.c` getters |
+| `components/rlc_base/include/rlc_base_state.h` | Added `base_state_get_firing_channel()`, `base_state_is_busy()` |
+| `components/rlc_base/src/rlc_siren.c` | Added `siren_start_error()` (3 short blasts 200ms on/off) |
+| `components/rlc_base/include/rlc_siren.h` | Declared `siren_start_error()` |
+| `components/rlc_base/src/rlc_status_update.c` | Populates `channel_armed_bitmask` and `channel_firing_bitmask` from FSM state |
+| `components/rlc_base/src/rlc_base_main.c` | Starts FSM task, wires arm sense/fault callbacks to FSM, sets link guard callback |
+| `components/rlc_remote/src/rlc_remote_state.c` | Replaced stub — delegates to `rlc_remote_fsm.c` getters |
+| `components/rlc_remote/src/rlc_remote_main.c` | Starts FSM + fire-repeat tasks, wires all input callbacks to FSM event queue |
+| `components/rlc_common/include/rlc_config.h` | Added `COMPLETE_PULSE_ON_LINK_LOSS` (default: 1) |
+| `components/rlc_base/CMakeLists.txt` | Added `rlc_base_fsm.c`, `rlc_fire_timer.c` |
+| `components/rlc_remote/CMakeLists.txt` | Added `rlc_remote_fsm.c` |
 
 ### Phase 3 Development Tasks
 
-| # | Task | FSD ref | Status |
-|---|------|---------|--------|
-| 1 | Base state machine (BOOT→IDLE→ARMED→PRE_FIRE→FIRING→POST_FIRE+LINK_LOST+ERROR) | §7.2 | TODO |
-| 2 | Remote state machine (BOOT→LINKING→IDLE→ARMED→FIRING+LINK_LOST+ERROR) | §8.2 | TODO |
-| 3 | Base: CMD_ARM handler with all guard conditions | §7.2.2 | TODO |
-| 4 | Base: CMD_DISARM handler | §7.2.2 | TODO |
-| 5 | Base: CMD_FIRE handler with pre-fire delay + fire pulse | §7.2.3 | TODO |
-| 6 | Base: CMD_CEASE_FIRE handler | §7.2.2 | TODO |
-| 7 | Base: ACK/NACK response with reason codes | §6.3 | TODO |
-| 8 | Base: Siren patterns (pulse ARMED, continuous PRE_FIRE/FIRING) | §7.4.1 | TODO |
-| 9 | Base: Fire pulse via hardware timer (ISR signals task) | §7.2.3 | TODO |
-| 10 | Base: 50 ms relay dropout delay after FIRING | §7.2.5 | TODO |
-| 11 | Base: Arm timeout auto-disarm (10 s) | §7.2.5 | TODO |
-| 12 | Base: Arm switch sense guard | §7.2.2 | TODO |
-| 13 | Base: Contact welding detection | §7.2.7 | TODO |
-| 14 | Remote: Command sender with ACK timeout + retry | §8.2 | TODO |
-| 15 | Remote: Repeated CMD_FIRE at 200 ms (fire-and-forget) | §8.2.4 | TODO |
-| 16 | Remote: Dead-man switch logic | §8.2.4 | TODO |
-| 17 | Remote: Channel change while armed triggers disarm | §8.2 | TODO |
-| 18 | Remote: Long-press to arm (500 ms) | §8.2 | TODO |
-| 19 | Remote: Arm switch debounce + encoder lockout | §8.2 | TODO |
-| 20 | Remote: PRE_FIRE local state (before base confirms) | §8.2.4 | TODO |
-| 21 | App-state guard wired to FSM (reject LINK_REQUEST when armed) | §6.4.1 | TODO |
-| 22 | ERR_COMM_DEGRADED calculation (>30% failure in 10 pings) | §7.2.2 | TODO |
-| 23 | Link-health guard at PRE_FIRE→FIRING transition | §7.2.3 | TODO |
+| # | Task | FSD ref | Status | Implementation |
+|---|------|---------|--------|----------------|
+| 1 | Base state machine (BOOT→IDLE→ARMED→PRE_FIRE→FIRING→POST_FIRE+LINK_LOST+ERROR) | §7.2 | DONE | `rlc_base_fsm.c` — 8 states, `bfsm_task` (prio 4, core 0, 8192 stack) |
+| 2 | Remote state machine (BOOT→LINKING→IDLE→ARMED→FIRING+LINK_LOST+ERROR) | §8.2 | DONE | `rlc_remote_fsm.c` — 7 states, `rfsm_task` (prio 4, core 0, 8192 stack) |
+| 3 | Base: CMD_ARM handler with all guard conditions | §7.2.2 | DONE | `guard_arm()` returns NACK reason or 0. All 10 guards checked |
+| 4 | Base: CMD_DISARM handler | §7.2.2 | DONE | Idempotent ACK + `do_disarm()` in IDLE/ARMED/PRE_FIRE/FIRING |
+| 5 | Base: CMD_FIRE handler with pre-fire delay + fire pulse | §7.2.3 | DONE | CMD_FIRE→PRE_FIRE→FIRING→POST_FIRE pipeline |
+| 6 | Base: CMD_CEASE_FIRE handler | §7.2.2 | DONE | ACK + immediate safe in ARMED/PRE_FIRE/FIRING |
+| 7 | Base: ACK/NACK response with reason codes | §6.3 | DONE | `send_ack()`, `send_nack()` with `rlc_nack_reason_str()` |
+| 8 | Base: Siren patterns (pulse ARMED, continuous PRE_FIRE/FIRING) | §7.4.1 | DONE | `siren_start_pulse()`, `siren_start_continuous()`, `siren_start_error()`, `siren_start_link_lost()` |
+| 9 | Base: Fire pulse via hardware timer (ISR signals task) | §7.2.3 | DONE | `rlc_fire_timer.c` — GPTimer, ISR→`xTaskNotifyFromISR` |
+| 10 | Base: 50 ms relay dropout delay after FIRING | §7.2.5 | DONE | POST_FIRE state with `POST_FIRE_COOLDOWN_MS` |
+| 11 | Base: Arm timeout auto-disarm (10 s) | §7.2.5 | DONE | `s_arm_time_ms` tracked in `check_timers()` |
+| 12 | Base: Arm switch sense guard | §7.2.2 | DONE | `arm_sense_get_debounced()` checked in IDLE→ARMED, ARMED, PRE_FIRE, FIRING |
+| 13 | Base: Contact welding detection | §7.2.7 | DONE | Arm relay energise + verify sense HIGH within 200ms |
+| 14 | Remote: Command sender with ACK timeout + retry | §8.2 | DONE | `send_cmd_arm/fire/disarm/cease_fire()` + `wait_for_ack()` |
+| 15 | Remote: Repeated CMD_FIRE at 200 ms (fire-and-forget) | §8.2.4 | DONE | `cmd_fire_repeat_task_fn` — separate task, fire-and-forget |
+| 16 | Remote: Dead-man switch logic | §8.2.4 | DONE | 500ms timeout via `rlc_link_get_last_fire_ms()` |
+| 17 | Remote: Channel change while armed triggers disarm | §8.2 | DONE | EVT_ENCODER_ROTATE in ARMED → `do_disarm_and_idle()` |
+| 18 | Remote: Long-press to arm (500 ms) | §8.2 | DONE | EVT_ENCODER_LONG_PRESS in IDLE → CMD_ARM flow |
+| 19 | Remote: Arm switch debounce + encoder lockout | §8.2 | DONE | EVT_ARM_SWITCH_CHANGED, EVT_ENCODER_ROTATE/PRESS all disarm |
+| 20 | Remote: PRE_FIRE local state (before base confirms) | §8.2.4 | DONE | Local countdown + fire-repeat task + STATUS_UPDATE sync |
+| 21 | App-state guard wired to FSM (reject LINK_REQUEST when armed) | §6.4.1 | DONE | `rlc_link_set_guard(base_state_is_busy)` in `rlc_base_main.c` |
+| 22 | ERR_COMM_DEGRADED calculation (>30% failure in 10 pings) | §7.2.2 | DONE | `s_ping_window[10]` sliding window, `rlc_link_is_healthy()` |
+| 23 | Link-health guard at PRE_FIRE→FIRING transition | §7.2.3 | DONE | `rlc_link_is_healthy()` checked in `check_timers()` |
+
+### Phase 3 Safety Features Implemented
+
+| Feature | FSD Ref | Implementation |
+|---------|---------|---------------|
+| Dual-key arming (10 guards) | §9.2 | All 10 guards checked in `guard_arm()` |
+| Single-channel arming | §9.3 | NACK 0x0A if another channel armed |
+| Dead-man switch | §9.4 | 500ms CMD_FIRE authorization timeout via `rlc_link_get_last_fire_ms()` |
+| Auto-disarm after fire | §9.5 | FIRING→POST_FIRE→IDLE auto-transition |
+| Arm timeout 10s | §7.2.5 | Software timer in `check_timers()` |
+| Arm sense → immediate disarm | §7.2.7 | EVT_ARM_SENSE_CHANGED processed in ARMED/PRE_FIRE/FIRING |
+| Channel change while armed → disarm | §8.2.7 | EVT_ENCODER_ROTATE in ARMED state |
+| Contact welding detection | §7.3.2 | Arm relay energise + verify sense HIGH within 200ms |
+| ERR_COMM_DEGRADED | §7.2.2 | Ping health window (10 frames, >30% = degraded) |
+| Link loss during FIRING | §7.2.5 | COMPLETE_PULSE_ON_LINK_LOSS configurable |
+| Fire pulse hardware timer | §7.4.2 | GPTimer ISR → xTaskNotifyFromISR, task does relay control |
+| Relay control exclusivity | §9.12 | All relay ops only in state_machine_task |
+| ERROR state unrecoverable | §7.2.9 | Intentional halt requiring power cycle |
+
+### Phase 3 Build Status
+
+- **Base:** Zero warnings, zero errors
+- **Remote:** Zero warnings, zero errors
 
 ### Phase 3 FSD Arming Tests (§15.2)
 
@@ -525,6 +582,11 @@ They should be verified before Phase 3 work begins, or during Phase 5 hardening.
 | T-F07 | Pre-fire timer expires without fire button → abort | TODO |
 | T-F08 | Fire pulse timing accuracy (oscilloscope) | TODO |
 | T-F09 | Link-health guard at PRE_FIRE→FIRING | TODO |
+
+### Phase 3 Key Commits
+
+- `744240c` Phase 2 extended testing — fresh-press fix, stack increases, 9 tests verified
+- (Phase 3 commit pending — code complete, on-target testing required before commit)
 
 ---
 
@@ -616,25 +678,25 @@ They should be verified before Phase 3 work begins, or during Phase 5 hardening.
 
 | Task | Priority | Core | Stack | Phase |
 |------|----------|------|-------|-------|
-| `arm_switch_task` | 7 (highest) | 0 | 2048 | 2 |
+| `arm_switch_task` | 7 (highest) | 0 | 3072 | 2 |
 | `continuity_task` | 5 | 0 | 4096 | 2 |
-| `heartbeat_task` (link_task) | 5 | 0 | 4096 | 1 DONE |
-| `state_machine_task` | 4 | 0 | 8192 | 3 |
-| `battery_task` | 3 | 0 | 2048 | 2 |
+| `heartbeat_task` (link_task) | 6 | 0 | 4096 | 1 DONE |
+| `state_machine_task` (bfsm_task) | 4 | 0 | 8192 | 3 DONE |
+| `battery_task` | 3 | 0 | 3072 | 2 |
 | `status_update_task` | 3 | 0 | 4096 | 2 |
-| `siren_task` | 2 | 1 | 2048 | 3 |
+| `siren_task` | 2 | 1 | 2048 | 3 DONE |
 | `rgb_led_task` | 1 (lowest) | 1 | 2048 | 1 DONE |
 
 ### Remote Unit
 
 | Task | Priority | Core | Stack | Phase |
 |------|----------|------|-------|-------|
-| `fire_button_task` | 7 (highest) | 0 | 2048 | 2 |
-| `arm_switch_task` | 6 | 0 | 2048 | 2 |
-| `heartbeat_task` (link_task) | 5 | 0 | 4096 | 1 DONE |
-| `state_machine_task` | 4 | 0 | 8192 | 3 |
-| `cmd_fire_repeat_task` | 4 | 0 | 2048 | 3 |
-| `battery_task` | 3 | 0 | 2048 | 2 |
+| `fire_button_task` | 7 (highest) | 0 | 3072 | 2 |
+| `arm_switch_task` | 6 | 0 | 3072 | 2 |
+| `heartbeat_task` (link_task) | 6 | 0 | 4096 | 1 DONE |
+| `state_machine_task` (rfsm_task) | 4 | 0 | 8192 | 3 DONE |
+| `cmd_fire_repeat_task` (fire_rep) | 4 | 0 | 2048 | 3 DONE |
+| `battery_task` | 3 | 0 | 3072 | 2 |
 | `encoder_task` | 3 | 0 | 2048 | 2 |
 | `display_task` | 2 | 1 | 8192 | 4 |
 | `buzzer_task` | 1 | 1 | 2048 | 2 |
