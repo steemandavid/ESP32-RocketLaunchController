@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.11
-**Date:** 2026-03-30
+**Version:** 1.12
+**Date:** 2026-04-13
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -23,8 +23,9 @@
 | 1.6 | 2026-03-22 | Applied all accepted findings from v1.5 review (C1–C5, H1–H8, M1–M10, L1–L9). Key changes: reordered struct fields for natural alignment; added periodic relay feedback monitoring; blocked LINK_REQUEST session reset while ARMED/PRE_FIRE/FIRING; made fire-pulse-on-link-loss configurable; added MOSFET switch and fusible resistor note for continuity circuit; added PRE_FIRE to remote state enum; specified CRC32 polynomial and sequence overflow semantics; added arm switch guard to PRE_FIRE transitions; specified wrong-channel CMD_FIRE handling in PRE_FIRE/FIRING; added NACK for low remote battery; added Wi-Fi channel survey note; added display health check; reduced encoder lockout; added power supply section; fixed duplicate section numbering; added ESP-NOW send failure handling; added task priority table; specified update_sequence wrap-around; raised REMOTE_VBAT_CRITICAL_MV to 3.2V; added initial channel selection; added logging specification; extended CRC to cover header; noted colour-blind accessibility; swapped GPIO 3 for GPIO 10. |
 | 1.7 | 2026-03-22 | Applied 27 accepted findings from v1.6 review. Key changes: allocated GPIO 41 for shared continuity enable MOSFET; disabled continuity sensing in ARMED/PRE_FIRE/FIRING/ERROR states; specified ISR-safe signalling for fire pulse timer; added general ISR safety rule; dead-man timestamp captured in ESP-NOW receive callback; 50 ms relay dropout delay after FIRING; removed periodic relay feedback monitoring (check at arm-time only); added SIREN_ERROR and SIREN_CONTINUITY_LOST patterns; clarified channel relay stays open in ARMED; simplified LINK_REQUEST handling in POST_FIRE; 500 ms long-press to arm; ESP-NOW receive queue; boot sequence specification; removed boot-time Wi-Fi channel scan; encoder button 8-bit notation fix; TWDT per-task watchdog. |
 | 1.8 | 2026-03-23 | Applied accepted findings from v1.7 review (C1–C5, H1–H7, M1–M10, L1–L9). Key changes: removed stale continuity guards from ARMED→PRE_FIRE and continuity-loss disarm from ARMED/PRE_FIRE (sensing disabled — stale data); fire pulse timer ISR now only signals task via xTaskNotifyFromISR(), all relay control in task context; added ARM_TIMEOUT_MS (10s) auto-disarm; explicit independent GND for continuity circuit; HEARTBEAT_INTERVAL_MS reduced to 500 ms (link loss detection now 1.5s); PONG freshness at PRE_FIRE→FIRING uses HEARTBEAT_INTERVAL_MS + HEARTBEAT_TIMEOUT_MS; ERR_COMM_DEGRADED blocks IDLE→ARMED and PRE_FIRE→FIRING; remote treats multiple bits in channel_armed_bitmask as error; siren silenced immediately on link recovery; ESP-NOW receive queue depth raised to 16; long-press timer starts from debounced transition; continuity thresholds in microvolts; LINK_ACK header token clarification; CMD_DISARM in IDLE ACK'd as idempotent; Fire Complete screen layout added; strict version matching rationale note; compile-time keys noted as known limitation; test renumbering; backlight always 100%; SPI2_HOST naming fix. |
-| 1.10 | 2026-03-23 | Igniter circuit redesign: removed low-side relay entirely. Each channel relay changed to 12V automotive SPDT relay (20A contacts), driven via 2× ULN2003A darlington arrays. SPDT relay NC contact routes to continuity sense circuit; NO contact routes to fire path (VBAT+ via arm switch). Igniter low-side connected directly to ground. Fire path now has two independent break points (arm switch + channel relay). Removed P-channel MOSFET continuity enable switch (GPIO 41) — SPDT relay NC/NO switching provides inherent isolation between continuity sensing and fire path; continuity is always active when relay is de-energised. Replaced single 3.3 kΩ R_ref with two series fusible resistors (1.5 kΩ + 1.8 kΩ = 3.3 kΩ) for defence-in-depth against single-resistor short failure. Arm switch is now hardware-only SPST in fire path high-side, sensed exclusively via arm switch sense circuit (10 kΩ + 3.3V zener + 100 kΩ on GPIO 21); removed dedicated digital arm switch GPIO 39. Added arm switch sense as arming guard. Post-fire igniter status detected via continuity sense circuit after relay returns to NC. Removed all low-side relay references from state machine, relay control functions, STATUS_UPDATE protocol, safety requirements, boot sequence, pin assignments, and tests. Replaced `relay_lowside_set()` with `relay_fire_set()` for SPDT relay control. Updated STATUS_UPDATE struct: replaced `low_side_relay` field with `arm_switch_hw`. Added ULN2003A driver specification (2× ICs, 8 relay coils + 1 siren, active-HIGH GPIO logic, internal freewheel diodes). Specified relay type (12V automotive SPDT, 20A). Added code review agent to §4.4. Freed GPIO 38, 39, 41, 42, 48 (5 spare). Added tests T-S17, T-S18, T-S19. |
+| 1.10 | 2026-03-23 | Igniter circuit redesign: removed low-side relay entirely. Each channel relay changed to 12V automotive SPDT relay (20A contacts), driven via 10× IRLZ44N logic-level N-channel MOSFETs in low-side switch configuration. SPDT relay NC contact routes to continuity sense circuit; NO contact routes to fire path (VBAT+ via arm switch). Igniter low-side connected directly to ground. Fire path now has two independent break points (arm switch + channel relay). Removed P-channel MOSFET continuity enable switch (GPIO 41) — SPDT relay NC/NO switching provides inherent isolation between continuity sensing and fire path; continuity is always active when relay is de-energised. Replaced single 3.3 kΩ R_ref with two series fusible resistors (1.5 kΩ + 1.8 kΩ = 3.3 kΩ) for defence-in-depth against single-resistor short failure. Arm switch is now hardware-only SPST in fire path high-side, sensed exclusively via arm switch sense circuit (10 kΩ + 3.3V zener + 100 kΩ on GPIO 21); removed dedicated digital arm switch GPIO 39. Added arm switch sense as arming guard. Post-fire igniter status detected via continuity sense circuit after relay returns to NC. Removed all low-side relay references from state machine, relay control functions, STATUS_UPDATE protocol, safety requirements, boot sequence, pin assignments, and tests. Replaced `relay_lowside_set()` with `relay_fire_set()` for SPDT relay control. Updated STATUS_UPDATE struct: replaced `low_side_relay` field with `arm_switch_hw`. Added IRLZ44N MOSFET driver specification (10× MOSFETs, 8 relay coils + 1 siren + 1 arm relay, active-HIGH GPIO logic, gate series resistors + pull-downs + external flyback diodes). Specified relay type (12V automotive SPDT, 20A). Added code review agent to §4.4. Freed GPIO 38, 39, 41, 42 (4 spare). Added tests T-S17, T-S18, T-S19. |
 | 1.11 | 2026-03-30 | Added §4.6 Code Reusability and §4.7 RTOS Architecture Requirements. Code must be written with reusability in mind (generic libraries, abstract interfaces, no project-specific coupling in shared components). Formalised RTOS best practices: all inter-task communication via FreeRTOS primitives (queues, semaphores, task notifications), mutex-protected shared state, ISR-to-task signalling only, priority inversion prevention, and race-condition avoidance rules. |
+| 1.12 | 2026-04-13 | Documentation consistency audit. Fixed GPIO 47→48 for RGB LED in §3, §4.1, §11.3. Fixed v1.10 revision note: ULN2003A→IRLZ44N throughout, removed GPIO 48 from freed list. Added §5.4.9 Arm Relay Output section. Updated §5.4.10 (was §5.4.9) MOSFET quantity 9→10 (includes arm relay). Updated §5.4.11 (was §5.4.10) RGB LED to describe 8-pixel strip. Fixed §2.1 architecture diagram: arm switch sense label. Fixed Appendix C.1 pin count. Updated all cross-references for section renumbering. |
 
 ---
 
@@ -143,7 +144,7 @@ Safety is the overriding design constraint. The system shall implement defence-i
 │  │ Cont.   │ Cont.   │ Cont.  │       │ Cont.   │             │
 │  └─────────┴─────────┴────────┴───────┴─────────┘             │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │           ARM SWITCH SENSE INPUT (per-channel ADC)       │   │
+│  │           ARM SWITCH SENSE INPUT (shared, GPIO 21)       │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
@@ -189,7 +190,7 @@ The launch sequence follows a strict multi-step procedure:
 | **Rotary Encoder** | Incremental encoder with quadrature A/B outputs and push-button |
 | **Heartbeat** | Periodic ping/pong message pair used to assess link quality |
 | **LOS** | Line of Sight |
-| **WS2812** | Addressable RGB LED (NeoPixel), driven via RMT peripheral on GPIO47 |
+| **WS2812** | Addressable RGB LED (NeoPixel), driven via RMT peripheral on GPIO 48 |
 
 ---
 
@@ -271,7 +272,7 @@ Both hardware test projects SHALL be completed and all test criteria passed befo
 Deliverables:
 - Project scaffolding (CMake, Kconfig, component structure).
 - `rlc_common`: ESP-NOW driver wrapper, message serialisation/deserialisation, protocol header and struct definitions, encryption setup, sequence number management, session token generation.
-- `rlc_common`: RGB LED driver (WS2812 via RMT on GPIO47), status colour patterns.
+- `rlc_common`: RGB LED driver (WS2812 via RMT on GPIO 48), status colour patterns.
 - `rlc_common`: Watchdog setup.
 - `rlc_common`: Version header.
 - Link establishment: LINK_REQUEST / LINK_ACK handshake with firmware version check.
@@ -527,7 +528,7 @@ All GPIO pin numbers and polarities shall be defined in `pin_config.h`.
 | Signal type | Digital output, active HIGH (GPIO HIGH = MOSFET on = relay coil energised) |
 | Quantity | 8 (channels 1–8) |
 | Relay type | 12V automotive SPDT relay, 20A contact rating (e.g., typical 5-pin auto relay). Coil resistance ~80–150 Ω, coil current ~80–150 mA at 12V. |
-| Driver | 9× IRLZ44N logic-level N-channel MOSFETs in low-side switch configuration (see §5.4.9). One MOSFET per relay coil (8 channels + 1 siren). |
+| Driver | 10× IRLZ44N logic-level N-channel MOSFETs in low-side switch configuration (see §5.4.10). One MOSFET per relay coil (8 channels + 1 siren + 1 arm relay). |
 | Default state at boot | Inactive (relay de-energised, NC position — igniter routed to continuity sense circuit) |
 | Drive requirement | 3.3 V logic level into MOSFET gate via 150 Ω series resistor. 10 kΩ gate pull-down to GND ensures MOSFET is OFF when GPIO is high-impedance at boot. |
 
@@ -570,7 +571,7 @@ The current-limiting resistors R_ref1 + R_ref2 (1.5 kΩ + 1.8 kΩ = 3.3 kΩ tota
 
 The 100 kΩ pull-down resistor (R_pull) serves a critical function: **without it, an open circuit leaves the ADC pin floating**, producing undefined readings. With R_pull, an open circuit reads a defined voltage of 3.3 × 100k / (3.3k + 100k) ≈ **3.19V**, which is clearly distinguishable from any connected igniter. The pull-down draws negligible current (33 µA) and does not materially affect readings when an igniter is connected, since R_pull (100 kΩ) is vastly larger than any igniter resistance.
 
-**Component count per channel:** 3 resistors (R_ref1 1.5 kΩ fusible + R_ref2 1.8 kΩ fusible + R_pull 100 kΩ). **Total additional components: 24 continuity resistors** (8× R_ref1 1.5 kΩ fusible + 8× R_ref2 1.8 kΩ fusible + 8× R_pull 100 kΩ) + **3 arm switch sense components** (1× 10 kΩ series + 1× 3.3 V zener + 1× 100 kΩ pull-down) + **8× 12V automotive SPDT relays** + **9× IRLZ44N MOSFET driver circuits** (9 MOSFETs + 9 gate resistors + 9 pull-downs + 9 flyback diodes, see §5.4.9).
+**Component count per channel:** 3 resistors (R_ref1 1.5 kΩ fusible + R_ref2 1.8 kΩ fusible + R_pull 100 kΩ). **Total additional components: 24 continuity resistors** (8× R_ref1 1.5 kΩ fusible + 8× R_ref2 1.8 kΩ fusible + 8× R_pull 100 kΩ) + **3 arm switch sense components** (1× 10 kΩ series + 1× 3.3 V zener + 1× 100 kΩ pull-down) + **8× 12V automotive SPDT relays** + **10× IRLZ44N MOSFET driver circuits** (10 MOSFETs + 10 gate resistors + 10 pull-downs + 10 flyback diodes, see §5.4.10).
 
 ##### Continuity Band Classification
 
@@ -741,14 +742,29 @@ The DIVIDER_RATIO constant must be defined in configuration to match the externa
 | Signal type | Digital output, active HIGH (GPIO HIGH = MOSFET on = siren activated) |
 | Quantity | 1 |
 | Function | Loud alarm: pulsing during ARMED, continuous during PRE_FIRE and FIRING, pulsed during LINK_LOST |
-| Driver | Via dedicated IRLZ44N MOSFET (same low-side switch topology as relay drivers, see §5.4.9) |
+| Driver | Via dedicated IRLZ44N MOSFET (same low-side switch topology as relay drivers, see §5.4.10) |
 
-#### 5.4.9 IRLZ44N MOSFET Low-Side Drivers
+#### 5.4.9 Arm Relay Output (GPIO 47)
+
+| Parameter | Value |
+|---|---|
+| Signal type | Digital output, active HIGH (GPIO HIGH = MOSFET on = arm relay coil energised) |
+| Quantity | 1 |
+| Pin | GPIO 47 |
+| Driver | Via IRLZ44N MOSFET (same low-side switch topology as channel relay drivers, see §5.4.10) |
+| Function | Defence-in-depth relay that isolates the arm switch sense circuit from the fire path when de-energised. Provides a software-controllable break point in addition to the physical arm switch. |
+| Default state at boot | Inactive (relay de-energised) |
+
+The arm relay provides an additional layer of protection: even if the physical arm switch is in the ON position and a channel relay is erroneously energised, the arm relay must also be energised by firmware command before current can flow through the fire path. This creates a software-controlled interlock that supplements the hardware-only arm switch.
+
+The arm relay is energised only when the base unit transitions to ARMED state and is de-energised on any transition to IDLE, LINK_LOST, or ERROR. The arm switch sense circuit (§5.4.3) monitors the combined state of the physical arm switch and this relay.
+
+#### 5.4.10 IRLZ44N MOSFET Low-Side Drivers
 
 | Parameter | Value |
 |---|---|
 | MOSFET type | IRLZ44N — N-channel logic-level power MOSFET (Vds = 55 V, Id = 47 A, Rds(on) ≈ 22 mΩ @ Vgs = 5 V) |
-| Quantity | 9 (one per relay coil × 8 channels + 1 siren) |
+| Quantity | 10 (one per relay coil × 8 channels + 1 siren + 1 arm relay) |
 | Configuration | Low-side switch: drain to relay coil low-side, source to GND, gate from ESP32-S3 GPIO |
 | Gate series resistor (R_g) | 150 Ω per MOSFET (standard E24 value). Limits peak gate inrush to 22 mA (3.3V / 150Ω), damps gate ringing from lead inductance. Turn-on time ≈ 270 ns (R_g × Ciss), negligible for relay switching. |
 | Gate pull-down resistor (R_pd) | 10 kΩ per MOSFET, gate to GND. Ensures MOSFET is OFF when GPIO is high-impedance at boot. **Critical for boot safety.** |
@@ -785,14 +801,15 @@ GPIO      (10k)│
 
 **Boot safety:** At power-on, the ESP32-S3 GPIOs default to input mode (high-impedance). The 10 kΩ gate pull-down resistor on each MOSFET holds the gate at 0 V, ensuring all MOSFETs are OFF and all relay outputs are de-energised before the firmware configures GPIOs. This is a hardware fail-safe. Without the pull-down, stray capacitive coupling from the drain (via Cgd) could partially turn on the MOSFET during power-on transients.
 
-**Component count:** 9× IRLZ44N MOSFETs + 9× gate series resistors (150 Ω) + 9× gate pull-down resistors (10 kΩ) + 9× flyback diodes = **36 components total** for relay and siren drive.
+**Component count:** 10× IRLZ44N MOSFETs + 10× gate series resistors (150 Ω) + 10× gate pull-down resistors (10 kΩ) + 10× flyback diodes = **40 components total** for relay, siren, and arm relay drive.
 
-#### 5.4.10 RGB LED (Status Indicator)
+#### 5.4.11 RGB LED (Status Indicator)
 
 | Parameter | Value |
 |---|---|
-| Type | WS2812 (NeoPixel) addressable RGB LED, on-board |
+| Type | WS2812 (NeoPixel) addressable RGB LED strip (8 external pixels) + on-board LED on GPIO 48 |
 | Pin | GPIO 48 (fixed, on-board) |
+| Pixels | 8 addressable external pixels. Pixel 0 also drives the on-board LED in parallel. |
 | Driver | ESP32-S3 RMT peripheral |
 | Function | Visual status indication (see §11) |
 
@@ -908,7 +925,7 @@ SPI bus shall use SPI2_HOST on the ESP32-S3.
 
 #### 5.5.8 RGB LED (Status Indicator)
 
-Same as Base Unit §5.4.9. On-board WS2812 on GPIO 48.
+Same as Base Unit §5.4.11. On-board WS2812 on GPIO 48. Remote unit uses only the single on-board LED (no external strip).
 
 ### 5.6 Power Supply
 
@@ -925,7 +942,7 @@ Same as Base Unit §5.4.9. On-board WS2812 on GPIO 48.
 | Capacity | 5000 mAh (specified battery) |
 | Discharge rating | 100C continuous (500 A) — far exceeds relay + igniter demand, ensuring stable voltage under all loads |
 | Connector | XT90 (on battery); PCB must mate with XT90 or use XT90 pigtail. |
-| Regulation | 3.3V LDO or DC-DC buck converter for ESP32-S3 and logic. Relay coils driven from battery via IRLZ44N low-side MOSFET switches (§5.4.9). |
+| Regulation | 3.3V LDO or DC-DC buck converter for ESP32-S3 and logic. Relay coils driven from battery via IRLZ44N low-side MOSFET switches (§5.4.10). |
 
 #### 5.6.2 Remote Unit Power Supply
 
@@ -2129,8 +2146,8 @@ Both units have an on-board WS2812 (NeoPixel) addressable RGB LED on GPIO 48, dr
 
 ### 11.3 Implementation
 
-- Driver: single-pixel WS2812 driver using ESP32-S3 RMT peripheral.
-- GPIO: 47 (fixed, on-board, defined as `RGB_LED = 47`).
+- Driver: WS2812 driver using ESP32-S3 RMT peripheral (8-pixel strip on base unit, single on-board LED on remote unit; pixel 0 drives both the external strip and the on-board LED in parallel on the base unit).
+- GPIO: 48 (fixed, on-board, defined as `RGB_LED = 48`).
 - Brightness: configurable in `rlc_config.h` (`RGB_LED_BRIGHTNESS`, default: 30 out of 255).
 - Pattern engine: implemented in `rlc_common` as a FreeRTOS task that accepts state changes and drives the LED accordingly. Patterns are defined as arrays of (colour, duration_ms) pairs with repeat flags.
 - The ping-failure orange flash is implemented as a brief override that temporarily replaces the current pattern for 50 ms, then restores it.
@@ -2623,19 +2640,19 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm
 | Channel 8 SPDT relay output | 18 | Digital output |
 | Arm switch sense input | 21 | Digital input with external 3.3V zener clamp, 10kΩ series, 100kΩ pull-down (§5.4.3). Sole method of arm switch state detection. |
 | Arm relay output | 47 | Digital output, via IRLZ44N MOSFET (§5.4.9) |
-| Siren output | 40 | Digital output, via IRLZ44N MOSFET (§5.4.9) |
+| Siren output | 40 | Digital output, via IRLZ44N MOSFET (§5.4.10) |
 | RGB LED strip (status) | 48 | WS2812 8-pixel LED strip via RMT |
 
-**Total: 21 GPIOs = 22 pins used. 4 spare GPIOs (38, 39, 41, 42). GPIO 3 deliberately unused (strapping pin).**
+**Total: 21 GPIOs used. 4 spare GPIOs (38, 39, 41, 42). GPIO 3 deliberately unused (strapping pin).**
 
 **Notes:**
 - GPIO 1–9 plus GPIO 10 are allocated to ADC1 (1 battery + 8 continuity). All 10 ADC1 pins are used; no spare ADC1 pins remain.
 - GPIO 3 is a strapping pin (JTAG signal select) and is deliberately not used. Channel 2 continuity is assigned to GPIO 10 (ADC1_CH9) instead.
 - Continuity inputs use ADC1 GPIOs (2, 10, 4–9) for analogue band classification. Each requires two external series fusible resistors (1.5 kΩ + 1.8 kΩ) and one 100 kΩ pull-down resistor (24 resistors total). Continuity is sensed via the SPDT relay NC contact. No MOSFET switch is required — the SPDT relay provides inherent isolation.
-- SPDT relay outputs on GPIO 11–18, each driven via an IRLZ44N low-side MOSFET (§5.4.9). Active HIGH: GPIO HIGH = MOSFET on = relay energised (NO/fire position). GPIO LOW = relay de-energised (NC/continuity position).
+- SPDT relay outputs on GPIO 11–18, each driven via an IRLZ44N low-side MOSFET (§5.4.10). Active HIGH: GPIO HIGH = MOSFET on = relay energised (NO/fire position). GPIO LOW = relay de-energised (NC/continuity position).
 - ADC2 (GPIO 11–20) is unreliable with ESP-NOW active, but GPIO 11–18 are used as digital outputs only — ADC2 conflict does not apply to digital I/O.
 - GPIO 21 is the arm switch sense input — reads VBAT presence on the fire path via the arm switch, protected by external 3.3V zener clamp. This is the sole method of arm switch state detection (no separate digital arm switch GPIO).
-- GPIO 40 is the siren output, driven via IRLZ44N MOSFET (§5.4.9).
+- GPIO 40 is the siren output, driven via IRLZ44N MOSFET (§5.4.10).
 - GPIO 47 is the arm relay output, driven via IRLZ44N MOSFET (§5.4.9). Active HIGH.
 - GPIO 48 has the WS2812 8-pixel RGB LED strip for status indication.
 - Spare GPIOs 38, 39, 41, 42 available for future expansion.

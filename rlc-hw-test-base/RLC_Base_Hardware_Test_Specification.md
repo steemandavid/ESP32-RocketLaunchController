@@ -7,7 +7,7 @@
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
 **Board:** ESP32-S3-DevKitC-1 with ESP32-S3-WROOM-1 N16R8 module
-**Aligned with:** RLC-FSPEC-001 v1.10
+**Aligned with:** RLC-FSPEC-001 v1.11
 
 ---
 
@@ -16,7 +16,7 @@
 | Version | Date | Changes |
 |---|---|---|
 | 1.0 | 2026-03-23 | Initial draft (aligned with FSD v1.8) |
-| 1.1 | 2026-03-23 | Aligned with FSD v1.10. Removed low-side relay (GPIO 21 repurposed as arm switch sense), relay feedback (GPIO 38), arm switch digital input (GPIO 39), continuity MOSFET (GPIO 41). SPDT relays via 2x ULN2003A. Arm switch sensed via zener-clamped sense circuit on GPIO 21. Continuity always-on via SPDT NC contact. Updated all tests, commands, and pin table. |
+| 1.1 | 2026-03-23 | Aligned with FSD v1.10. Removed low-side relay (GPIO 21 repurposed as arm switch sense), relay feedback (GPIO 38), arm switch digital input (GPIO 39), continuity MOSFET (GPIO 41). SPDT relays via IRLZ44N MOSFETs. Arm switch sensed via zener-clamped sense circuit on GPIO 21. Continuity always-on via SPDT NC contact. Updated all tests, commands, and pin table. |
 
 ---
 
@@ -49,13 +49,13 @@ ESP32-S3-DevKitC-1 with ESP32-S3-WROOM-1 N16R8 (16 MB Flash, 8 MB Octal PSRAM).
 | Octal PSRAM — not available | GPIO 33, 34, 35, 36, 37 | Internal SPI bus for PSRAM |
 | USB — reserved | GPIO 19, 20 | USB D+/D- |
 | UART0 — reserved | GPIO 43, 44 | Serial debug/programming (used for test CLI) |
-| On-board RGB LED | GPIO 47 | WS2812 — used for status |
+| On-board RGB LED | GPIO 48 | WS2812 — used for status |
 
 ---
 
 ## 3. Pin Assignments Under Test
 
-All pin assignments match the main RLC FSD (RLC-FSPEC-001 v1.10, Appendix C.1).
+All pin assignments match the main RLC FSD (RLC-FSPEC-001 v1.11, Appendix C.1).
 
 | Function | GPIO | Type | Notes |
 |---|---|---|---|
@@ -68,17 +68,17 @@ All pin assignments match the main RLC FSD (RLC-FSPEC-001 v1.10, Appendix C.1).
 | Channel 6 continuity ADC | 7 | ADC1_CH6 | Analogue input + 3.3kΩ series (1.5k+1.8k fusible) + 100kΩ pull-down |
 | Channel 7 continuity ADC | 8 | ADC1_CH7 | Analogue input + 3.3kΩ series (1.5k+1.8k fusible) + 100kΩ pull-down |
 | Channel 8 continuity ADC | 9 | ADC1_CH8 | Analogue input + 3.3kΩ series (1.5k+1.8k fusible) + 100kΩ pull-down |
-| Channel 1 SPDT relay output | 11 | Digital output | Active HIGH via ULN2003A IC1 |
-| Channel 2 SPDT relay output | 12 | Digital output | Active HIGH via ULN2003A IC1 |
-| Channel 3 SPDT relay output | 13 | Digital output | Active HIGH via ULN2003A IC1 |
-| Channel 4 SPDT relay output | 14 | Digital output | Active HIGH via ULN2003A IC1 |
-| Channel 5 SPDT relay output | 15 | Digital output | Active HIGH via ULN2003A IC1 |
-| Channel 6 SPDT relay output | 16 | Digital output | Active HIGH via ULN2003A IC1 |
-| Channel 7 SPDT relay output | 17 | Digital output | Active HIGH via ULN2003A IC1 |
-| Channel 8 SPDT relay output | 18 | Digital output | Active HIGH via ULN2003A IC2 |
+| Channel 1 SPDT relay output | 11 | Digital output | Active HIGH via IRLZ44N MOSFET |
+| Channel 2 SPDT relay output | 12 | Digital output | Active HIGH via IRLZ44N MOSFET |
+| Channel 3 SPDT relay output | 13 | Digital output | Active HIGH via IRLZ44N MOSFET |
+| Channel 4 SPDT relay output | 14 | Digital output | Active HIGH via IRLZ44N MOSFET |
+| Channel 5 SPDT relay output | 15 | Digital output | Active HIGH via IRLZ44N MOSFET |
+| Channel 6 SPDT relay output | 16 | Digital output | Active HIGH via IRLZ44N MOSFET |
+| Channel 7 SPDT relay output | 17 | Digital output | Active HIGH via IRLZ44N MOSFET |
+| Channel 8 SPDT relay output | 18 | Digital output | Active HIGH via IRLZ44N MOSFET |
 | Arm switch sense input | 21 | Digital input | External 10kΩ + 3.3V zener + 100kΩ pull-down. HIGH=armed. |
 | Arm relay output | 47 | Digital output | Active HIGH via IRLZ44N MOSFET |
-| Siren output | 40 | Digital output | Active HIGH via ULN2003A IC2 |
+| Siren output | 40 | Digital output | Active HIGH via IRLZ44N MOSFET |
 | RGB LED strip (status) | 48 | WS2812 | 8-pixel LED strip, RMT peripheral |
 
 **Spare GPIOs:** 38, 39, 41, 42
@@ -93,7 +93,7 @@ rlc-hw-test-base/
 │   ├── main.c                # Entry point, boot safety
 │   ├── cli.c                 # UART command parser and handlers
 │   ├── cli.h
-│   ├── hw_relay.c            # SPDT relay output control (8 channels, via ULN2003A)
+│   ├── hw_relay.c            # SPDT relay output control (8 channels, via IRLZ44N MOSFETs)
 │   ├── hw_relay.h
 │   ├── hw_continuity.c       # ADC continuity sensing (8 channels, always-on via NC)
 │   ├── hw_continuity.h
@@ -101,7 +101,7 @@ rlc-hw-test-base/
 │   ├── hw_battery.h
 │   ├── hw_inputs.c           # Arm switch sense input
 │   ├── hw_inputs.h
-│   ├── hw_siren.c            # Siren output control (via ULN2003A)
+│   ├── hw_siren.c            # Siren output control (via IRLZ44N MOSFET)
 │   ├── hw_siren.h
 │   ├── hw_rgb_led.c          # WS2812 RGB LED driver
 │   ├── hw_rgb_led.h
@@ -164,7 +164,7 @@ Continuity sensing is always active when relays are de-energised (NC position). 
 
 | Command | Description |
 |---|---|
-| `siren on` | Activate siren output (via ULN2003A IC2) |
+| `siren on` | Activate siren output (via IRLZ44N MOSFET) |
 | `siren off` | Deactivate siren output |
 | `siren pulse <on_ms> <off_ms> <count>` | Pulse siren: on_ms active, off_ms inactive, repeated count times. E.g., `siren pulse 500 500 4` |
 | `siren test` | Run predefined siren patterns: ARMED (500/500 × 3), PRE_FIRE (continuous 2s), FIRING (continuous 2s), LINK_LOST (500/500 × 4), ERROR (200/200 × 3), CONTINUITY_LOST (200/200 × 3) |
@@ -204,10 +204,10 @@ All digital outputs SHALL use configurable polarity defined in `pin_config.h`:
 
 ```c
 #define PIN_RELAY_CH1          11
-#define PIN_RELAY_CH1_ACTIVE   1    // 1 = active HIGH (ULN2003A input logic)
+#define PIN_RELAY_CH1_ACTIVE   1    // 1 = active HIGH (IRLZ44N: HIGH = MOSFET on = relay energised)
 
 #define PIN_SIREN              40
-#define PIN_SIREN_ACTIVE       1    // Active HIGH (via ULN2003A IC2)
+#define PIN_SIREN_ACTIVE       1    // Active HIGH (via IRLZ44N MOSFET)
 ```
 
 ### 6.3 ADC Configuration
@@ -242,13 +242,18 @@ WS2812 single-pixel driver using ESP32-S3 RMT peripheral on GPIO 47. Brightness 
 
 The arm switch sense input on GPIO 21 uses an external circuit (10 kΩ series + 3.3V zener clamp + 100 kΩ pull-down) per FSD §5.4.3. No internal pull-up/pull-down is used. HIGH = VBAT present on fire path (arm switch ON). LOW = no VBAT (arm switch OFF or battery disconnected).
 
-### 6.8 SPDT Relay and ULN2003A
+**Note:** The test firmware uses a simplified 3-sample majority-vote debounce (5 ms intervals, ~15 ms total) rather than the production 16-bit shift-register debounce specified in the FSD. This is sufficient for hardware validation — the test only needs to reliably detect the arm switch state, not meet production-grade debounce timing requirements.
 
-Each channel uses a 12V automotive SPDT relay driven via ULN2003A darlington array:
-- IC1 (ULN2003A): channels 1–7
-- IC2 (ULN2003A): channel 8 + siren
+### 6.8 SPDT Relay and IRLZ44N MOSFET Drivers
 
-GPIO HIGH → ULN2003A sinks → relay coil energised (NC→NO). GPIO LOW → relay de-energised (→NC). Internal freewheel diodes in ULN2003A protect against coil inductive kick. At boot, ULN2003A inputs are pulled low by internal base resistors — hardware fail-safe.
+Each channel uses a 12V automotive SPDT relay driven via an IRLZ44N logic-level N-channel MOSFET in low-side switch configuration:
+- 8× IRLZ44N MOSFETs for channel relays 1–8
+- 1× IRLZ44N MOSFET for siren
+- 1× IRLZ44N MOSFET for arm relay (GPIO 47)
+
+Each MOSFET has a 150 Ω gate series resistor (limits peak gate inrush), a 10 kΩ gate pull-down to GND (ensures MOSFET OFF at boot — critical for boot safety), and an external flyback diode (1N4007 or Schottky) across the relay coil.
+
+GPIO HIGH → MOSFET gate driven via 150 Ω → MOSFET on (drain-source conducts) → relay coil energised from VBAT+ through coil to GND via MOSFET (NC→NO). GPIO LOW → MOSFET off → relay de-energised (→NC). At boot, GPIOs are high-impedance; the 10 kΩ gate pull-down holds each MOSFET off — hardware fail-safe.
 
 ---
 

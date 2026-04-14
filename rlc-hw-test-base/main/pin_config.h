@@ -2,12 +2,12 @@
 
 /* -----------------------------------------------------------------------
  * pin_config.h — All GPIO assignments and polarity for RLC base unit HW test
- * RLC-HWTEST-BASE-001 v1.1 — aligned with FSD v1.10
+ * RLC-HWTEST-BASE-001 v1.1 — aligned with FSD v1.11
  *
  * v1.10 changes: removed low-side relay (GPIO 21 repurposed as arm switch
  * sense), removed relay feedback (GPIO 38), removed arm switch digital
  * input (GPIO 39), removed continuity MOSFET (GPIO 41).  SPDT relays
- * driven via 2× ULN2003A (active HIGH).  Arm switch sensed exclusively
+ * driven via IRLZ44N MOSFETs (active HIGH).  Arm switch sensed exclusively
  * via zener-clamped sense circuit on GPIO 21.
  * Freed GPIOs: 38, 39, 41, 42.
  * ----------------------------------------------------------------------- */
@@ -34,7 +34,7 @@
 #define ADC_CH_CONT7            ADC_CHANNEL_7
 #define ADC_CH_CONT8            ADC_CHANNEL_8
 
-/* --- SPDT relay outputs (via ULN2003A, active HIGH) -------------------- */
+/* --- SPDT relay outputs (via IRLZ44N MOSFETs, active HIGH) ------------- */
 #define PIN_RELAY_CH1           11
 #define PIN_RELAY_CH1_ACTIVE    1
 
@@ -72,7 +72,7 @@
 #define PIN_ARM_SIM_RELAY       47
 #define PIN_ARM_SIM_RELAY_ACTIVE 1
 
-/* --- Siren output (via ULN2003A IC2) ----------------------------------- */
+/* --- Siren output (via IRLZ44N MOSFET) --------------------------------- */
 #define PIN_SIREN               40
 #define PIN_SIREN_ACTIVE        1
 

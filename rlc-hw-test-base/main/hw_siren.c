@@ -18,7 +18,7 @@ void hw_siren_init(void)
     };
     gpio_config(&cfg);
     gpio_set_level(PIN_SIREN, PIN_SIREN_ACTIVE ? 0 : 1);  /* inactive */
-    ESP_LOGI(TAG, "Siren GPIO initialised (via ULN2003A IC2)");
+    ESP_LOGI(TAG, "Siren GPIO initialised (via IRLZ44N MOSFET)");
 }
 
 void siren_set(int active)

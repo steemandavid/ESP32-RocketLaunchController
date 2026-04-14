@@ -95,7 +95,7 @@ static void cmd_help(void)
         "  pins                         Print pin assignments\r\n"
         "  exit                         Exit help — press Ctrl+] to quit monitor\r\n");
     uart_puts(
-        "\r\nRelay (SPDT, via ULN2003A):\r\n"
+        "\r\nRelay (SPDT, via IRLZ44N MOSFETs):\r\n"
         "  relay <ch> on|off            Energise/de-energise channel relay (1-8)\r\n"
         "  relay all off                De-energise all 8 channel relays\r\n"
         "  relay sweep                  Sweep all 8 channels + arm relay (500 ms each)\r\n");
@@ -113,7 +113,7 @@ static void cmd_help(void)
         "  arm                          Poll arm switch sense until key press\r\n"
         "  arm sim on|off               Energise/de-energise arm relay (GPIO 47)\r\n");
     uart_puts(
-        "\r\nSiren (via ULN2003A IC2):\r\n"
+        "\r\nSiren (via IRLZ44N MOSFET):\r\n"
         "  siren on|off                 Activate/deactivate siren\r\n"
         "  siren pulse <on> <off> <N>   Pulse N times\r\n"
         "  siren test                   Run all siren patterns\r\n");
@@ -167,14 +167,14 @@ static void cmd_pins(void)
     int relays[] = { PIN_RELAY_CH1, PIN_RELAY_CH2, PIN_RELAY_CH3, PIN_RELAY_CH4,
                      PIN_RELAY_CH5, PIN_RELAY_CH6, PIN_RELAY_CH7, PIN_RELAY_CH8 };
     for (int i = 0; i < 8; i++) {
-        printf("SPDT relay CH%d  : GPIO %2d  level=%d  (active HIGH via ULN2003A)\r\n",
+        printf("SPDT relay CH%d  : GPIO %2d  level=%d  (active HIGH via IRLZ44N MOSFET)\r\n",
                i + 1, relays[i], gpio_get_level(relays[i]));
     }
     printf("Arm switch sense: GPIO %d  level=%d  (%s)\r\n",
            PIN_ARM_SENSE, gpio_get_level(PIN_ARM_SENSE),
            gpio_get_level(PIN_ARM_SENSE) ? "ARMED" : "DISARMED");
     printf("Arm relay       : GPIO %d  (IRLZ44N MOSFET)\r\n", PIN_ARM_SIM_RELAY);
-    printf("Siren           : GPIO %d  (via ULN2003A IC2)\r\n", PIN_SIREN);
+    printf("Siren           : GPIO %d  (via IRLZ44N MOSFET)\r\n", PIN_SIREN);
     printf("RGB LED strip   : GPIO %d  (WS2812, %d pixels + on-board mirror)\r\n", PIN_RGB_LED, NUM_RGB_LEDS);
     printf("Spare GPIOs     : 38, 39, 41, 42\r\n");
 }
