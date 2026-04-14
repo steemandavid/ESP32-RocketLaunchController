@@ -120,7 +120,7 @@ void arm_switch_start_task(void)
     xTaskCreatePinnedToCore(
         arm_switch_task,
         "arm_sw_task",
-        2048,
+        3072,
         NULL,
         6,
         &s_task_handle,

@@ -312,6 +312,9 @@ Verdict: PASS WITH NOTES. 3 major findings (M1–M3), 4 minor (m1–m4). All add
 | 2 | Remote boot crash: stack overflow in `battery_task` | 2048-byte stack insufficient for ADC + `ESP_LOGW` formatting | Increased to 3072 bytes (both base and remote battery tasks) |
 | 3 | Base boot crash: `LoadProhibited` in `adc_cali_raw_to_voltage` | ESP-IDF `adc_cali_create_scheme_curve_fitting` produces corrupted handles for some ADC1 channels on ESP32-S3 | Disabled ADC calibration for continuity channels — raw conversion sufficient for band classification |
 | 4 | Encoder long-press not detected | Long-press timeout check gated on `s_long_press_cb != NULL` — no callback registered in Phase 2 | Separated detection from callback invocation — always detect, only invoke callback if registered |
+| 5 | Fire button held at boot generates false fresh-press | `s_was_released` initialised `true` — debounce settling on held button triggers fresh-press | Read GPIO at init: if LOW, set `s_was_released = false` |
+| 6 | Stack overflow in `fire_btn_task` with debug logging | 2048-byte stack insufficient for `ESP_LOGI` in callback | Increased to 3072 bytes |
+| 7 | Stack risk in `arm_sw_task` with existing logging | Same 2048-byte stack with `ESP_LOGI` in callback | Increased to 3072 bytes preemptively |
 
 ### Phase 2 Boot Self-Tests (on-target, run every boot)
 
@@ -359,6 +362,9 @@ Verdict: PASS WITH NOTES. 3 major findings (M1–M3), 4 minor (m1–m4). All add
 | R2-F01 | Press/release detection | PASS | `fire=0`→`fire=1`→`fire=0` in status log |
 | R2-F02 | LED control (red=pressed, green=released) | PASS | Visual confirmation |
 | R2-F03 | Fire while armed | PASS | `arm=1 fire=1` detected correctly |
+| R2-F04 | Fresh-press safety (held at boot) | PASS | Fix: GPIO read at init suppresses false fresh-press. `fire=0` after boot with button held |
+| R2-F05 | Rapid tap < 80 ms debounce filtering | PASS | 8-bit debounce naturally filters sub-80ms glitches |
+| R2-F06 | Disconnected wire fail-safe | PASS | Pull-up → GPIO HIGH → released. `fire=0` consistently |
 
 #### Remote Unit — Arm Switch
 
@@ -366,6 +372,7 @@ Verdict: PASS WITH NOTES. 3 major findings (M1–M3), 4 minor (m1–m4). All add
 |----|------|--------|-------|
 | R2-A01 | ARMED/DISARMED toggle (6+ cycles) | PASS | Clean debounce, ~160ms settle |
 | R2-A02 | LED indicator | PASS | On when armed, off when disarmed |
+| R2-A03 | Disconnected wire fail-safe | PASS | Pull-up → DISARMED. `arm=0` consistently |
 
 #### Remote Unit — Encoder
 
@@ -375,6 +382,9 @@ Verdict: PASS WITH NOTES. 3 major findings (M1–M3), 4 minor (m1–m4). All add
 | R2-E02 | CCW rotation (ch 5→2, wrap 1→8) | PASS | Channel decrements and wraps correctly |
 | R2-E03 | Short press (<500ms) | PASS | `long_press_fired=0` on release |
 | R2-E04 | Long press (>500ms) | PASS | `LONG PRESS detected` fires at 500ms; `long_press_fired=1` on release |
+| R2-E05 | Explicit 8→1 wrap (CW) | PASS | `ch 8 -> 1` clean wrap at boundary |
+| R2-E06 | Explicit 1→8 wrap (CCW) | PASS | `ch 1 -> 8` clean wrap at boundary |
+| R2-E07 | Rotation + simultaneous press | PASS | Channel changes and press events detected independently |
 
 #### Remote Unit — Battery
 
@@ -401,6 +411,46 @@ Verdict: PASS WITH NOTES. 3 major findings (M1–M3), 4 minor (m1–m4). All add
 | T-U11 | Continuity hysteresis | Oscillating near threshold — no spurious transitions | PASS | Covered in boot self-test suite 10 |
 | T-U12 | Continuity bands encoding | 2-bit-per-channel packing into uint16 | PASS | Covered in boot self-test suite 11 |
 | T-U16 | Update sequence wrap-around | 65535→0 not treated as gap | TODO | Phase 3 feature |
+
+### Phase 2 Remaining On-Target Tests
+
+The following Phase 2 behaviours were not fully exercised during bench testing.
+They should be verified before Phase 3 work begins, or during Phase 5 hardening.
+
+#### Base Unit — Continuity Sensing
+
+| ID | Test | Notes |
+|----|------|-------|
+| B2-C07 | CH2–CH8 individual resistor = GOOD | Only CH1 tested with resistor; others verified floating only |
+| B2-C08 | SHORT classification (~0 Ω) | Needs low-resistance short on a channel |
+| B2-C09 | MARGINAL classification (~100 Ω) | Needs ~100 Ω resistor on a channel |
+
+#### Base Unit — Arm Sense
+
+| ID | Test | Notes |
+|----|------|-------|
+| B2-A03 | Disconnected wire fail-safe | Disconnect arm sense GPIO — should report DISARMED |
+| B2-A04 | Raw vs debounced in STATUS_UPDATE | Verify `arm_switch_hw` field matches raw GPIO |
+
+#### Base Unit — Battery Thresholds
+
+| ID | Test | Status | Notes |
+|----|------|--------|-------|
+| B2-B03 | LOW threshold (< 10500 mV) | PASS | `LOW battery: 10483 mV (< 10500)` at ~10V supply |
+| B2-B04 | CRITICAL threshold (< 9000 mV) | PASS | `CRITICAL battery: 8969 mV (< 9000)` at ~8.5V supply |
+
+#### Remote Unit — Battery Thresholds
+
+| ID | Test | Notes |
+|----|------|-------|
+| R2-B03 | WARNING threshold (> 6400 mV) | Current supply is 3.3 V — always CRITICAL. Needs ~7.4 V LiPo |
+
+#### Integration — STATUS_UPDATE
+
+| ID | Test | Notes |
+|----|------|-------|
+| R2-INT05 | Periodic 2000 ms timer accuracy | Verify STATUS_UPDATE interval is ~2 s ± tolerance |
+| R2-INT06 | update_sequence field verification | Confirm sequence increments in STATUS_UPDATE messages |
 
 ### Phase 2 Key Commits
 

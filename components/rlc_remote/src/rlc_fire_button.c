@@ -131,6 +131,13 @@ void fire_button_init(void)
     /* Init debounce engine (8-bit = 80 ms at 10 ms poll) */
     rlc_debounce_init(&s_db, PIN_FIRE_BUTTON, DEBOUNCE_8BIT);
 
+    /* Fresh-press safety: if button is already held at init, mark it as
+     * not-released so the debounce settling does NOT generate a fresh press. */
+    if (gpio_get_level(PIN_FIRE_BUTTON) == 0) {   /* LOW = pressed */
+        s_was_released = false;
+        ESP_LOGW(TAG, "Button held at boot — fresh-press suppressed");
+    }
+
     ESP_LOGI(TAG, "Initialised (btn=%d, led_r=%d, led_g=%d)",
              PIN_FIRE_BUTTON, PIN_FIRE_LED_RED, PIN_FIRE_LED_GREEN);
 }
@@ -140,7 +147,7 @@ void fire_button_start_task(void)
     BaseType_t ret = xTaskCreatePinnedToCore(
         fire_btn_task,
         "fire_btn_task",
-        2048,
+        3072,
         NULL,
         7,                  /* priority — highest remote task */
         &s_task_handle,
