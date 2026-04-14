@@ -146,6 +146,11 @@ static void hardware_reset(void)
 
 void hw_display_init(void)
 {
+    if (s_spi) {
+        ESP_LOGI(TAG, "Display already initialised");
+        return;
+    }
+
     /* Configure control pins */
     uint64_t mask = (1ULL << PIN_DISP_DC)
                   | (1ULL << PIN_DISP_RST) | (1ULL << PIN_DISP_BACKLIGHT);
