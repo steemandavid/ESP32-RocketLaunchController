@@ -67,7 +67,12 @@ static void on_arm_fault_cb(void)
     if (base_fsm_get_queue()) {
         rlc_fsm_event_t evt = {0};
         evt.type = EVT_ARM_SENSE_FAULT;
-        (void)xQueueSend(base_fsm_get_queue(), &evt, 0);
+        /* J4: short blocking timeout so a transient queue burst can't drop a
+         * safety event. Callback runs in arm_sense_task at priority 7 — a
+         * 10 ms wait is acceptable. */
+        if (xQueueSend(base_fsm_get_queue(), &evt, pdMS_TO_TICKS(10)) != pdTRUE) {
+            ESP_LOGE(TAG, "FSM queue full — ARM_SENSE_FAULT dropped!");
+        }
     }
 }
 

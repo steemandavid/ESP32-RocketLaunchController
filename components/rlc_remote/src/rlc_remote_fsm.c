@@ -82,6 +82,29 @@ static bool is_status_fresh(void)
            ((now_ms() - s_last_status_rx_ms) < 2 * STATUS_UPDATE_INTERVAL_MS);
 }
 
+/* R2: Multi-arm detection (FSD §6, line 1201).
+ * Returns true if more than one bit is set in the lower 8 bits of the bitmask,
+ * which would indicate a base firmware bug arming multiple channels. */
+static inline bool is_multi_armed(uint16_t armed_mask)
+{
+    return __builtin_popcount((unsigned)(armed_mask & 0x00FFu)) > 1;
+}
+
+/* R2: Common multi-arm reaction — broadcast disarm and return to IDLE. */
+static void handle_multi_arm_violation(uint16_t armed_mask)
+{
+    ESP_LOGE(TAG, "MULTI-ARM DETECTED (mask=0x%04x) — broadcasting DISARM",
+             armed_mask);
+    s_fire_repeat_active = false;
+    send_cmd_disarm(0xFF);  /* 0xFF = all channels (FSD §6 line 1201) */
+    s_armed_channel = 0;
+    s_prefire_start_ms = 0;
+    rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
+    buzzer_play(BUZZER_ALARM_CRITICAL);
+    /* Display "MULTI-ARM ERROR" — Phase 4 */
+    s_state = STATE_IDLE;
+}
+
 /* ── Public API ──────────────────────────────────────────────── */
 
 rlc_state_t remote_fsm_get_state(void)       { return s_state; }
@@ -286,10 +309,14 @@ static void do_enter_error(void)
 /**
  * Wait for ACK/NACK with timeout. Returns:
  *  1 = ACK received (channel verified)
- *  0 = timeout
+ *  0 = timeout / interrupted (caller should fall back to "abort" path)
  * -1 = NACK received (reason in *nack_reason)
  * -2 = channel mismatch in ACK
+ * -3 = state already transitioned by an inline-handled critical event
+ *      (LINK_LOST or BATTERY_CRITICAL). Caller MUST NOT touch state. (R1)
  */
+#define WAIT_FOR_ACK_STATE_HANDLED (-3)
+
 static int wait_for_ack(uint8_t expected_channel, uint32_t timeout_ms,
                         uint8_t *nack_reason)
 {
@@ -307,7 +334,6 @@ static int wait_for_ack(uint8_t expected_channel, uint32_t timeout_ms,
                 return -1;  /* NACK */
             } else {
                 /* Process other events inline during wait */
-                /* Arm switch change, fire button release, link loss */
                 if (evt.type == EVT_ARM_SWITCH_CHANGED && !evt.data.arm_state.armed) {
                     return 0;  /* Arm switch off during wait */
                 }
@@ -321,7 +347,7 @@ static int wait_for_ack(uint8_t expected_channel, uint32_t timeout_ms,
                 }
                 if (evt.type == EVT_LINK_LOST) {
                     do_enter_link_lost();
-                    return 0;
+                    return WAIT_FOR_ACK_STATE_HANDLED;  /* R1 */
                 }
                 /* M5: Preserve critical events instead of silently discarding. */
                 if (evt.type == EVT_STATUS_UPDATE) {
@@ -331,7 +357,7 @@ static int wait_for_ack(uint8_t expected_channel, uint32_t timeout_ms,
                 }
                 if (evt.type == EVT_BATTERY_CRITICAL) {
                     do_enter_error();
-                    return 0;
+                    return WAIT_FOR_ACK_STATE_HANDLED;  /* R1 */
                 }
             }
         }
@@ -428,6 +454,8 @@ static void process_event(const rlc_fsm_event_t *evt)
                 ESP_LOGE(TAG, "ARM ACK channel mismatch");
                 send_cmd_disarm(ch);
                 buzzer_play(BUZZER_BEEP_TRIPLE);
+            } else if (result == WAIT_FOR_ACK_STATE_HANDLED) {
+                /* R1: state already transitioned to LINK_LOST or ERROR — do nothing */
             } else {
                 /* Timeout or interrupted */
                 ESP_LOGW(TAG, "ARM failed — no response or interrupted");
@@ -442,6 +470,13 @@ static void process_event(const rlc_fsm_event_t *evt)
             memcpy(&s_last_status, &evt->data.status_update.status,
                    sizeof(rlc_payload_status_update_t));
             s_last_status_rx_ms = now_ms();
+            /* R2: multi-arm detection — base must never report >1 channel armed */
+            if (is_multi_armed(s_last_status.channel_armed_bitmask)) {
+                handle_multi_arm_violation(s_last_status.channel_armed_bitmask);
+            }
+        } else if (evt->type == EVT_ENCODER_ROTATE) {
+            /* R4: track selected channel in IDLE so getter is not stale */
+            s_selected_channel = evt->data.encoder.channel;
         }
         break;
 
@@ -451,6 +486,11 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* Attempt to fire (FSD §8.2.4) */
             /* Guard 1: STATUS_UPDATE confirms channel still armed */
             uint16_t armed_mask = s_last_status.channel_armed_bitmask;
+            /* R2: multi-arm detection — refuse to fire if base reports >1 armed */
+            if (is_multi_armed(armed_mask)) {
+                handle_multi_arm_violation(armed_mask);
+                break;
+            }
             if (!(armed_mask & (1U << (s_armed_channel - 1)))) {
                 ESP_LOGW(TAG, "FIRE rejected: base no longer armed");
                 do_disarm_and_idle();
@@ -496,6 +536,11 @@ static void process_event(const rlc_fsm_event_t *evt)
                 ESP_LOGW(TAG, "FIRE NACK: 0x%02x (%s)",
                          nack_reason, rlc_nack_reason_str(nack_reason));
                 do_disarm_and_idle();
+            } else if (result == WAIT_FOR_ACK_STATE_HANDLED) {
+                /* R1: LINK_LOST or BATTERY_CRITICAL was handled inline by
+                 * wait_for_ack(); state has already transitioned and we MUST
+                 * NOT call do_disarm_and_idle() (which would stomp the alarm
+                 * state back to IDLE and silence the operator alert). */
             } else {
                 /* Timeout or interrupted */
                 ESP_LOGW(TAG, "FIRE failed — aborting");
@@ -520,8 +565,15 @@ static void process_event(const rlc_fsm_event_t *evt)
                    sizeof(rlc_payload_status_update_t));
             s_last_status_rx_ms = now_ms();
 
-            /* Check if base disarmed us */
             uint16_t armed_mask = s_last_status.channel_armed_bitmask;
+
+            /* R2: multi-arm detection */
+            if (is_multi_armed(armed_mask)) {
+                handle_multi_arm_violation(armed_mask);
+                break;
+            }
+
+            /* Check if base disarmed us */
             if (s_armed_channel > 0 &&
                 !(armed_mask & (1U << (s_armed_channel - 1)))) {
                 ESP_LOGW(TAG, "STATUS_UPDATE shows base disarmed");
@@ -530,14 +582,8 @@ static void process_event(const rlc_fsm_event_t *evt)
                 buzzer_play(BUZZER_BEEP_LONG);
                 s_state = STATE_IDLE;
             }
-
-            /* Stale data safety timeout */
-            if (s_last_status_rx_ms > 0 &&
-                (now_ms() - s_last_status_rx_ms) > STATUS_STALE_TIMEOUT_MS) {
-                ESP_LOGW(TAG, "STATUS_UPDATE stale (%lld ms)",
-                         now_ms() - s_last_status_rx_ms);
-                do_disarm_and_idle();
-            }
+            /* N2: dead-code stale check removed; staleness is handled by
+             * check_timers() which runs every 50 ms regardless of message arrival. */
         } else if (evt->type == EVT_LINK_LOST) {
             do_enter_link_lost();
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
@@ -579,6 +625,11 @@ static void process_event(const rlc_fsm_event_t *evt)
         } else if (evt->type == EVT_LINK_LOST) {
             s_fire_repeat_active = false;
             do_enter_link_lost();
+        } else if (evt->type == EVT_BATTERY_CRITICAL) {
+            /* N1: stop firing immediately; base will dead-man timeout in 500 ms */
+            s_fire_repeat_active = false;
+            send_cmd_cease_fire();
+            do_enter_error();
         }
         break;
 
@@ -610,6 +661,11 @@ static void process_event(const rlc_fsm_event_t *evt)
         } else if (evt->type == EVT_LINK_LOST) {
             s_fire_repeat_active = false;
             do_enter_link_lost();
+        } else if (evt->type == EVT_BATTERY_CRITICAL) {
+            /* N1: stop firing immediately; base will dead-man timeout in 500 ms */
+            s_fire_repeat_active = false;
+            send_cmd_cease_fire();
+            do_enter_error();
         }
         break;
 
@@ -675,6 +731,10 @@ static void cmd_fire_repeat_task_fn(void *arg)
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         while (s_fire_repeat_active) {
+            /* R5: Re-check the flag immediately before sending. The FSM may
+             * have cleared s_fire_repeat_active and called send_cmd_cease_fire()
+             * after our outer-loop check but before this point — we don't want
+             * a stray CMD_FIRE on the wire after CEASE_FIRE. */
             uint8_t ch = s_armed_channel;
             if (ch > 0 && s_fire_repeat_active) {
                 send_cmd_fire(ch);  /* Fire-and-forget, no ACK */

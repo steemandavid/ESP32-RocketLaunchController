@@ -11,9 +11,12 @@
 #include "rlc_link.h"
 #include "rlc_config.h"
 #include "rlc_watchdog.h"
+#include "rlc_remote_fsm.h"
+#include "rlc_fsm_events.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
 
@@ -24,6 +27,7 @@ static rlc_battery_status_t s_status = BATTERY_OK;
 static void battery_task(void *arg)
 {
     (void)arg;
+    bool critical_posted = false;  /* edge-trigger */
 
     while (1) {
         uint16_t mv = rlc_battery_sample();
@@ -38,10 +42,23 @@ static void battery_task(void *arg)
 
         if (s_status == BATTERY_CRITICAL) {
             ESP_LOGW(TAG, "CRITICAL battery: %u mV (< %u)", mv, REMOTE_VBAT_CRITICAL_MV);
+            /* R8: post EVT_BATTERY_CRITICAL on first entry into critical band
+             * (FSD §8.3.4). Edge-triggered to avoid queue spam. */
+            if (!critical_posted && remote_fsm_get_queue()) {
+                rlc_fsm_event_t evt = {0};
+                evt.type = EVT_BATTERY_CRITICAL;
+                if (xQueueSend(remote_fsm_get_queue(), &evt, pdMS_TO_TICKS(10)) == pdTRUE) {
+                    critical_posted = true;
+                }
+            }
         } else if (s_status == BATTERY_LOW) {
             ESP_LOGW(TAG, "LOW battery: %u mV (< %u)", mv, REMOTE_VBAT_MIN_ARM_MV);
+            critical_posted = false;
         } else if (s_status == BATTERY_WARNING) {
             ESP_LOGW(TAG, "WARNING battery: %u mV (< %u)", mv, REMOTE_VBAT_MIN_OPERATE_MV);
+            critical_posted = false;
+        } else {
+            critical_posted = false;
         }
 
         esp_task_wdt_reset();

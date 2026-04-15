@@ -173,6 +173,8 @@ static void do_disarm(void)
     s_firing_channel = 0;
     s_arm_time_ms = 0;
     s_prefire_start_ms = 0;
+    s_last_fire_cmd_ms = 0;     /* J2: clear dead-man timestamp on disarm */
+    s_link_lost_pending = false;
     rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
     status_update_trigger();
     ESP_LOGI(TAG, "DISARMED -> IDLE");
@@ -187,6 +189,8 @@ static void do_enter_link_lost(void)
     s_firing_channel = 0;
     s_arm_time_ms = 0;
     s_prefire_start_ms = 0;
+    s_last_fire_cmd_ms = 0;     /* J2 */
+    s_link_lost_pending = false;
     rlc_rgb_led_set_pattern(LED_PATTERN_LINK_LOST);
     status_update_trigger();
     ESP_LOGI(TAG, "-> LINK_LOST");
@@ -196,10 +200,16 @@ static void do_enter_link_lost(void)
 static void do_enter_error(uint8_t err_flag)
 {
     relay_all_safe();
+    fire_timer_stop();          /* belt-and-braces: ensure no pulse outlives ERROR */
     siren_start_error();
     s_error_flags |= err_flag;
     s_armed_channel = 0;
     s_firing_channel = 0;
+    s_arm_time_ms = 0;
+    s_prefire_start_ms = 0;
+    s_postfire_start_ms = 0;
+    s_last_fire_cmd_ms = 0;     /* J2 */
+    s_link_lost_pending = false;
     rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
     status_update_trigger();
     ESP_LOGE(TAG, "-> ERROR (flags=0x%02x)", s_error_flags);
@@ -251,6 +261,25 @@ static uint8_t guard_arm(const rlc_fsm_event_t *evt)
 
 static void process_event(const rlc_fsm_event_t *evt)
 {
+    /* J1: Arm relay contact-weld fault — hard safety fault from any state.
+     * FSD §9.1 / §7.3.2: set ERR_RELAY_FAULT and transition to ERROR.
+     * Already-ERROR is a no-op (intentionally unrecoverable).
+     */
+    if (evt->type == EVT_ARM_SENSE_FAULT) {
+        if (s_state != STATE_ERROR) {
+            ESP_LOGE(TAG, "ARM RELAY CONTACT WELD — entering ERROR");
+            if (s_arm_verify_pending) {
+                s_arm_verify_pending = false;
+                s_arm_verify_channel = 0;
+                s_arm_verify_start_ms = 0;
+                send_nack(MSG_CMD_ARM, s_arm_verify_seq, NACK_ARM_SENSE_FAULT);
+            }
+            fire_timer_stop();
+            do_enter_error(ERR_RELAY_FAULT);
+        }
+        return;
+    }
+
     switch (s_state) {
 
     /* ─── BOOT ─────────────────────────────────────────────── */
@@ -367,6 +396,9 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* Enter PRE_FIRE */
             s_prefire_start_ms = now_ms();
             s_arm_time_ms = 0;  /* Cancel arm timeout */
+            /* J2: seed dead-man timestamp from the triggering CMD_FIRE so the
+             * pre-fire countdown's freshness check has a valid baseline. */
+            s_last_fire_cmd_ms = evt->data.cmd.received_ms;
             siren_start_continuous();
             rlc_rgb_led_set_pattern(LED_PATTERN_PRE_FIRE);
             send_ack(MSG_CMD_FIRE, evt->data.cmd.seq_number, s_armed_channel);
@@ -524,6 +556,14 @@ static void process_event(const rlc_fsm_event_t *evt)
     case STATE_POST_FIRE:
         if (evt->type == EVT_CMD_ARM) {
             send_nack(MSG_CMD_ARM, evt->data.cmd.seq_number, NACK_WRONG_STATE);
+        } else if (evt->type == EVT_CMD_CEASE_FIRE) {
+            /* J3: Idempotent ACK during cooldown (FSD §7.2.7) — system is
+             * already safe; ACK so the remote doesn't time out. */
+            send_ack(MSG_CMD_CEASE_FIRE, evt->data.cmd.seq_number, 0);
+        } else if (evt->type == EVT_CMD_DISARM) {
+            /* J3: Idempotent ACK during cooldown (FSD §7.2.7). */
+            send_ack(MSG_CMD_DISARM, evt->data.cmd.seq_number,
+                     evt->data.cmd.channel);
         } else if (evt->type == EVT_LINK_LOST) {
             do_enter_link_lost();
         } else if (evt->type == EVT_BATTERY_CRITICAL) {

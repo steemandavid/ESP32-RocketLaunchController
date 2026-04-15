@@ -1,18 +1,26 @@
 # Phase 3 Code Review (Re-Review) — State Machines and Command Processing
 
-**Document ID:** RLC-REVIEW-P3-002
+**Document ID:** RLC-REVIEW-P3-002 (merged with round-3 findings)
 **Reviewer:** Code Review Agent
 **Date:** 2026-04-15
 **Scope:** Phase 3 — State Machines and Command Processing (post-fix re-review)
 **FSD Reference:** RLC_Functional_Specification_v1_14.md
-**Commit Reviewed:** `f9641e1` (Phase 3 code review fixes — 3 critical, 9 major, 13 minor/quality issues resolved)
+**Commit Reviewed:** `21c0a90` (round-2 verification HEAD; round-3 review against same tree)
 **Prior Review:** RLC-REVIEW-P3-001 (FAIL — 3 critical, 9 major, 8 minor, 5 quality)
+**Round-3 Update:** 2026-04-15 — Independent re-review by parallel agents identified additional findings J1–J6 (base) and R1–R7 (remote). Merged into §2.
 
 ---
 
-## Verdict: PASS WITH NOTES
+## Verdict: FAIL (round-3 update)
 
-All 25 findings from the initial review (C1–C3, M1–M9, m1–m8, Q1–Q5) have been properly addressed. The code now correctly implements the FSD §7/§8 state machines with robust safety interlocks. One new major finding was identified during the re-review: the remote PRE_FIRE and FIRING states silently drop EVT_BATTERY_CRITICAL events (FSD §8.3.4 violation). This should be fixed before on-target testing but does not block it — the base unit will abort via dead-man timeout if the remote ceases transmission. Two minor observations and one spec deviation were also noted.
+**Original P3-002 verdict was PASS WITH NOTES.** Round-3 re-review revealed a safety-critical regression and several should-fix issues that were missed in round-2:
+
+- **J1 (MAJOR, safety regression):** `EVT_ARM_SENSE_FAULT` is posted by the contact-weld callback in `rlc_base_main.c` but **no FSM handler consumes it** in any state. A welded arm relay does not set `ERR_RELAY_FAULT` or transition to ERROR. FSD §9.1 / §7.3.2 violation.
+- **R1 (MAJOR):** `wait_for_ack()` in the remote handles `EVT_LINK_LOST` and `EVT_BATTERY_CRITICAL` by transitioning state inline, but the FIRE caller unconditionally calls `do_disarm_and_idle()` on result `0`, **stomping the LINK_LOST or ERROR state back to IDLE** and silencing alarms.
+- **R2 (MAJOR):** Multi-arm detection in `channel_armed_bitmask` is **not implemented** despite being explicitly mandated by FSD §6 (line 1201).
+- **N1 (MAJOR, from P3-002):** Remote PRE_FIRE/FIRING still drop `EVT_BATTERY_CRITICAL`. Confirmed still present.
+
+Three additional minor findings (J2, J3, J4) and several smaller observations are documented below. All 25 prior findings from P3-001 remain fixed. Verdict is downgraded to **FAIL**: the J1/R1/R2/N1 issues must be fixed before on-target testing.
 
 ---
 
@@ -179,7 +187,111 @@ Queue registration (`rlc_link_register_cmd_queue()`) occurs AFTER both `rlc_link
 
 ## 2. New Findings
 
-### MAJOR
+### Round-3 Findings (added 2026-04-15)
+
+#### J1: EVT_ARM_SENSE_FAULT Is Posted but Never Consumed (MAJOR, safety regression)
+
+**Files:** `rlc_base_main.c:64-72` (producer), `rlc_base_fsm.c` (no consumer)
+**Spec:** FSD §9.1, §7.3.2
+
+The contact-weld fault callback in `rlc_base_main.c` correctly forwards the fault to the FSM event queue:
+
+```c
+evt.type = EVT_ARM_SENSE_FAULT;
+xQueueSend(s_cmd_queue, &evt, 0);
+```
+
+However, **`rlc_base_fsm.c` has zero handlers for `EVT_ARM_SENSE_FAULT`** in any state. The event is dequeued and silently discarded. A welded arm relay (sense HIGH while relay de-energised) does not set `ERR_RELAY_FAULT`, does not transition to ERROR, and does not block subsequent arming attempts. FSD §9.1 ("Arm relay contact welding detected → Set ERR_RELAY_FAULT, refuse all arming") and §7.2.9 (ERROR transition on hardware fault) are violated.
+
+**Risk:** HIGH — Welded arm relay would allow a fire signal path to remain active without operator awareness.
+
+**Fix:** Add an `EVT_ARM_SENSE_FAULT` handler in IDLE/ARMED/PRE_FIRE/FIRING/POST_FIRE that calls `do_enter_error(ERR_RELAY_FAULT)`.
+
+#### R1: wait_for_ack() State Stomp on Link Loss / Battery Critical During FIRE (MAJOR)
+
+**File:** `rlc_remote_fsm.c:481-503, 297-340`
+
+`wait_for_ack()` correctly handles inbound `EVT_LINK_LOST` (calls `do_enter_link_lost()` → state = LINK_LOST) and `EVT_BATTERY_CRITICAL` (calls `do_enter_error()` → state = ERROR), then returns `0`. The CMD_ARM caller's else-branch only logs, so the prior P3-002 review marked this as fixed (M5).
+
+But the **CMD_FIRE caller at lines 499-503**:
+```c
+} else {
+    /* Timeout or interrupted */
+    ESP_LOGW(TAG, "FIRE failed — aborting");
+    do_disarm_and_idle();
+}
+```
+unconditionally calls `do_disarm_and_idle()`, which sets `s_state = STATE_IDLE`, clears `s_armed_channel`, plays the disarm buzzer, and overwrites the LED pattern. After this sequence the LINK_LOST alarm pattern and ERROR state latch are silently cancelled, and the user perceives a quiet return to IDLE.
+
+**Risk:** MEDIUM — Audible/visual LINK_LOST alarm is suppressed; ERROR latch is broken on the remote side. The base unit's safety behaviours are not affected, but operator awareness on the remote is.
+
+**Fix:** Either (a) have `wait_for_ack()` return a distinct sentinel (e.g. `-3`) when it has already handled state, and skip `do_disarm_and_idle()` in that case, or (b) check `s_state == STATE_ARMED` before calling `do_disarm_and_idle()` in the else branch.
+
+#### R2: Multi-Arm Detection Not Implemented (MAJOR)
+
+**File:** `rlc_remote_fsm.c:453-457, 524`
+**Spec:** FSD §6 line 1201
+
+> "The remote SHALL verify that at most one bit is set in `channel_armed_bitmask` (since only single-channel arming is permitted per §9.3). If multiple bits are set, the remote SHALL send CMD_DISARM (channel 0xFF), display 'MULTI-ARM ERROR', and transition to IDLE."
+
+The remote currently checks only that *its* armed channel bit is set:
+```c
+uint16_t armed_mask = s_last_status.channel_armed_bitmask;
+if (!(armed_mask & (1U << (s_armed_channel - 1)))) { ... }
+```
+
+There is no `__builtin_popcount(armed_mask) > 1` check anywhere in the file. A base firmware bug that armed multiple channels would not be detected by the remote.
+
+**Fix:** In the EVT_STATUS_UPDATE handlers (IDLE, ARMED), and in the FIRE pre-flight check, add `if (__builtin_popcount(armed_mask) > 1) { send_cmd_disarm(0xFF); do_disarm_and_idle(); }`.
+
+#### J2: Dead-Man Timestamp Not Cleared Across Cycles (MINOR)
+
+**File:** `rlc_base_fsm.c:60, 408, 585`
+
+`s_last_fire_cmd_ms` is written only in the PRE_FIRE state (line 408). It is never cleared by `do_disarm()`, `do_enter_link_lost()`, or `do_enter_error()`, and is not seeded from the triggering CMD_FIRE on the ARMED→PRE_FIRE transition. Every realistic stale case still fails safe (>500 ms old → abort), but a tight re-arm cycle could theoretically leave a recently-stale value that briefly passes the check on the next PRE_FIRE entry.
+
+**Fix:** Clear `s_last_fire_cmd_ms = 0` in `do_disarm()`, `do_enter_link_lost()`, and `do_enter_error()`.
+
+#### J3: POST_FIRE Silently Drops CEASE_FIRE / DISARM (MINOR)
+
+**File:** `rlc_base_fsm.c:524-536`
+**Spec:** FSD §7.2.7
+
+POST_FIRE handles only `EVT_CMD_ARM` (returns NACK_WRONG_STATE), `EVT_LINK_LOST`, and `EVT_BATTERY_CRITICAL`. CEASE_FIRE and DISARM commands received during the 2000 ms cooldown are dropped with no ACK/NACK. FSD §7.2.7 specifies these as idempotent — the remote's `wait_for_ack()` will time out and report a CMD failure even though the base is benign.
+
+**Fix:** Add idempotent handlers in POST_FIRE that send `send_ack()` for CEASE_FIRE and DISARM.
+
+#### J4: Safety-Critical Events Use Drop-on-Full Queue Send (MINOR)
+
+**File:** `rlc_link.c:176`, `rlc_base_main.c:70`
+
+`EVT_LINK_LOST`, `EVT_LINK_ESTABLISHED`, `EVT_LINK_RECOVERED`, and `EVT_ARM_SENSE_FAULT` are posted to the FSM queue with `xQueueSend(..., 0)` (zero timeout). Queue length is 16. Under a burst of commands + STATUS_UPDATEs + ACKs, a safety event could theoretically be dropped silently.
+
+**Fix:** Use a short blocking timeout (e.g. `pdMS_TO_TICKS(10)`) for safety-class events, or move them to a dedicated task notification path.
+
+#### R3: Fire-Button Press Swallowed During CMD_ARM ACK Wait (MINOR)
+
+**File:** `rlc_remote_fsm.c:297-340`
+
+If the user presses the fire button while the IDLE→ARMED CMD_ARM ACK is being awaited, `EVT_FIRE_BUTTON_PRESSED` falls off the end of the if-chain and is dropped. After ARM succeeds the user must release and re-press. UX nit; not unsafe.
+
+#### R4: `s_selected_channel` Stale Duplicate (MINOR)
+
+**File:** `rlc_remote_fsm.c:40, 88, 516`; `rlc_remote_main.c:220`
+
+The field is only written in ARMED EVT_ENCODER_ROTATE (which then immediately disarms). In IDLE the encoder updates `encoder_get_channel()` directly, so `s_selected_channel` never tracks IDLE rotation. The status log at `rlc_remote_main.c:220` will print a stale value via `remote_fsm_get_selected_channel()`.
+
+**Fix:** Either remove the field and route the getter to `encoder_get_channel()`, or update it in an IDLE EVT_ENCODER_ROTATE handler.
+
+#### R5: Fire-Repeat Task Race After CEASE_FIRE (MINOR)
+
+**File:** `rlc_remote_fsm.c:591-596, 666-685`
+
+When the FSM clears `s_fire_repeat_active` and calls `send_cmd_cease_fire()`, the separate `cmd_fire_repeat_task_fn` may be just past its flag read and will issue one more `send_cmd_fire()` after the CEASE_FIRE. The base silently drops out-of-state CMD_FIRE so functionally safe, but the wire ordering can be CMD_FIRE→CEASE_FIRE→CMD_FIRE.
+
+**Fix:** Add a synchronisation gate (semaphore, or re-check the flag immediately before `send_cmd_fire()`).
+
+### Round-2 Findings (original P3-002)
 
 #### N1: Remote PRE_FIRE and FIRING States Drop EVT_BATTERY_CRITICAL
 
@@ -362,57 +474,51 @@ The `s_error_flags & ERR_VBAT_CRITICAL` check appears in both `process_event()` 
 
 ---
 
-## 8. Summary
+## 8. Summary (merged P3-002 + round-3)
 
 | Category | Critical | Major | Minor | Info |
 |----------|----------|-------|-------|------|
-| Spec conformance | 0 | 0 | 1 (N3) | 0 |
-| Correctness | 0 | 0 | 1 (N2) | 0 |
-| Safety | 0 | 1 (N1) | 0 | 0 |
-| Concurrency | 0 | 0 | 0 | 0 |
+| Spec conformance | 0 | 1 (R2) | 1 (N3) | 0 |
+| Correctness | 0 | 1 (R1) | 4 (N2, J2, J3, R3) | 0 |
+| Safety | 0 | 2 (N1, J1) | 1 (J4) | 0 |
+| Concurrency | 0 | 0 | 1 (R5) | 0 |
 | Error handling | 0 | 0 | 0 | 2 (N4, N5) |
-| Code quality | 0 | 0 | 0 | 0 |
+| Code quality | 0 | 0 | 1 (R4) | 2 (J5, J6) |
 
-### Comparison to Previous Review
+### Comparison to Previous Reviews
 
-| Metric | Review P3-001 | Review P3-002 |
-|--------|---------------|---------------|
-| Critical | 3 | 0 |
-| Major | 9 | 1 |
-| Minor | 8 | 2 |
-| Info/Quality | 5 | 2 |
-| Verdict | FAIL | PASS WITH NOTES |
+| Metric | P3-001 | P3-002 (round-2) | P3-002 merged (round-3) |
+|--------|--------|------------------|-------------------------|
+| Critical | 3 | 0 | 0 |
+| Major | 9 | 1 (N1) | 4 (N1, J1, R1, R2) |
+| Minor | 8 | 2 (N2, N3) | 8 (+J2, J3, J4, R3, R4, R5) |
+| Info | 5 | 2 (N4, N5) | 4 (+J5, J6) |
+| Verdict | FAIL | PASS WITH NOTES | **FAIL** |
 
 ---
 
-## 9. Recommendation
+## 9. Recommendation (round-3 update)
 
-**Proceed to on-target testing** with one condition:
+**FAIL — fix the four MAJOR findings before on-target testing.**
 
-### Should-Fix Before Testing
+### Must-Fix Before On-Target Testing
 
-**N1: Add EVT_BATTERY_CRITICAL handler to remote PRE_FIRE and FIRING states.** This is a two-line addition to each state handler in `rlc_remote_fsm.c`:
+1. **J1** — Add `EVT_ARM_SENSE_FAULT` handler in IDLE/ARMED/PRE_FIRE/FIRING/POST_FIRE that calls `do_enter_error(ERR_RELAY_FAULT)`. Safety regression.
+2. **R1** — Fix `wait_for_ack()` state-stomp. Either return a distinct sentinel after inline state transition, or guard `do_disarm_and_idle()` on `s_state == STATE_ARMED`.
+3. **R2** — Add multi-arm detection: in EVT_STATUS_UPDATE handlers for IDLE/ARMED, check `__builtin_popcount(armed_mask) > 1` and respond with `CMD_DISARM(0xFF)` + transition to IDLE.
+4. **N1** — Add `EVT_BATTERY_CRITICAL` handlers to remote PRE_FIRE and FIRING states (per original P3-002 recommendation).
 
-```c
-// In PRE_FIRE (after EVT_LINK_LOST handler):
-} else if (evt->type == EVT_BATTERY_CRITICAL) {
-    s_fire_repeat_active = false;
-    do_enter_error();
-}
+### Should-Fix Before On-Target Testing
 
-// In FIRING (after EVT_LINK_LOST handler):
-} else if (evt->type == EVT_BATTERY_CRITICAL) {
-    s_fire_repeat_active = false;
-    send_cmd_cease_fire();
-    do_enter_error();
-}
-```
+5. **J2** — Clear `s_last_fire_cmd_ms` in `do_disarm()` / `do_enter_link_lost()` / `do_enter_error()`.
+6. **J3** — Add idempotent CEASE_FIRE/DISARM ACK in POST_FIRE.
+7. **J4** — Use blocking `xQueueSend` (or a separate notification path) for safety-class events on the FSM queue.
 
 ### Can Defer
 
-- **N2** (dead code in stale check) — harmless, cosmetic
-- **N3** (FIRING→LINK_LOST skips POST_FIRE) — functionally safe, literal spec deviation
+- **N2, N3** — original P3-002 deferrable items
+- **R3, R4, R5, J5, J6** — UX/code-quality items
 
 ---
 
-*End of Phase 3 Code Review (Re-Review) — RLC-REVIEW-P3-002*
+*End of Phase 3 Code Review (Re-Review) — RLC-REVIEW-P3-002, merged with round-3 findings 2026-04-15*

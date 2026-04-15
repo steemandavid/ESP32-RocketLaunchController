@@ -75,7 +75,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info,
     }
 }
 
-static void espnow_send_cb(const wifi_tx_info_t *tx_info, esp_now_send_status_t status)
+static void espnow_send_cb(const uint8_t *mac, esp_now_send_status_t status)
 {
     if (status == ESP_NOW_SEND_SUCCESS) {
         s_consecutive_send_failures = 0;
@@ -93,7 +93,7 @@ static void espnow_send_cb(const wifi_tx_info_t *tx_info, esp_now_send_status_t 
     }
 
     if (s_send_cb) {
-        s_send_cb(tx_info->des_addr, status == ESP_NOW_SEND_SUCCESS);
+        s_send_cb(mac, status == ESP_NOW_SEND_SUCCESS);
     }
 }
 

@@ -173,7 +173,12 @@ static void set_state(rlc_link_state_t st)
         }
 
         if (send) {
-            (void)xQueueSend(s_cmd_queue, &evt, 0);
+            /* J4: short blocking send for safety-class events to avoid
+             * silent drops if the FSM queue is momentarily full. */
+            if (xQueueSend(s_cmd_queue, &evt, pdMS_TO_TICKS(10)) != pdTRUE) {
+                ESP_LOGE(TAG, "FSM queue full — link state event 0x%x dropped!",
+                         (unsigned)evt.type);
+            }
         }
     }
 }
