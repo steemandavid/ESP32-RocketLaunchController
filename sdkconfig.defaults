@@ -13,8 +13,15 @@ CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
 
 # Task watchdog
 CONFIG_ESP_TASK_WDT_EN=y
-CONFIG_ESP_TASK_WDT_TIMEOUT_S=2
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
 CONFIG_ESP_TASK_WDT_PANIC=y
+
+# Interrupt watchdog — increase from 300ms default.
+# The ESP-IDF ADC driver shares a newlib _lock_t between ADC1 and ADC2.
+# WiFi (ADC2 calibration) can hold this lock while battery task reads ADC1,
+# causing the battery task to spin with interrupts disabled via vPortEnterCritical.
+# 5000ms is well beyond any ADC lock hold time while still catching genuine hangs.
+CONFIG_ESP_INT_WDT_TIMEOUT_MS=5000
 
 # Brown-out detection
 CONFIG_ESP_BROWNOUT_DET=y

@@ -29,8 +29,24 @@ static void battery_task(void *arg)
     (void)arg;
     bool critical_posted = false;  /* edge-trigger */
 
+    /* Delay first read until WiFi/ESP-NOW init completes. The ADC driver
+     * shares a lock between ADC1 and ADC2; WiFi holds it during ADC2
+     * calibration which can take several hundred milliseconds at startup.
+     * Feed the watchdog during the delay to avoid a WDT timeout. */
+    for (int i = 0; i < 3; i++) {
+        esp_task_wdt_reset();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
     while (1) {
+        /* Boost priority during ADC read to prevent priority inversion
+         * with WiFi driver (prio 23) over the shared ADC hardware lock.
+         * The ESP-IDF ADC driver uses a newlib lock (semaphore without
+         * priority inheritance) shared between ADC1 and ADC2. */
+        int orig_prio = uxTaskPriorityGet(NULL);
+        vTaskPrioritySet(NULL, 24);
         uint16_t mv = rlc_battery_sample();
+        vTaskPrioritySet(NULL, orig_prio);
 
         /* Three-threshold check (FSD §8.3.4) */
         s_status = rlc_battery_check(REMOTE_VBAT_MIN_ARM_MV,
@@ -69,7 +85,7 @@ static void battery_task(void *arg)
 void remote_battery_start_task(void)
 {
     TaskHandle_t handle;
-    xTaskCreatePinnedToCore(battery_task, "battery_task", 3072, NULL, 3, &handle, 0);
+    xTaskCreatePinnedToCore(battery_task, "battery_task", 4096, NULL, 3, &handle, 0);
     rlc_watchdog_add_task(handle);
     ESP_LOGI(TAG, "remote battery task started (prio 3, core 0)");
 }

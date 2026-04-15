@@ -93,6 +93,8 @@ void status_update_init(void)
 
 void status_update_start_task(void)
 {
-    xTaskCreatePinnedToCore(status_update_task, "stupd_task", 4096, NULL, 3, NULL, 0);
+    TaskHandle_t handle;
+    xTaskCreatePinnedToCore(status_update_task, "stupd_task", 4096, NULL, 3, &handle, 0);
+    rlc_watchdog_add_task(handle);
     ESP_LOGI(TAG, "status update task started (prio 3, core 0)");
 }

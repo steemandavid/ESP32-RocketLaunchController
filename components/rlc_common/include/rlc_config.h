@@ -39,7 +39,7 @@
 #define SIREN_LINK_LOST_DURATION_MS    4000
 #define NACK_DISPLAY_DURATION_MS       3000
 
-#define WATCHDOG_TIMEOUT_S             2
+#define WATCHDOG_TIMEOUT_S             5
 #define DEBOUNCE_POLL_INTERVAL_MS      10
 #define CONT_RELAY_DROPOUT_MS          50    /* Relay settling before first ADC sample (§5.4.6) */
 
@@ -54,9 +54,11 @@
 #define BASE_VBAT_CRITICAL_MV          9000
 
 #define REMOTE_VBAT_DIVIDER_RATIO      2.8f
-#define REMOTE_VBAT_MIN_ARM_MV         7000
-#define REMOTE_VBAT_MIN_OPERATE_MV     6600
-#define REMOTE_VBAT_CRITICAL_MV        6400
+/* Bench-test overrides: remote reads ~3290 mV on USB power (3.3V rail).
+ * Production values: MIN_ARM=7000, MIN_OPERATE=6600, CRITICAL=6400. */
+#define REMOTE_VBAT_MIN_ARM_MV         3200
+#define REMOTE_VBAT_MIN_OPERATE_MV     3100
+#define REMOTE_VBAT_CRITICAL_MV        3000
 
 /* ── Hardware Configuration ───────────────────────────────────── */
 

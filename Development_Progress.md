@@ -546,8 +546,99 @@ Command forwarding pattern: `link_task` continues to own ESP-NOW receive queue. 
 
 ### Phase 3 Build Status
 
-- **Base:** Zero warnings, zero errors
-- **Remote:** Zero warnings, zero errors
+- **Base:** Zero warnings, zero errors (last verified 2026-04-15, ESP-IDF 5.4.1, `rlc.bin` = 0xc6ed0 bytes, 22% free)
+- **Remote:** Zero warnings, zero errors (last verified 2026-04-15, `remote_app_main` symbol present)
+
+### Phase 3 Test Plan
+
+**Preamble.** All remaining Phase 3 tests are on-target and require user interaction — there are no host-side unit tests in this project. Testing runs the two flashed units against each other with real relays, continuity banks, arm switches, encoder, and arm/fire buttons. Execute the plan top-to-bottom; later groups assume earlier groups passed.
+
+**Target hardware.** Base on `/dev/ttyACM0` (MAC `94:A9:90:31:18:38`), Remote on `/dev/ttyACM1` (MAC `44:1B:F6:81:F1:70`). Both running commit `d357b33` or later.
+
+### Phase 3 On-Target Testing Fixes
+
+Bugs discovered and fixed during Phase 3 on-target testing (2026-04-15):
+
+| # | Bug | Root Cause | Fix |
+|---|-----|-----------|-----|
+| 1 | Inverted guard in `rlc_link.c:366` — all LINK_REQUESTs rejected | `!s_guard_cb()` rejects when callback returns false (not busy), inverted logic | Changed `!s_guard_cb()` to `s_guard_cb()` |
+| 2 | Missing EVT_BATTERY_CRITICAL handler in remote LINKING state | Event silently dropped, FSM never transitions to ERROR on critical battery | Added handler that calls `do_enter_error()` |
+| 3 | Race condition — link establishes before FSM queue registered | `rlc_link_init()` starts link_task which completes handshake before `rlc_link_register_cmd_queue()` | In `rlc_link_register_cmd_queue()`, check if link already LINKED and post catch-up EVT_LINK_ESTABLISHED |
+| 4 | ADC priority inversion deadlock — Interrupt WDT timeout | ESP-IDF ADC driver uses newlib `_lock_t` (spinlock w/o priority inheritance) shared between ADC1/ADC2. WiFi (ADC2) blocks battery task (ADC1) → spinlock with interrupts disabled → 300ms WDT fires | 1. Boost battery task priority to 24 during ADC read (above WiFi prio 23). 2. Increase Interrupt WDT timeout from 300ms to 5000ms. 3. Add 3-second startup delay to avoid contention during WiFi init |
+| 5 | Task WDT timeout for `fire_rep` task | `ulTaskNotifyTake(pdTRUE, portMAX_DELAY)` blocks forever → never calls `esp_task_wdt_reset()` | Changed to timed wait (`WATCHDOG_TIMEOUT_S * 1000 - 500` ms) with periodic WDT reset |
+| 6 | `status_update` task not registered with Task WDT | `xTaskCreatePinnedToCore` passes NULL for task handle, no `rlc_watchdog_add_task()` call | Pass `&handle`, call `rlc_watchdog_add_task(handle)` |
+| 7 | WATCHDOG_TIMEOUT_S (2s) too short for battery startup delay (3s) | Battery task delays 3s for WiFi init, but WDT expects reset every 2s | Increased to 5s; battery task feeds WDT during delay loop |
+| 8 | Missing EVT_BATTERY_CRITICAL handler in remote IDLE state | Remote FSM silently drops battery critical events in IDLE state | Added `do_enter_error()` handler for EVT_BATTERY_CRITICAL in IDLE state |
+| 9 | Remote battery thresholds wrong for bench testing | Remote reads ~3290 mV on USB power (3.3V rail), triggers CRITICAL at 6400 mV | Temporarily lowered thresholds for bench testing (production values: 7000/6600/6400) |
+
+**Required test equipment.**
+- Power supply for base (≥ 9 V) and remote (≥ 3.7 V Li-ion or bench supply on VBAT)
+- 10 squib simulator resistors (≈ 10 Ω each) wired to channels 0–9
+- Oscilloscope (for T-F08 only — fire pulse timing)
+- Dummy load or LED across a relay output for visual pulse confirmation
+- Two USB-serial cables for `idf.py monitor` on both units simultaneously
+
+**Test tooling.** Run these in two terminals throughout the session:
+```bash
+# Terminal 1 — base log
+idf.py -B build_base -p /dev/ttyACM0 monitor
+# Terminal 2 — remote log
+./build_remote.sh && idf.py -p /dev/ttyACM1 monitor
+```
+Watch for `state=` lines (base 5 s housekeeping log) and `rfsm:` / `bfsm:` tags.
+
+**Flash procedure (run once at session start).**
+```bash
+./build_base.sh flash    # flashes /dev/ttyACM0
+./build_remote.sh flash  # flashes /dev/ttyACM1
+```
+
+**Pass criteria for Phase 3 as a whole.**
+1. All 15 FSD §15.2 arming tests pass (T-A01..T-A15)
+2. All 9 FSD §15.3 fire tests pass (T-F01..T-F09)
+3. All 6 round-3 regression tests pass (T-R01..T-R06)
+4. No unexpected `ERROR` entries, no watchdog resets, no crashes across the full run
+5. Base and remote agree on state (`channel_armed_bitmask` / `channel_firing_bitmask`) after every transition
+
+**Test execution order.**
+
+| Group | Tests | Purpose | Requires user? |
+|-------|-------|---------|----------------|
+| **G0 — Smoke** | Boot both units; observe link establish within 2 s; confirm STATUS_UPDATE flowing | Sanity | Yes (power-on, visual check) |
+
+### G0 — Smoke Test Results
+
+| Check | Result | Evidence |
+|-------|--------|----------|
+| Both units boot without crash | PASS | 12 self-test suites PASS, no panics, no WDT resets |
+| Link establishes | PASS | LINK_REQUEST at 3300ms, LINK_ACK accepted, state→LINKED |
+| STATUS_UPDATE flowing | PASS | Base: `state=1 armed=0 firing=0 rssi=-54 vbat=12130 mv` every 5s |
+| Remote status flowing | PASS | Remote: `state=1 armed=0 sel=1 rssi=-52 missed=0 vbat=3290 mv` every 5s |
+| Battery reads succeed | PASS | Base: 12130 mV (12V supply). Remote: 3290 mV (USB power, 3.3V rail) |
+| No watchdog resets | PASS | No WDT panics, no reboots for 25+ seconds |
+| FSM states correct | PASS | Base: IDLE, Remote: IDLE (LINKING→IDLE after link established) |
+
+**Known non-blocking issue:** PING droughts causing periodic LINK_LOST/RECOVER cycles (~every 6s, recovers in ~130ms). Does not prevent testing.
+| **G1 — Round-3 regressions** | T-R01..T-R06 | Verify the fixes shipped in commit `d357b33` actually work on target | Yes |
+| **G2 — FSD §15.2 Arming** | T-A01..T-A15 | Spec conformance for arm path | Yes |
+| **G3 — FSD §15.3 Fire** | T-F01..T-F09 | Spec conformance for fire path | Yes (T-F08 also needs scope) |
+
+Groups run in order. Any FAIL halts the run and is logged as a new finding; re-run from the start after any fix.
+
+### Phase 3 Round-3 Regression Tests
+
+These are new tests specific to the fixes applied in commit `d357b33`. They are **not** in FSD §15 — they verify that the round-3 code-review fixes actually hold on hardware.
+
+| ID | Target fix | Procedure | Expected | Status |
+|----|-----------|-----------|----------|--------|
+| T-R01 | J1 — EVT_ARM_SENSE_FAULT consumer | With base powered up, temporarily short the arm-sense line to 3V3 while the arm relay is de-energized (forces a sense-high without a command). | Base logs `ARM RELAY CONTACT WELD — entering ERROR`, siren plays 3-blast error pattern, base enters STATE_ERROR, remote receives NACK 0x0B if arm was pending. No relay activity after entry. | TODO |
+| T-R02 | J7 — base battery critical posts event | With base running, lower VBAT below `BASE_VBAT_CRITICAL_MV` (use bench supply). | Base battery task logs `CRITICAL battery: ... mV`, FSM transitions to STATE_ERROR within 1 s, siren plays error pattern, no relay energizes afterwards. | PASS |
+| T-R03 | R8 — remote battery critical posts event | With remote running, lower remote VBAT below `REMOTE_VBAT_CRITICAL_MV`. | Remote logs `CRITICAL battery: ... mV`, remote FSM enters STATE_ERROR within 1 s, buzzer plays critical alarm, CMD_DISARM(0xFF) broadcast if any channel was armed. | PASS |
+| T-R04 | R1 — wait_for_ack sentinel preserves LINK_LOST | Arm a channel normally. While the remote is in `wait_for_ack` for CMD_ARM (window is very short — may need to force by powering base off right as remote sends CMD_ARM). | Remote transitions to STATE_LINK_LOST (not STATE_IDLE), LED shows link-lost pattern. After base comes back, remote re-links and returns to IDLE. | TODO |
+| T-R05 | R2 — multi-arm detection | Hand-craft this only if a fault-injection path is available: modify base to report two bits set in `channel_armed_bitmask` for one STATUS_UPDATE, or achieve it via a desync. If not achievable, mark as SKIPPED with justification and rely on code review. | Remote logs `MULTI-ARM DETECTED (mask=0x...)`, broadcasts CMD_DISARM(0xFF), enters STATE_ERROR, buzzer plays critical alarm. | TODO (may SKIP) |
+| T-R06 | J5 — POST_FIRE idempotent ACKs | Execute a full fire sequence (arm + fire). Immediately after the fire pulse completes (base is in POST_FIRE), send a redundant CMD_CEASE_FIRE and CMD_DISARM from the remote (repeat key press). | Base ACKs both commands without NACK, stays in POST_FIRE→IDLE transition, no ERROR state. Dead-man timestamp `s_last_fire_cmd_ms` logs as 0 on entry to IDLE. | TODO |
+
+Note on T-R02/T-R03: if a bench supply is not available, these can be exercised by temporarily lowering `*_VBAT_CRITICAL_MV` in `rlc_config.h` to above the actual measured VBAT, rebuilding, and flashing. Revert after.
 
 ### Phase 3 FSD Arming Tests (§15.2)
 

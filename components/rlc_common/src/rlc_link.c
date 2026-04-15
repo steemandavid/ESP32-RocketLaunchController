@@ -362,8 +362,9 @@ static void handle_link_request(const uint8_t *payload, uint16_t plen)
              req->remote_firmware_version[1],
              req->remote_firmware_version[2]);
 
-    /* FSD §6.4.1: reject if app-state guard says busy (ARMED/PRE_FIRE/FIRING/POST_FIRE). */
-    if (s_guard_cb && !s_guard_cb()) {
+    /* FSD §6.4.1: reject if app-state guard says busy (ARMED/PRE_FIRE/FIRING/POST_FIRE).
+     * Guard returns true when busy, so reject when it returns true. */
+    if (s_guard_cb && s_guard_cb()) {
         ESP_LOGI(TAG, "LINK_REQUEST rejected by app-state guard (busy)");
         return;
     }
@@ -852,7 +853,22 @@ void rlc_link_register_cmd_queue(QueueHandle_t q)
 {
     lock();
     s_cmd_queue = q;
+    rlc_link_state_t st = s_state;
     unlock();
+
+    /* Race fix: if the link already established before this queue was
+     * registered (link_task started first, handshake completed before
+     * the FSM was initialized), post a catch-up EVT_LINK_ESTABLISHED
+     * so the FSM doesn't get stuck in LINKING forever. */
+    if (q && st == RLC_LINK_STATE_LINKED) {
+        rlc_fsm_event_t evt = {0};
+        evt.type = EVT_LINK_ESTABLISHED;
+        if (xQueueSend(q, &evt, pdMS_TO_TICKS(10)) != pdTRUE) {
+            ESP_LOGE(TAG, "FSM queue full — catch-up EVT_LINK_ESTABLISHED dropped!");
+        } else {
+            ESP_LOGI(TAG, "posted catch-up EVT_LINK_ESTABLISHED (link was already up)");
+        }
+    }
 }
 
 int rlc_link_send_cmd(uint8_t msg_type, const void *payload, uint16_t payload_len)

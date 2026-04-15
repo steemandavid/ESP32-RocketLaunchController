@@ -381,6 +381,9 @@ static void process_event(const rlc_fsm_event_t *evt)
         if (evt->type == EVT_LINK_ESTABLISHED) {
             ESP_LOGI(TAG, "LINKING -> IDLE (link established)");
             do_enter_idle();
+        } else if (evt->type == EVT_BATTERY_CRITICAL) {
+            ESP_LOGW(TAG, "BATTERY_CRITICAL during LINKING -> ERROR");
+            do_enter_error();
         }
         break;
 
@@ -477,6 +480,8 @@ static void process_event(const rlc_fsm_event_t *evt)
         } else if (evt->type == EVT_ENCODER_ROTATE) {
             /* R4: track selected channel in IDLE so getter is not stale */
             s_selected_channel = evt->data.encoder.channel;
+        } else if (evt->type == EVT_BATTERY_CRITICAL) {
+            do_enter_error();
         }
         break;
 
@@ -727,8 +732,11 @@ static void cmd_fire_repeat_task_fn(void *arg)
     ESP_LOGI(TAG, "fire repeat task started");
 
     while (1) {
-        /* Wait for notification from FSM task (start signal) */
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        /* Wait for notification from FSM task (start signal).
+         * Use a timed wait so we can feed the task watchdog even while
+         * dormant (portMAX_DELAY would never reset the WDT). */
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(WATCHDOG_TIMEOUT_S * 1000 - 500));
+        esp_task_wdt_reset();
 
         while (s_fire_repeat_active) {
             /* R5: Re-check the flag immediately before sending. The FSM may
@@ -739,6 +747,7 @@ static void cmd_fire_repeat_task_fn(void *arg)
             if (ch > 0 && s_fire_repeat_active) {
                 send_cmd_fire(ch);  /* Fire-and-forget, no ACK */
             }
+            esp_task_wdt_reset();
             vTaskDelay(pdMS_TO_TICKS(FIRE_REPEAT_INTERVAL_MS));
         }
     }
