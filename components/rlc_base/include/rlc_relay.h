@@ -38,6 +38,12 @@ void relay_fire_all_off(void);
 void arm_relay_set(bool state);
 
 /**
+ * Get the intended arm relay state (true = energised).
+ * Tracks the last value passed to arm_relay_set(), NOT the GPIO readback.
+ */
+bool arm_relay_get_intended(void);
+
+/**
  * Emergency safe: de-energise arm relay + all channel relays.
  * Called at boot, on disarm, on error, on link loss.
  */

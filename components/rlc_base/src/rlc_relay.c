@@ -12,8 +12,13 @@
 
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "rlc_relay";
+
+/* Track intended arm relay state for contact-weld detection */
+static bool s_arm_relay_on = false;
 
 static const int s_channel_pins[NUM_CHANNELS] = {
     PIN_RELAY_CH1, PIN_RELAY_CH2, PIN_RELAY_CH3, PIN_RELAY_CH4,
@@ -70,11 +75,32 @@ void relay_fire_all_off(void)
 
 void arm_relay_set(bool state)
 {
+    s_arm_relay_on = state;
     drive_output(PIN_ARM_RELAY, state, PIN_ARM_RELAY_ACTIVE);
 }
 
+bool arm_relay_get_intended(void)
+{
+    return s_arm_relay_on;
+}
+
+/**
+ * Emergency safe: de-energise arm relay + all channel relays.
+ *
+ * IMPORTANT: The arm relay must be de-energised FIRST to remove VBAT from
+ * the fire bus before channel relay contacts transition from NO back to NC.
+ * If channel relays open while the arm relay still carries fire current,
+ * the relay arc couples VBAT to the NC contact and destroys the continuity
+ * ADC inputs (GPIO 2-10) which have no high-voltage clamping.
+ *
+ * A 20 ms delay after arm relay OFF ensures the contacts are fully open
+ * and the fire current has decayed to zero before channel relays release.
+ */
+#define RELAY_ARM_RELEASE_MS  20
+
 void relay_all_safe(void)
 {
-    relay_fire_all_off();
     arm_relay_set(false);
+    vTaskDelay(pdMS_TO_TICKS(RELAY_ARM_RELEASE_MS));
+    relay_fire_all_off();
 }

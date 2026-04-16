@@ -20,6 +20,7 @@
 #include "rlc_arm_sense.h"
 #include "rlc_debounce.h"
 #include "rlc_watchdog.h"
+#include "rlc_relay.h"
 #include "pin_config.h"
 
 #include "driver/gpio.h"
@@ -42,6 +43,16 @@ static void (*s_on_change_cb)(bool armed) = NULL;
 
 /* User callback on contact-welding fault */
 static void (*s_on_fault_cb)(void) = NULL;
+
+/* ── Key switch debounce state ─────────────────────────────────── */
+
+static rlc_debounce_t s_key_db;
+
+/* Current debounced key switch state (true = key ON / VBAT present) */
+static volatile bool s_key_on = false;
+
+/* User callback on key switch state change */
+static void (*s_on_key_change_cb)(bool on) = NULL;
 
 /* Task handle */
 static TaskHandle_t s_task_handle = NULL;
@@ -80,32 +91,62 @@ static void on_debounce_change(int gpio_num, bool new_state, void *user_data)
 }
 
 /**
+ * Key switch debounce callback.
+ *
+ * Same polarity as arm sense: the debounce engine convention has
+ * new_state == true => stably LOW, new_state == false => stably HIGH.
+ * Key sense HIGH = key ON, so key_on = !new_state.
+ */
+static void on_key_debounce_change(int gpio_num, bool new_state, void *user_data)
+{
+    (void)gpio_num;
+    (void)user_data;
+
+    bool key_on = !new_state;
+    s_key_on = key_on;
+
+    ESP_LOGI(TAG, "key switch changed: %s", key_on ? "ON" : "OFF");
+
+    if (s_on_key_change_cb) {
+        s_on_key_change_cb(key_on);
+    }
+}
+
+/**
  * Contact-welding detection (FSD sec 5.4.3, 7.3.2).
  *
- * When the arm relay drive GPIO is LOW (de-energised), verify that the
- * arm sense input also reads LOW.  If arm sense reads HIGH while the relay
- * is off, the arm relay contacts are welded shut -- a critical fault.
+ * Uses the intended arm relay state (from arm_relay_set) and the debounced
+ * arm_sense state (from the 16-bit debounce engine).  A welded contact is
+ * declared when the relay was intentionally de-energised but arm_sense
+ * remains debounced HIGH for WELD_CONFIRM_COUNT consecutive checks.
  *
- * We only check the raw GPIO here (not debounced) to catch intermittent
- * welding as early as possible.  A single HIGH reading when the relay is
- * off is sufficient to flag the fault.
+ * This avoids false positives from:
+ *   - GPIO readback glitches on the relay drive pin
+ *   - Residual voltage transients on the sense divider after relay toggle
  */
+#define WELD_CONFIRM_COUNT  3
+static int s_weld_high_count = 0;
+
 static void weld_check(void)
 {
-    int arm_relay_level = gpio_get_level(PIN_ARM_RELAY);
-
-    /* Only check when arm relay is de-energised (LOW) */
-    if (arm_relay_level != 0) {
+    /* Only check when arm relay is intentionally OFF */
+    if (arm_relay_get_intended()) {
+        s_weld_high_count = 0;
         return;
     }
 
-    int arm_sense_level = gpio_get_level(PIN_ARM_SENSE);
-
-    if (arm_sense_level != 0) {
-        ESP_LOGE(TAG, "CONTACT WELD DETECTED: arm relay OFF but sense reads HIGH");
-        if (s_on_fault_cb) {
-            s_on_fault_cb();
+    /* Use debounced arm_sense state (160ms stable = 16-bit debounce) */
+    if (arm_sense_get_debounced()) {
+        s_weld_high_count++;
+        if (s_weld_high_count >= WELD_CONFIRM_COUNT) {
+            ESP_LOGE(TAG, "CONTACT WELD DETECTED: relay OFF but sense debounced HIGH (%d consecutive)",
+                     s_weld_high_count);
+            if (s_on_fault_cb) {
+                s_on_fault_cb();
+            }
         }
+    } else {
+        s_weld_high_count = 0;
     }
 }
 
@@ -121,8 +162,14 @@ static void arm_sense_task(void *arg)
         /* Read the arm sense GPIO */
         int level = gpio_get_level(PIN_ARM_SENSE);
 
-        /* Feed the debounce engine */
+        /* Feed the arm sense debounce engine */
         rlc_debounce_update(&s_db, level, on_debounce_change, NULL);
+
+        /* Read the key sense GPIO */
+        int key_level = gpio_get_level(PIN_KEY_SENSE);
+
+        /* Feed the key sense debounce engine */
+        rlc_debounce_update(&s_key_db, key_level, on_key_debounce_change, NULL);
 
         /* Periodic contact-welding detection */
         s_weld_check_ticks++;
@@ -153,15 +200,35 @@ void arm_sense_init(void)
     };
     gpio_config(&cfg);
 
-    /* Initialise debounce engine -- 16-bit (160 ms at 10 ms polling) */
+    /* Initialise arm sense debounce engine -- 16-bit (160 ms at 10 ms polling) */
     rlc_debounce_init(&s_db, PIN_ARM_SENSE, DEBOUNCE_16BIT);
 
     /* Pre-read the raw GPIO to seed the initial state */
     int raw = gpio_get_level(PIN_ARM_SENSE);
     s_armed = (raw != 0);
 
-    ESP_LOGI(TAG, "initialised (GPIO %d, raw=%d, armed=%d)",
+    ESP_LOGI(TAG, "arm sense initialised (GPIO %d, raw=%d, armed=%d)",
              PIN_ARM_SENSE, raw, (int)s_armed);
+
+    /* Configure key sense GPIO -- input, no pulls (external divider + zener) */
+    gpio_config_t key_cfg = {
+        .pin_bit_mask   = (1ULL << PIN_KEY_SENSE),
+        .mode           = GPIO_MODE_INPUT,
+        .pull_up_en     = GPIO_PULLUP_DISABLE,
+        .pull_down_en   = GPIO_PULLDOWN_DISABLE,
+        .intr_type      = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&key_cfg);
+
+    /* Initialise key sense debounce engine -- 16-bit (160 ms at 10 ms polling) */
+    rlc_debounce_init(&s_key_db, PIN_KEY_SENSE, DEBOUNCE_16BIT);
+
+    /* Pre-read the raw GPIO to seed the initial state */
+    int key_raw = gpio_get_level(PIN_KEY_SENSE);
+    s_key_on = (key_raw != 0);
+
+    ESP_LOGI(TAG, "key sense initialised (GPIO %d, raw=%d, key_on=%d)",
+             PIN_KEY_SENSE, key_raw, (int)s_key_on);
 }
 
 void arm_sense_start_task(void)
@@ -169,7 +236,7 @@ void arm_sense_start_task(void)
     xTaskCreatePinnedToCore(
         arm_sense_task,
         "arm_switch_task",
-        2048,
+        4096,
         NULL,
         7,              /* Priority 7 -- highest base unit task */
         &s_task_handle,
@@ -198,4 +265,21 @@ void arm_sense_register_cb(void (*cb)(bool armed))
 void arm_sense_register_fault_cb(void (*cb)(void))
 {
     s_on_fault_cb = cb;
+}
+
+/* ── Key Sense Public API ──────────────────────────────────────── */
+
+bool key_sense_get_debounced(void)
+{
+    return s_key_on;
+}
+
+bool key_sense_get_raw(void)
+{
+    return gpio_get_level(PIN_KEY_SENSE) != 0;
+}
+
+void key_sense_register_cb(void (*cb)(bool on))
+{
+    s_on_key_change_cb = cb;
 }

@@ -79,6 +79,9 @@ Test specs: `rlc-hw-test-base/RLC_Base_Hardware_Test_Specification.md` and
 | B-F05 | Task-context verification (ISR→task) | CHECK | ISR signals task only |
 | B-BS01 | Safe boot state (all relays inactive < 1 ms) | CHECK | GPIO LOW on boot |
 | B-BS02 | Boot order (GPIO init first) | CHECK | Before ESP-NOW init |
+| B-K01 | Key switch OFF = DISARMED | PASS | GPIO 42 raw=0, OFF |
+| B-K02 | Key switch ON = ON | PASS | GPIO 42 raw=1, ON |
+| B-K03 | Key switch toggle | PASS | Clean state changes, no bounce |
 
 ### Phase 0 Remote Unit Hardware Tests
 
@@ -462,7 +465,7 @@ They should be verified before Phase 3 work begins, or during Phase 5 hardening.
 ## Phase 3 — State Machines and Command Processing
 
 **FSD ref:** §4.3 Phase 3, §7 (Base FSM), §8 (Remote FSM), §6.3 (Commands)
-**Status:** CODE COMPLETE — On-target testing required
+**Status:** ON-TARGET TESTING PAUSED — G1 partial (T-R04 PASS, T-R05 SKIP, T-R06 SKIP). Base ESP32 destroyed during first fire pulse. Software fixes applied (relay order + weld detection). Hardware protection (Schottky diode clamps) and replacement ESP32 required before resuming G2/G3.
 
 ### Phase 3 Architecture
 
@@ -473,28 +476,31 @@ Command forwarding pattern: `link_task` continues to own ESP-NOW receive queue. 
 | File | Purpose |
 |------|---------|
 | `components/rlc_common/include/rlc_fsm_events.h` | Shared event types, event struct, notification bit definitions |
-| `components/rlc_base/src/rlc_base_fsm.c` | Full base FSM: BOOT→IDLE→ARMED→PRE_FIRE→FIRING→POST_FIRE + LINK_LOST + ERROR |
+| `components/rlc_base/src/rlc_base_fsm.c` | Full base FSM: BOOT→IDLE→ARMED→PRE_FIRE→FIRING→POST_FIRE + LINK_LOST + ERROR. Fixed: `guard_arm()` uses `key_sense`; EVT_KEY_SWITCH_CHANGED handlers in ARMED/PRE_FIRE/FIRING; `send_ack`/`send_nack` call `rlc_link_next_seq()` |
 | `components/rlc_base/include/rlc_base_fsm.h` | Base FSM public API |
 | `components/rlc_base/src/rlc_fire_timer.c` | GPTimer fire pulse (1µs resolution, ISR→xTaskNotifyFromISR) |
 | `components/rlc_base/include/rlc_fire_timer.h` | Fire timer API |
-| `components/rlc_remote/src/rlc_remote_fsm.c` | Full remote FSM: BOOT→LINKING→IDLE→ARMED→PRE_FIRE→FIRING + LINK_LOST + ERROR |
+| `components/rlc_remote/src/rlc_remote_fsm.c` | Full remote FSM: BOOT→LINKING→IDLE→ARMED→PRE_FIRE→FIRING + LINK_LOST + ERROR. Fixed: all `send_cmd_*` pass caller-supplied seq to `rlc_link_send_cmd()` |
 | `components/rlc_remote/include/rlc_remote_fsm.h` | Remote FSM public API |
 
 ### Phase 3 Files Modified
 
 | File | Changes |
 |------|---------|
-| `components/rlc_common/src/rlc_link.c` | Command frame forwarding, integrity CRC verification, dead-man timestamp, link health tracking, 6 new public APIs |
-| `components/rlc_common/include/rlc_link.h` | Added `rlc_link_register_cmd_queue()`, `rlc_link_send_cmd()`, `rlc_link_get_session_token()`, `rlc_link_next_seq()`, `rlc_link_is_healthy()`, `rlc_link_get_last_fire_ms()` |
+| `components/rlc_common/src/rlc_link.c` | Command frame forwarding, integrity CRC verification, dead-man timestamp, link health tracking, 6 new public APIs. Fixed: `rlc_link_send_cmd()` accepts caller-supplied seq; NULL guard on `lock()`/`unlock()` |
+| `components/rlc_common/include/rlc_link.h` | Added `rlc_link_register_cmd_queue()`, `rlc_link_send_cmd()`, `rlc_link_get_session_token()`, `rlc_link_next_seq()`, `rlc_link_is_healthy()`, `rlc_link_get_last_fire_ms()`. Changed: `rlc_link_send_cmd()` now takes `uint32_t seq` parameter |
 | `components/rlc_base/src/rlc_base_state.c` | Replaced stub — delegates to `rlc_base_fsm.c` getters |
 | `components/rlc_base/include/rlc_base_state.h` | Added `base_state_get_firing_channel()`, `base_state_is_busy()` |
 | `components/rlc_base/src/rlc_siren.c` | Added `siren_start_error()` (3 short blasts 200ms on/off) |
 | `components/rlc_base/include/rlc_siren.h` | Declared `siren_start_error()` |
-| `components/rlc_base/src/rlc_status_update.c` | Populates `channel_armed_bitmask` and `channel_firing_bitmask` from FSM state |
-| `components/rlc_base/src/rlc_base_main.c` | Starts FSM task, wires arm sense/fault callbacks to FSM, sets link guard callback |
+| `components/rlc_base/src/rlc_status_update.c` | Populates `channel_armed_bitmask` and `channel_firing_bitmask` from FSM state. `base_arm_switch` reads from `key_sense_get_debounced()` |
+| `components/rlc_base/src/rlc_base_main.c` | Starts FSM task, wires arm sense/fault/key callbacks to FSM, sets link guard callback. Housekeeping log includes `key=` field |
+| `components/rlc_base/src/rlc_arm_sense.c` | Arm sense + key sense monitoring. Second debounce engine for GPIO 42 (key_sense). API: `key_sense_get_debounced()`, `key_sense_get_raw()`, `key_sense_register_cb()` |
+| `components/rlc_base/include/rlc_arm_sense.h` | Added key_sense API declarations. Updated module doxygen for dual-input monitoring |
 | `components/rlc_remote/src/rlc_remote_state.c` | Replaced stub — delegates to `rlc_remote_fsm.c` getters |
 | `components/rlc_remote/src/rlc_remote_main.c` | Starts FSM + fire-repeat tasks, wires all input callbacks to FSM event queue |
 | `components/rlc_common/include/rlc_config.h` | Added `COMPLETE_PULSE_ON_LINK_LOSS` (default: 1) |
+| `components/rlc_common/include/pin_config.h` | Added `PIN_KEY_SENSE 42` (key switch direct input) |
 | `components/rlc_base/CMakeLists.txt` | Added `rlc_base_fsm.c`, `rlc_fire_timer.c` |
 | `components/rlc_remote/CMakeLists.txt` | Added `rlc_remote_fsm.c` |
 
@@ -513,7 +519,7 @@ Command forwarding pattern: `link_task` continues to own ESP-NOW receive queue. 
 | 9 | Base: Fire pulse via hardware timer (ISR signals task) | §7.2.3 | DONE | `rlc_fire_timer.c` — GPTimer, ISR→`xTaskNotifyFromISR` |
 | 10 | Base: 50 ms relay dropout delay after FIRING | §7.2.5 | DONE | POST_FIRE state with `POST_FIRE_COOLDOWN_MS` |
 | 11 | Base: Arm timeout auto-disarm (10 s) | §7.2.5 | DONE | `s_arm_time_ms` tracked in `check_timers()` |
-| 12 | Base: Arm switch sense guard | §7.2.2 | DONE | `arm_sense_get_debounced()` checked in IDLE→ARMED, ARMED, PRE_FIRE, FIRING |
+| 12 | Base: Key switch sense guard (key_sense GPIO 42) | §7.2.2 | DONE | `key_sense_get_debounced()` checked in guard_arm(), PRE_FIRE, ARMED, FIRING |
 | 13 | Base: Contact welding detection | §7.2.7 | DONE | Arm relay energise + verify sense HIGH within 200ms |
 | 14 | Remote: Command sender with ACK timeout + retry | §8.2 | DONE | `send_cmd_arm/fire/disarm/cease_fire()` + `wait_for_ack()` |
 | 15 | Remote: Repeated CMD_FIRE at 200 ms (fire-and-forget) | §8.2.4 | DONE | `cmd_fire_repeat_task_fn` — separate task, fire-and-forget |
@@ -535,7 +541,8 @@ Command forwarding pattern: `link_task` continues to own ESP-NOW receive queue. 
 | Dead-man switch | §9.4 | 500ms CMD_FIRE authorization timeout via `rlc_link_get_last_fire_ms()` |
 | Auto-disarm after fire | §9.5 | FIRING→POST_FIRE→IDLE auto-transition |
 | Arm timeout 10s | §7.2.5 | Software timer in `check_timers()` |
-| Arm sense → immediate disarm | §7.2.7 | EVT_ARM_SENSE_CHANGED processed in ARMED/PRE_FIRE/FIRING |
+| Arm sense → immediate disarm | §7.2.7 | EVT_KEY_SWITCH_CHANGED and EVT_ARM_SENSE_CHANGED processed in ARMED/PRE_FIRE/FIRING |
+| Key switch OFF → immediate disarm | §7.2.7 | EVT_KEY_SWITCH_CHANGED (GPIO 42) triggers do_disarm() in ARMED/PRE_FIRE/FIRING |
 | Channel change while armed → disarm | §8.2.7 | EVT_ENCODER_ROTATE in ARMED state |
 | Contact welding detection | §7.3.2 | Arm relay energise + verify sense HIGH within 200ms |
 | ERR_COMM_DEGRADED | §7.2.2 | Ping health window (10 frames, >30% = degraded) |
@@ -546,14 +553,42 @@ Command forwarding pattern: `link_task` continues to own ESP-NOW receive queue. 
 
 ### Phase 3 Build Status
 
-- **Base:** Zero warnings, zero errors (last verified 2026-04-15, ESP-IDF 5.4.1, `rlc.bin` = 0xc6ed0 bytes, 22% free)
-- **Remote:** Zero warnings, zero errors (last verified 2026-04-15, `remote_app_main` symbol present)
+- **Base:** Zero warnings, zero errors (last verified 2026-04-15, ESP-IDF 5.4.1, includes key_sense + CRC fix + lock guard)
+- **Remote:** Zero warnings, zero errors (last verified 2026-04-16, includes encoder ADC init order fix + contact-weld debounce)
+
+### Phase 3 Critical Init Order
+
+Remote unit `rlc_remote_main.c` init order **must** be preserved:
+1. `encoder_init()` — configures GPIO 4/5 for digital input with interrupts
+2. `rlc_battery_init()` — configures ADC1 which claims GPIO 4/5 (ADC1_CH3/CH4) for analog mode
+
+If ADC init runs first, it overrides the digital GPIO config and encoder interrupts never fire. This is an ESP32-S3 hardware constraint.
+
+### Phase 3 Key Sense Hardware
+
+Added dedicated key switch sense input to resolve circular dependency in `guard_arm()`:
+
+| Item | Value |
+|------|-------|
+| GPIO | 42 (`PIN_KEY_SENSE`) |
+| Circuit | Key switch output (+VBAT ~12V when ON) → 27kΩ/10kΩ divider + 3.3V zener → GPIO 42 |
+| Debounce | 16-bit (160ms at 10ms polling) — integrated into `arm_sense_task` |
+| Event | `EVT_KEY_SWITCH_CHANGED = 0x18` |
+| API | `key_sense_get_debounced()`, `key_sense_get_raw()`, `key_sense_register_cb()` |
+| Status | Software complete. Hardware wired and verified — key sense toggles cleanly on GPIO 42. Tests B-K01–B-K03 PASS. |
+
+**Input role separation:**
+
+| Input | GPIO | Role |
+|-------|------|------|
+| key_sense | 42 | Direct key switch position. Used in `guard_arm()`, PRE_FIRE check, FSM disarm triggers. |
+| arm_sense | 21 | Post-energize relay feedback. Used for M1 verify flow and contact-weld detection only. |
 
 ### Phase 3 Test Plan
 
 **Preamble.** All remaining Phase 3 tests are on-target and require user interaction — there are no host-side unit tests in this project. Testing runs the two flashed units against each other with real relays, continuity banks, arm switches, encoder, and arm/fire buttons. Execute the plan top-to-bottom; later groups assume earlier groups passed.
 
-**Target hardware.** Base on `/dev/ttyACM0` (MAC `94:A9:90:31:18:38`), Remote on `/dev/ttyACM1` (MAC `44:1B:F6:81:F1:70`). Both running commit `d357b33` or later.
+**Target hardware.** Base on `/dev/ttyACM0` (MAC `94:A9:90:31:18:38`), Remote on `/dev/ttyACM1` (MAC `44:1B:F6:81:F1:70`). **Verify ports each session** — they shift when units hot-plug or reboot rapidly. Use `esptool.py -p /dev/ttyACMx chip_id` to confirm. Both running commit `e03b826` or later.
 
 ### Phase 3 On-Target Testing Fixes
 
@@ -570,6 +605,17 @@ Bugs discovered and fixed during Phase 3 on-target testing (2026-04-15):
 | 7 | WATCHDOG_TIMEOUT_S (2s) too short for battery startup delay (3s) | Battery task delays 3s for WiFi init, but WDT expects reset every 2s | Increased to 5s; battery task feeds WDT during delay loop |
 | 8 | Missing EVT_BATTERY_CRITICAL handler in remote IDLE state | Remote FSM silently drops battery critical events in IDLE state | Added `do_enter_error()` handler for EVT_BATTERY_CRITICAL in IDLE state |
 | 9 | Remote battery thresholds wrong for bench testing | Remote reads ~3290 mV on USB power (3.3V rail), triggers CRITICAL at 6400 mV | Temporarily lowered thresholds for bench testing (production values: 7000/6600/6400) |
+| 10 | All CMD messages rejected with CRC mismatch | `send_cmd_arm()` calls `rlc_link_next_seq()` (seq=N) for CRC, then `rlc_link_send_cmd()` calls `seq_next()` again (seq=N+1) — CRC/header mismatch | Changed `rlc_link_send_cmd()` to accept caller-supplied seq; all callers pass their pre-obtained seq |
+| 11 | Base crash loop — NULL mutex in startup | `status_update_task` calls `rlc_link_is_linked()` before `rlc_link_init()` creates mutex | Added NULL guard on `lock()`/`unlock()` in `rlc_link.c` |
+| 12 | Arming always NACKs BASE_KEY_OFF — circular guard | `guard_arm()` checks `arm_sense_get_debounced()` (GPIO 21, arm relay output) which is LOW before relay is energized | Added dedicated `key_sense` input (GPIO 42) reading key switch position directly; `guard_arm()` now checks `key_sense_get_debounced()` |
+| 13 | Encoder ISR never fires after Phase 3 code shuffle | `rlc_battery_init()` (ADC1) claims GPIO 4/5 (ADC1_CH3/CH4) for analog mode, overriding digital GPIO config set by `encoder_init()` | Restored Phase 2 init order: `encoder_init()` before `rlc_battery_init()` in `rlc_remote_main.c` |
+| 14 | Contact weld false positive — residual voltage on arm_sense divider | Raw GPIO read ~150ms after arm relay de-energize catches residual voltage on 27k/10k divider, triggering false CONTACT WELD DETECTED | `weld_check()` now requires 3 consecutive HIGH readings (1.5s at 500ms check interval) via `WELD_CONFIRM_COUNT` before declaring fault |
+| 15 | arm_sense_task stack overflow (2048 bytes) | Adding key_sense monitoring (second debounce engine + ESP_LOGI) exceeds 2048-byte stack | Increased `arm_sense_task` stack from 2048 to 4096 |
+| 16 | Remote encoder_task stack overflow (2048 bytes) | ESP_LOGI in encoder task blew 2048-byte stack | Increased `encoder_task` stack from 2048 to 4096 |
+| 17 | Contact weld false positive during ARMED state | `weld_check()` reads `gpio_get_level(PIN_ARM_RELAY)` for relay state — unreliable GPIO readback. Rewrote to use `arm_relay_get_intended()` (tracked in software) + `arm_sense_get_debounced()` (16-bit debounce engine) | Uses intended relay state instead of raw GPIO read; uses debounced arm_sense instead of raw sense read |
+| 18 | Base ESP32 destroyed during first fire pulse | `relay_all_safe()` de-energized channel relays before arm relay. Channel relay contacts opened while VBAT (12V) still on fire bus → 6A arc coupled VBAT to NC contact → continuity ADC inputs (GPIO 2-10) saw 12V, no clamping → ESP32 latch-up | Reversed order: arm relay OFF first (removes VBAT), wait 20ms, then channel relays OFF. Hardware fix needed: Schottky diode clamps on ADC GPIOs |
+
+**HARDWARE DAMAGE (2026-04-16):** Base unit ESP32-S3 destroyed during first on-target fire pulse (T-R06). Root cause: relay de-energization order allowed 6A arc at channel relay contacts to couple VBAT to continuity ADC inputs. Software fix applied (relay order reversed). Hardware protection (Schottky diode clamps on GPIO 2-10) required before resuming fire tests. Replacement ESP32 needed.
 
 **Required test equipment.**
 - Power supply for base (≥ 9 V) and remote (≥ 3.7 V Li-ion or bench supply on VBAT)
@@ -619,6 +665,8 @@ Watch for `state=` lines (base 5 s housekeeping log) and `rfsm:` / `bfsm:` tags.
 | FSM states correct | PASS | Base: IDLE, Remote: IDLE (LINKING→IDLE after link established) |
 
 **Known non-blocking issue:** PING droughts causing periodic LINK_LOST/RECOVER cycles (~every 6s, recovers in ~130ms). Does not prevent testing.
+
+**G0 re-verified 2026-04-15** after bugs 10-12 fixes (CRC seq, lock guard, key_sense). Base: `state=1 armed=0 firing=0 rssi=-19 vbat=11837 mv cont=0x0001 arm=0 key=0 err=0x00`. Remote: `state=1 armed=0 sel=1 rssi=-23 missed=0 vbat=3290 mv arm=1 fire=0`. Both stable, zero crashes.
 | **G1 — Round-3 regressions** | T-R01..T-R06 | Verify the fixes shipped in commit `d357b33` actually work on target | Yes |
 | **G2 — FSD §15.2 Arming** | T-A01..T-A15 | Spec conformance for arm path | Yes |
 | **G3 — FSD §15.3 Fire** | T-F01..T-F09 | Spec conformance for fire path | Yes (T-F08 also needs scope) |
@@ -631,12 +679,12 @@ These are new tests specific to the fixes applied in commit `d357b33`. They are 
 
 | ID | Target fix | Procedure | Expected | Status |
 |----|-----------|-----------|----------|--------|
-| T-R01 | J1 — EVT_ARM_SENSE_FAULT consumer | With base powered up, temporarily short the arm-sense line to 3V3 while the arm relay is de-energized (forces a sense-high without a command). | Base logs `ARM RELAY CONTACT WELD — entering ERROR`, siren plays 3-blast error pattern, base enters STATE_ERROR, remote receives NACK 0x0B if arm was pending. No relay activity after entry. | TODO |
+| T-R01 | J1 — EVT_ARM_SENSE_FAULT consumer | Apply ~12V to arm relay COM terminal while relay is de-energized (3V3 insufficient — produces only 0.89V through divider). | Base logs `ARM RELAY CONTACT WELD — entering ERROR`, siren plays 3-blast error pattern, base enters STATE_ERROR (flags=0x04). Repeated detections every 500ms while voltage applied. No relay activity. Power cycle to clear. | **PASS** |
 | T-R02 | J7 — base battery critical posts event | With base running, lower VBAT below `BASE_VBAT_CRITICAL_MV` (use bench supply). | Base battery task logs `CRITICAL battery: ... mV`, FSM transitions to STATE_ERROR within 1 s, siren plays error pattern, no relay energizes afterwards. | PASS |
 | T-R03 | R8 — remote battery critical posts event | With remote running, lower remote VBAT below `REMOTE_VBAT_CRITICAL_MV`. | Remote logs `CRITICAL battery: ... mV`, remote FSM enters STATE_ERROR within 1 s, buzzer plays critical alarm, CMD_DISARM(0xFF) broadcast if any channel was armed. | PASS |
-| T-R04 | R1 — wait_for_ack sentinel preserves LINK_LOST | Arm a channel normally. While the remote is in `wait_for_ack` for CMD_ARM (window is very short — may need to force by powering base off right as remote sends CMD_ARM). | Remote transitions to STATE_LINK_LOST (not STATE_IDLE), LED shows link-lost pattern. After base comes back, remote re-links and returns to IDLE. | TODO |
-| T-R05 | R2 — multi-arm detection | Hand-craft this only if a fault-injection path is available: modify base to report two bits set in `channel_armed_bitmask` for one STATUS_UPDATE, or achieve it via a desync. If not achievable, mark as SKIPPED with justification and rely on code review. | Remote logs `MULTI-ARM DETECTED (mask=0x...)`, broadcasts CMD_DISARM(0xFF), enters STATE_ERROR, buzzer plays critical alarm. | TODO (may SKIP) |
-| T-R06 | J5 — POST_FIRE idempotent ACKs | Execute a full fire sequence (arm + fire). Immediately after the fire pulse completes (base is in POST_FIRE), send a redundant CMD_CEASE_FIRE and CMD_DISARM from the remote (repeat key press). | Base ACKs both commands without NACK, stays in POST_FIRE→IDLE transition, no ERROR state. Dead-man timestamp `s_last_fire_cmd_ms` logs as 0 on entry to IDLE. | TODO |
+| T-R04 | R1 — wait_for_ack sentinel preserves LINK_LOST | Arm a channel normally. While the remote is in `wait_for_ack` for CMD_ARM (window is very short — may need to force by powering base off right as remote sends CMD_ARM). | Remote transitions to STATE_LINK_LOST (not STATE_IDLE), LED shows link-lost pattern. After base comes back, remote re-links and returns to IDLE. | **PASS** |
+| T-R05 | R2 — multi-arm detection | Hand-craft this only if a fault-injection path is available: modify base to report two bits set in `channel_armed_bitmask` for one STATUS_UPDATE, or achieve it via a desync. If not achievable, mark as SKIPPED with justification and rely on code review. | Remote logs `MULTI-ARM DETECTED (mask=0x...)`, broadcasts CMD_DISARM(0xFF), enters STATE_ERROR, buzzer plays critical alarm. | **SKIP** — no fault-injection path available; code review confirmed logic correct |
+| T-R06 | J5 — POST_FIRE idempotent ACKs | Execute a full fire sequence (arm + fire). Immediately after the fire pulse completes (base is in POST_FIRE), send a redundant CMD_CEASE_FIRE and CMD_DISARM from the remote (repeat key press). | Base ACKs both commands without NACK, stays in POST_FIRE→IDLE transition, no ERROR state. Dead-man timestamp `s_last_fire_cmd_ms` logs as 0 on entry to IDLE. | **SKIP** — base ESP32 destroyed during first fire pulse. Software fix applied (relay order). Requires: replacement ESP32 + Schottky diode clamps on continuity ADC inputs before resuming fire tests |
 
 Note on T-R02/T-R03: if a bench supply is not available, these can be exercised by temporarily lowering `*_VBAT_CRITICAL_MV` in `rlc_config.h` to above the actual measured VBAT, rebuilding, and flashing. Revert after.
 
@@ -662,6 +710,8 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 
 ### Phase 3 FSD Fire Tests (§15.3)
 
+**BLOCKED** — requires replacement base ESP32 + Schottky diode clamps on continuity ADC inputs. See bug #18.
+
 | ID | Test | Status |
 |----|------|--------|
 | T-F01 | Full fire sequence (arm→fire→complete) | TODO |
@@ -677,7 +727,8 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 ### Phase 3 Key Commits
 
 - `744240c` Phase 2 extended testing — fresh-press fix, stack increases, 9 tests verified
-- (Phase 3 commit pending — code complete, on-target testing required before commit)
+- `e03b826` Phase 3 on-target testing — ADC deadlock fix + 9 bug fixes + G0/G1 partial
+- (Phase 3 final commit pending — G1 verification + G2/G3 testing required)
 
 ---
 
@@ -769,7 +820,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 
 | Task | Priority | Core | Stack | Phase |
 |------|----------|------|-------|-------|
-| `arm_switch_task` | 7 (highest) | 0 | 3072 | 2 |
+| `arm_switch_task` | 7 (highest) | 0 | 4096 | 2 |
 | `continuity_task` | 5 | 0 | 4096 | 2 |
 | `heartbeat_task` (link_task) | 6 | 0 | 4096 | 1 DONE |
 | `state_machine_task` (bfsm_task) | 4 | 0 | 8192 | 3 DONE |
@@ -788,7 +839,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 | `state_machine_task` (rfsm_task) | 4 | 0 | 8192 | 3 DONE |
 | `cmd_fire_repeat_task` (fire_rep) | 4 | 0 | 2048 | 3 DONE |
 | `battery_task` | 3 | 0 | 3072 | 2 |
-| `encoder_task` | 3 | 0 | 2048 | 2 |
+| `encoder_task` | 3 | 0 | 4096 | 2 |
 | `display_task` | 2 | 1 | 8192 | 4 |
 | `buzzer_task` | 1 | 1 | 2048 | 2 |
 | `rgb_led_task` | 1 (lowest) | 1 | 2048 | 1 DONE |
