@@ -588,7 +588,7 @@ Added dedicated key switch sense input to resolve circular dependency in `guard_
 
 **Preamble.** All remaining Phase 3 tests are on-target and require user interaction — there are no host-side unit tests in this project. Testing runs the two flashed units against each other with real relays, continuity banks, arm switches, encoder, and arm/fire buttons. Execute the plan top-to-bottom; later groups assume earlier groups passed.
 
-**Target hardware.** Base on `/dev/ttyACM0` (MAC `94:A9:90:31:18:38`), Remote on `/dev/ttyACM1` (MAC `44:1B:F6:81:F1:70`). **Verify ports each session** — they shift when units hot-plug or reboot rapidly. Use `esptool.py -p /dev/ttyACMx chip_id` to confirm. Both running commit `e03b826` or later.
+**Target hardware.** Base on `/dev/ttyACM0` (MAC `44:1B:F6:81:FA:F8`), Remote on `/dev/ttyACM1` (MAC `44:1B:F6:81:F1:70`). **Verify ports each session** — they shift when units hot-plug or reboot rapidly. Use `esptool.py -p /dev/ttyACMx chip_id` to confirm. Both running commit `e03b826` or later.
 
 ### Phase 3 On-Target Testing Fixes
 
@@ -805,7 +805,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 
 | Item | Value |
 |------|-------|
-| Base MAC | `94:A9:90:31:18:38` |
+| Base MAC | `44:1B:F6:81:FA:F8` |
 | Remote MAC | `44:1B:F6:81:F1:70` |
 | Base serial | `/dev/ttyACM0` (verify with `udevadm` each session) |
 | Remote serial | `/dev/ttyACM1` (verify with `udevadm` each session) |

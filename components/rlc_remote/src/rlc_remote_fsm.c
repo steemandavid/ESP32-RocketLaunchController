@@ -90,10 +90,14 @@ static inline bool is_multi_armed(uint16_t armed_mask)
     return __builtin_popcount((unsigned)(armed_mask & 0x00FFu)) > 1;
 }
 
-/* R2: Common multi-arm reaction — broadcast disarm and return to IDLE. */
+/* R2: Multi-arm reaction — broadcast disarm and enter ERROR state.
+ * A multi-arm ACK indicates base firmware instability or a serious bug.
+ * Halt the system and require power cycle. FSD §6 line 1201 mandates
+ * transition to IDLE, but ERROR is more conservative — multi-arm should
+ * never happen and indicates a critical failure. */
 static void handle_multi_arm_violation(uint16_t armed_mask)
 {
-    ESP_LOGE(TAG, "MULTI-ARM DETECTED (mask=0x%04x) — broadcasting DISARM",
+    ESP_LOGE(TAG, "MULTI-ARM DETECTED (mask=0x%04x) — broadcasting DISARM, entering ERROR",
              armed_mask);
     s_fire_repeat_active = false;
     send_cmd_disarm(0xFF);  /* 0xFF = all channels (FSD §6 line 1201) */
@@ -102,7 +106,7 @@ static void handle_multi_arm_violation(uint16_t armed_mask)
     rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
     buzzer_play(BUZZER_ALARM_CRITICAL);
     /* Display "MULTI-ARM ERROR" — Phase 4 */
-    s_state = STATE_IDLE;
+    s_state = STATE_ERROR;
 }
 
 /* ── Public API ──────────────────────────────────────────────── */
@@ -186,7 +190,7 @@ static int send_cmd_arm(uint8_t channel)
     s_pending_cmd_seq = seq;
     s_pending_cmd_type = MSG_CMD_ARM;
 
-    return rlc_link_send_cmd(MSG_CMD_ARM, &p, sizeof(p));
+    return rlc_link_send_cmd(MSG_CMD_ARM, seq, &p, sizeof(p));
 }
 
 static int send_cmd_fire(uint8_t channel)
@@ -211,7 +215,7 @@ static int send_cmd_fire(uint8_t channel)
     s_pending_cmd_seq = seq;
     s_pending_cmd_type = MSG_CMD_FIRE;
 
-    return rlc_link_send_cmd(MSG_CMD_FIRE, &p, sizeof(p));
+    return rlc_link_send_cmd(MSG_CMD_FIRE, seq, &p, sizeof(p));
 }
 
 static int send_cmd_disarm(uint8_t channel)
@@ -233,7 +237,7 @@ static int send_cmd_disarm(uint8_t channel)
     p.integrity_crc = rlc_compute_integrity_crc(
         &hdr, sizeof(hdr), &p.channel, sizeof(p.channel));
 
-    return rlc_link_send_cmd(MSG_CMD_DISARM, &p, sizeof(p));
+    return rlc_link_send_cmd(MSG_CMD_DISARM, seq, &p, sizeof(p));
 }
 
 static int send_cmd_cease_fire(void)
@@ -254,7 +258,7 @@ static int send_cmd_cease_fire(void)
     p.integrity_crc = rlc_compute_integrity_crc(
         &hdr, sizeof(hdr), NULL, 0);
 
-    return rlc_link_send_cmd(MSG_CMD_CEASE_FIRE, &p, sizeof(p));
+    return rlc_link_send_cmd(MSG_CMD_CEASE_FIRE, seq, &p, sizeof(p));
 }
 
 /* ── State Transition Helpers ────────────────────────────────── */

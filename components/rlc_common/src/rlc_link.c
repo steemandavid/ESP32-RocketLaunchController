@@ -111,8 +111,8 @@ static inline int64_t now_ms(void)
     return esp_timer_get_time() / 1000;
 }
 
-static void lock(void)   { xSemaphoreTake(s_state_mutex, portMAX_DELAY); }
-static void unlock(void) { xSemaphoreGive(s_state_mutex); }
+static void lock(void)   { if (s_state_mutex) xSemaphoreTake(s_state_mutex, portMAX_DELAY); }
+static void unlock(void) { if (s_state_mutex) xSemaphoreGive(s_state_mutex); }
 
 static void update_rssi(int rssi)
 {
@@ -871,16 +871,11 @@ void rlc_link_register_cmd_queue(QueueHandle_t q)
     }
 }
 
-int rlc_link_send_cmd(uint8_t msg_type, const void *payload, uint16_t payload_len)
+int rlc_link_send_cmd(uint8_t msg_type, uint32_t seq, const void *payload, uint16_t payload_len)
 {
     if (s_state != RLC_LINK_STATE_LINKED) return -1;
 
     lock();
-    uint32_t seq;
-    if (!seq_next(&seq)) {
-        unlock();
-        return -1;
-    }
     uint32_t token = s_session_token;
     unlock();
 

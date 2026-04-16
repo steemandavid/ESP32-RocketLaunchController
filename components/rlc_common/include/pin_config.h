@@ -40,7 +40,11 @@
 
 #define PIN_RELAY_CH_ACTIVE        1    /* 1 = active HIGH, 0 = active LOW */
 
-/* Arm switch sense input — reads ARM SENSE node (arm relay COM output) */
+/* Key switch sense input — direct read of key switch position */
+/* Voltage divider (27kΩ/10kΩ) + 3.3V zener clamp. HIGH = key switch ON / VBAT present */
+#define PIN_KEY_SENSE              42
+
+/* Arm relay feedback input — reads arm relay COM output (post-energise verification) */
 /* Voltage divider (27kΩ/10kΩ) + 3.3V zener clamp. HIGH = arm relay closed / VBAT present */
 #define PIN_ARM_SENSE              21
 

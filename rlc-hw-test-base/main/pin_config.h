@@ -65,6 +65,13 @@
  * LOW  (~0V)      = arm relay de-energised, R2 pulls to GND.             */
 #define PIN_ARM_SENSE           21
 
+/* --- Key sense input — direct read of key switch position ------------- */
+/* External circuit: 27 kΩ / 10 kΩ voltage divider + 3.3V zener clamp.
+ * Reads the physical key switch output directly (independent of arm relay).
+ * HIGH = key switch ON / VBAT present at switch output.
+ * LOW  = key switch OFF.                                                  */
+#define PIN_KEY_SENSE           42
+
 /* --- Arm relay output (GPIO 47, via IRLZ44N MOSFET) -------------------- */
 /* GPIO HIGH drives IRLZ44N MOSFET, energising the arm relay coil.
  * In production: arm relay coil positive terminal connected through

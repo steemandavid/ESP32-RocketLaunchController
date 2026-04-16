@@ -32,6 +32,7 @@ typedef enum {
     EVT_ENCODER_LONG_PRESS  = 0x15,
     EVT_ENCODER_SHORT_PRESS = 0x16,
     EVT_ENCODER_ROTATE      = 0x17,
+    EVT_KEY_SWITCH_CHANGED  = 0x18,
 
     /* Timer / internal events */
     EVT_FIRE_PULSE_DONE   = 0x20,

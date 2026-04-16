@@ -46,9 +46,9 @@ static void send_update(void)
     p.channel_armed_bitmask  = (armed_ch > 0)  ? (1U << (armed_ch - 1))  : 0;
     p.channel_firing_bitmask = (firing_ch > 0) ? (1U << (firing_ch - 1)) : 0;
 
-    /* Arm switch sense */
-    p.base_arm_switch = arm_sense_get_debounced() ? 1 : 0;
-    p.arm_switch_hw   = arm_sense_get_raw() ? 1 : 0;
+    /* Key switch state (direct read of key position) */
+    p.base_arm_switch = key_sense_get_debounced() ? 1 : 0;
+    p.arm_switch_hw   = key_sense_get_raw() ? 1 : 0;
 
     /* Battery voltage */
     p.battery_voltage_mv = rlc_battery_get_voltage_mv();

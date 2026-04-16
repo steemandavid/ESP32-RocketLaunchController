@@ -129,10 +129,12 @@ void rlc_link_register_cmd_queue(QueueHandle_t q);
 
 /**
  * Send a command message (remote -> base).
- * Uses the link's session token and auto-increments the sequence counter.
+ * Uses the link's session token and the caller-supplied sequence number.
+ * The caller must obtain the seq via rlc_link_next_seq() before computing
+ * the integrity CRC so that CRC and message header agree on the seq.
  * @return 0 on success, -1 on error or not linked.
  */
-int rlc_link_send_cmd(uint8_t msg_type, const void *payload, uint16_t payload_len);
+int rlc_link_send_cmd(uint8_t msg_type, uint32_t seq, const void *payload, uint16_t payload_len);
 
 /**
  * Get the current session token (for CRC computation on remote side).

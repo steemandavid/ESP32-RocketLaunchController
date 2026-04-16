@@ -111,7 +111,8 @@ static void cmd_help(void)
         "  batt raw [N]                 Take N raw samples (default 8)\r\n"
         "\r\nInputs:\r\n"
         "  arm                          Poll arm sense input (ARM SENSE node) until key press\r\n"
-        "  arm sim on|off               Energise/de-energise arm relay (GPIO 47)\r\n");
+        "  arm sim on|off               Energise/de-energise arm relay (GPIO 47)\r\n"
+        "  key                          Poll key sense input (GPIO 42) until key press\r\n");
     uart_puts(
         "\r\nSiren (via IRLZ44N MOSFET):\r\n"
         "  siren on|off                 Activate/deactivate siren\r\n"
@@ -137,8 +138,13 @@ static void cmd_status(void)
 
     /* Arm sense input */
     int armed = arm_sense_read_debounced();
-    printf("Arm sense  : %s (GPIO raw=%d)\r\n", armed ? "ARMED" : "DISARMED",
-           arm_sense_read_raw());
+    printf("Arm sense  : %s (GPIO %d raw=%d)\r\n", armed ? "ARMED" : "DISARMED",
+           PIN_ARM_SENSE, arm_sense_read_raw());
+
+    /* Key sense input */
+    int key_on = key_sense_read_debounced();
+    printf("Key sense  : %s (GPIO %d raw=%d)\r\n", key_on ? "ON" : "OFF",
+           PIN_KEY_SENSE, key_sense_read_raw());
 
     /* Battery */
     batt_reading_t batt = batt_read();
@@ -173,10 +179,13 @@ static void cmd_pins(void)
     printf("Arm sense       : GPIO %d  level=%d  (%s)\r\n",
            PIN_ARM_SENSE, gpio_get_level(PIN_ARM_SENSE),
            gpio_get_level(PIN_ARM_SENSE) ? "ARMED (arm relay closed)" : "DISARMED (arm relay open)");
+    printf("Key sense       : GPIO %d  level=%d  (%s)\r\n",
+           PIN_KEY_SENSE, gpio_get_level(PIN_KEY_SENSE),
+           gpio_get_level(PIN_KEY_SENSE) ? "ON (key switch ON)" : "OFF (key switch OFF)");
     printf("Arm relay       : GPIO %d  (IRLZ44N MOSFET, fire path interlock)\r\n", PIN_ARM_SIM_RELAY);
     printf("Siren           : GPIO %d  (via IRLZ44N MOSFET)\r\n", PIN_SIREN);
     printf("RGB LED strip   : GPIO %d  (WS2812, %d pixels + on-board mirror)\r\n", PIN_RGB_LED, NUM_RGB_LEDS);
-    printf("Spare GPIOs     : 38, 39, 41, 42\r\n");
+    printf("Spare GPIOs     : 38, 39, 41\r\n");
 }
 
 static void cmd_relay(char *toks[], int ntok)
@@ -315,6 +324,24 @@ static void cmd_arm(char *toks[], int ntok)
     uart_puts("Stopped.\r\n");
 }
 
+static void cmd_key(void)
+{
+    uart_puts("Polling key sense (GPIO 42, key switch output) — press any key to stop.\r\n");
+    uart_puts("HIGH = KEY ON (VBAT at switch output), LOW = KEY OFF\r\n");
+    uint8_t dummy;
+    int last = -1;
+    while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
+        int key_on = key_sense_read_debounced();
+        int raw    = key_sense_read_raw();
+        if (key_on != last) {
+            printf("Key sense: raw=%d  %s\r\n", raw, key_on ? "ON" : "OFF");
+            last = key_on;
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    uart_puts("Stopped.\r\n");
+}
+
 static void cmd_siren(char *toks[], int ntok)
 {
     if (ntok < 2) { uart_puts("Usage: siren on|off|pulse|test\r\n"); return; }
@@ -444,6 +471,7 @@ static void dispatch(char *line)
     else if (strcmp(toks[0], "cont")     == 0) cmd_cont(toks, ntok);
     else if (strcmp(toks[0], "batt")     == 0) cmd_batt(toks, ntok);
     else if (strcmp(toks[0], "arm")      == 0) cmd_arm(toks, ntok);
+    else if (strcmp(toks[0], "key")      == 0) cmd_key();
     else if (strcmp(toks[0], "siren")    == 0) cmd_siren(toks, ntok);
     else if (strcmp(toks[0], "led")      == 0) cmd_led(toks, ntok);
     else if (strcmp(toks[0], "fire")     == 0) cmd_fire(toks, ntok);

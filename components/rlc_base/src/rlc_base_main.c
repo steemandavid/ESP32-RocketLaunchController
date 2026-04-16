@@ -76,6 +76,22 @@ static void on_arm_fault_cb(void)
     }
 }
 
+/**
+ * Key switch callback — forward to FSM as EVT_KEY_SWITCH_CHANGED.
+ */
+static void on_key_change_cb(bool on)
+{
+    status_update_trigger();
+    if (base_fsm_get_queue()) {
+        rlc_fsm_event_t evt = {0};
+        evt.type = EVT_KEY_SWITCH_CHANGED;
+        evt.data.arm_state.armed = on;
+        if (xQueueSend(base_fsm_get_queue(), &evt, pdMS_TO_TICKS(10)) != pdTRUE) {
+            ESP_LOGW(TAG, "FSM queue full — EVT_KEY_SWITCH_CHANGED dropped");
+        }
+    }
+}
+
 void base_app_main(void)
 {
     ESP_LOGI(TAG, "=== RLC Base Unit v%s ===", RLC_VERSION_STRING);
@@ -126,6 +142,7 @@ void base_app_main(void)
     continuity_register_change_cb(on_io_change);
     arm_sense_register_cb(on_arm_change_cb);
     arm_sense_register_fault_cb(on_arm_fault_cb);
+    key_sense_register_cb(on_key_change_cb);
 
     /* §9.13 Step 8: Configure hardware watchdog + TWDT */
     rlc_watchdog_init();
@@ -180,11 +197,12 @@ void base_app_main(void)
             rlc_link_status_t ls;
             rlc_link_get_status(&ls);
             uint16_t bands = continuity_get_bands();
-            ESP_LOGI(TAG, "state=%d armed=%u firing=%u rssi=%d vbat=%u mv cont=0x%04x arm=%d err=0x%02x",
+            ESP_LOGI(TAG, "state=%d armed=%u firing=%u rssi=%d vbat=%u mv cont=0x%04x arm=%d key=%d err=0x%02x",
                      base_fsm_get_state(), base_fsm_get_armed_channel(),
                      base_fsm_get_firing_channel(),
                      ls.rssi_avg_dbm, rlc_battery_get_voltage_mv(),
                      bands, arm_sense_get_debounced(),
+                     key_sense_get_debounced(),
                      base_fsm_get_error_flags());
             last_status_log_ms = now;
         }

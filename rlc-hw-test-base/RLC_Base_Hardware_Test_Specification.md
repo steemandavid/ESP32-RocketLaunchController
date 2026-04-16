@@ -77,11 +77,12 @@ All pin assignments match the main RLC FSD (RLC-FSPEC-001 v1.11, Appendix C.1).
 | Channel 7 SPDT relay output | 17 | Digital output | Active HIGH via IRLZ44N MOSFET |
 | Channel 8 SPDT relay output | 18 | Digital output | Active HIGH via IRLZ44N MOSFET |
 | Arm sense input | 21 | Digital input | 27kΩ/10kΩ voltage divider + 3.3V zener clamp. Senses ARM SENSE node (arm relay COM output). HIGH=arm relay closed, VBAT on fire path. |
+| Key sense input | 42 | Digital input | 27kΩ/10kΩ voltage divider + 3.3V zener clamp. Direct read of physical key switch output. HIGH=key switch ON, VBAT at switch output. |
 | Arm relay output | 47 | Digital output | Active HIGH via IRLZ44N MOSFET. Arm relay coil driven through physical key switch AND MOSFET (hardware AND gate). Primary fire path interlock. |
 | Siren output | 40 | Digital output | Active HIGH via IRLZ44N MOSFET |
 | RGB LED strip (status) | 48 | WS2812 | 8-pixel LED strip, RMT peripheral |
 
-**Spare GPIOs:** 38, 39, 41, 42
+**Spare GPIOs:** 38, 39, 41
 
 ---
 
@@ -99,7 +100,7 @@ rlc-hw-test-base/
 │   ├── hw_continuity.h
 │   ├── hw_battery.c          # Battery voltage ADC
 │   ├── hw_battery.h
-│   ├── hw_inputs.c           # Arm sense input (ARM SENSE node)
+│   ├── hw_inputs.c           # Arm sense + key sense inputs
 │   ├── hw_inputs.h
 │   ├── hw_siren.c            # Siren output control (via IRLZ44N MOSFET)
 │   ├── hw_siren.h
@@ -159,6 +160,7 @@ Continuity sensing is always active when relays are de-energised (NC position). 
 | Command | Description |
 |---|---|
 | `arm` | Poll arm sense input (GPIO 21, ARM SENSE node). Displays raw GPIO level and debounced state (ARMED=HIGH, arm relay closed; DISARMED=LOW, arm relay open). Continuously polls until key press. |
+| `key` | Poll key sense input (GPIO 42, key switch output). Displays raw GPIO level and debounced state (ON=HIGH, key switch closed; OFF=LOW, key switch open). Continuously polls until key press. |
 
 ### 5.6 Siren Commands
 
@@ -238,9 +240,11 @@ The fire timer SHALL use a hardware timer (not `vTaskDelay`). The timer callback
 
 WS2812 single-pixel driver using ESP32-S3 RMT peripheral on GPIO 47. Brightness scaling configurable. The `led test` command SHALL cycle through all patterns defined in the main FSD §11.1.
 
-### 6.7 Arm Sense Input
+### 6.7 Arm Sense and Key Sense Inputs
 
 The arm sense input on GPIO 21 reads the ARM SENSE node (arm relay COM output) via an external circuit (27 kΩ / 10 kΩ voltage divider + 3.3V zener clamp) per FSD §5.4.3. No internal pull-up/pull-down is used. HIGH = arm relay closed, VBAT present on fire path (key switch ON AND software drive active). LOW = arm relay de-energised or key switch OFF (R2 10 kΩ pulls GPIO to GND).
+
+The key sense input on GPIO 42 reads the physical key switch output directly via the same type of external circuit (27 kΩ / 10 kΩ voltage divider + 3.3V zener clamp). HIGH = key switch ON, VBAT present at switch output. LOW = key switch OFF. This input is independent of the arm relay — it senses the switch position before the hardware AND gate, allowing the system to verify that the key is physically turned on even when the arm relay is de-energised.
 
 The test firmware can drive the arm relay (GPIO 47) to simulate the armed condition. The hardware AND gate (key switch + MOSFET) is validated by verifying that arm sense reads HIGH only when both conditions are met.
 
@@ -308,7 +312,17 @@ Requires test resistors connected to channel terminals via SPDT relay NC contact
 | B-I04 | Arm sense with battery disconnected | Energise arm relay (`arm sim on`) but disconnect battery from ARM SENSE node. `arm`. | Reports DISARMED (LOW) — correctly detects no VBAT on fire path. |
 | B-I05 | Contact welding detection | Ensure arm relay OFF (`arm sim off`). Verify arm sense reads LOW. | Arm sense reads LOW when arm relay de-energised. If HIGH, contacts may be welded. |
 
-### 7.5 Siren Tests
+### 7.5 Key Sense Tests
+
+| ID | Test | Procedure | Pass Criteria |
+|---|---|---|---|
+| B-K01 | Key switch OFF | Ensure key switch is in OFF position. `key`. | Reports OFF, GPIO LOW (0). Key switch output at GND. |
+| B-K02 | Key switch ON | Turn key switch to ON position (VBAT present). `key`. | Reports ON, GPIO HIGH (1). Key switch output at VBAT (divided to 2.4–3.3V). |
+| B-K03 | Key switch toggle | `key` (continuous). Toggle key switch ON/OFF repeatedly. | State changes detected cleanly, no bouncing. |
+| B-K04 | Key sense independent of arm relay | With key switch ON: `arm sim off`, then `key`. With key switch OFF: `arm sim on`, then `key`. | Key sense reads key switch position regardless of arm relay state — confirms key sense is wired to switch output, not arm relay output. |
+| B-K05 | Key sense — battery disconnected | With key switch ON, disconnect battery from key sense input. `key`. | Reports OFF (LOW) — correctly detects no VBAT at switch output. |
+
+### 7.6 Siren Tests
 
 | ID | Test | Procedure | Pass Criteria |
 |---|---|---|---|
@@ -316,7 +330,7 @@ Requires test resistors connected to channel terminals via SPDT relay NC contact
 | B-S02 | Siren pulse | `siren pulse 500 500 4`. | 4 pulses, each ~500 ms on / 500 ms off. |
 | B-S03 | Siren patterns | `siren test`. | All six patterns play distinctly (ARMED, PRE_FIRE, FIRING, LINK_LOST, ERROR, CONTINUITY_LOST). |
 
-### 7.6 RGB LED Tests
+### 7.7 RGB LED Tests
 
 | ID | Test | Procedure | Pass Criteria |
 |---|---|---|---|
@@ -324,7 +338,7 @@ Requires test resistors connected to channel terminals via SPDT relay NC contact
 | B-L02 | Pattern test | `led test`. | All 9 status patterns cycle correctly matching FSD §11.1: BOOT, IDLE (arm OFF), IDLE (arm ON), ARMED, PRE_FIRE, FIRING, POST_FIRE, LINK_LOST, ERROR. |
 | B-L03 | Brightness | `led brightness 10`, `led 255 255 255`. Then `led brightness 255`, `led 255 255 255`. | Visible brightness difference. |
 
-### 7.7 Fire Timer Tests
+### 7.8 Fire Timer Tests
 
 | ID | Test | Procedure | Pass Criteria |
 |---|---|---|---|
@@ -334,7 +348,7 @@ Requires test resistors connected to channel terminals via SPDT relay NC contact
 | B-F04 | Fire all channels | `fire <ch> 1000` for each channel 1–8. | Each channel SPDT relay energises for ~1000 ms. |
 | B-F05 | Task-context verification | `fire 1 2000`. Observe log output. | Log shows "Timer ISR: signalling task" followed by "Task: relay_all_safe() called". Confirms ISR does not drive GPIO directly. |
 
-### 7.8 Boot Safety Test
+### 7.9 Boot Safety Test
 
 | ID | Test | Procedure | Pass Criteria |
 |---|---|---|---|

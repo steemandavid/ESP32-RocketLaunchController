@@ -1,12 +1,18 @@
 /**
- * RLC Arm Sense Monitor (Base Unit)
+ * RLC Arm Sense and Key Sense Monitor (Base Unit)
  *
- * Monitors the arm sense input (GPIO 21) which reads the ARM SENSE node --
- * the output of the arm relay COM contact through a voltage divider
- * (27k/10k + 3.3V zener clamp).
+ * Monitors two inputs:
  *
- * HIGH = arm relay closed / VBAT present on fire path
- * LOW  = arm relay de-energised / no VBAT
+ * 1. Key sense (GPIO 42) — direct read of the physical key switch position
+ *    through a voltage divider (27k/10k + 3.3V zener clamp).
+ *    HIGH = key switch ON / VBAT present at switch output
+ *    LOW  = key switch OFF
+ *
+ * 2. Arm sense (GPIO 21) — reads the arm relay COM output through a voltage
+ *    divider (27k/10k + 3.3V zener clamp). Used for post-energize verification
+ *    and contact-welding detection.
+ *    HIGH = arm relay closed / VBAT present on fire path
+ *    LOW  = arm relay de-energised / no VBAT
  *
  * Includes contact-welding detection (FSD sec 5.4.3, 7.3.2): verifies that
  * arm sense reads LOW when the arm relay GPIO is known to be de-energised.
@@ -59,3 +65,26 @@ void arm_sense_register_cb(void (*cb)(bool armed));
  * @param cb  Callback invoked on fault detection (no parameters)
  */
 void arm_sense_register_fault_cb(void (*cb)(void));
+
+/* ── Key Sense (direct key switch position) ───────────────────── */
+
+/**
+ * Get the current debounced key switch state.
+ *
+ * @return true if key switch is ON (VBAT present at key output), false otherwise
+ */
+bool key_sense_get_debounced(void);
+
+/**
+ * Get the raw (undebounced) key switch GPIO level.
+ *
+ * @return true if GPIO reads HIGH, false if LOW
+ */
+bool key_sense_get_raw(void);
+
+/**
+ * Register a callback invoked on debounced key switch state transitions.
+ *
+ * @param cb  Callback: cb(on) where on=true means key switch ON
+ */
+void key_sense_register_cb(void (*cb)(bool on));

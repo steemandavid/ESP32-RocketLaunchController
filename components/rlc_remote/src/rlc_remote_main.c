@@ -39,10 +39,11 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_task_wdt.h"
+#include "driver/gpio.h"
 
 static const char *TAG = "rlc_remote";
 
-/* ── m4: Dedicated encoder task (FSD §9.10 — priority 3, core 0, 2048 stack) ── */
+/* ── m4: Dedicated encoder task (FSD §9.10 — priority 3, core 0, 4096 stack) ── */
 
 static void encoder_task_fn(void *arg)
 {
@@ -90,7 +91,9 @@ static void on_encoder_rotate(uint8_t channel)
     rlc_fsm_event_t evt = {0};
     evt.type = EVT_ENCODER_ROTATE;
     evt.data.encoder.channel = channel;
-    (void)xQueueSend(remote_fsm_get_queue(), &evt, 0);
+    BaseType_t higher_prio_woken = pdFALSE;
+    (void)xQueueSendFromISR(remote_fsm_get_queue(), &evt, &higher_prio_woken);
+    if (higher_prio_woken) portYIELD_FROM_ISR();
 }
 
 static void on_encoder_press(void)
@@ -169,8 +172,8 @@ void remote_app_main(void)
     arm_switch_start_task();
     /* Priority 3 — battery monitoring */
     remote_battery_start_task();
-    /* m4: Dedicated encoder task (FSD §9.10 — priority 3, core 0, 2048 stack) */
-    xTaskCreatePinnedToCore(encoder_task_fn, "encoder_task", 2048, NULL, 3, NULL, 0);
+    /* m4: Dedicated encoder task (FSD §9.10 — priority 3, core 0, 4096 stack) */
+    xTaskCreatePinnedToCore(encoder_task_fn, "encoder_task", 4096, NULL, 3, NULL, 0);
     ESP_LOGI(TAG, "encoder task started (prio 3, core 0)");
 
     /* §9.13 Step 10: Begin link establishment */

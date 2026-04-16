@@ -147,7 +147,8 @@ static void send_ack(uint8_t msg_type, uint32_t seq_num, uint8_t channel)
     p.acked_msg_type = msg_type;
     p.acked_sequence_number = seq_num;
     p.channel = channel;
-    (void)rlc_link_send_cmd(MSG_CMD_ACK, &p, sizeof(p));
+    uint32_t seq = rlc_link_next_seq();
+    (void)rlc_link_send_cmd(MSG_CMD_ACK, seq, &p, sizeof(p));
     ESP_LOGI(TAG, "ACK sent: type=0x%02x ch=%u seq=%lu",
              msg_type, channel, (unsigned long)seq_num);
 }
@@ -158,7 +159,8 @@ static void send_nack(uint8_t msg_type, uint32_t seq_num, uint8_t reason)
     p.nacked_msg_type = msg_type;
     p.nacked_sequence_number = seq_num;
     p.reason_code = reason;
-    (void)rlc_link_send_cmd(MSG_CMD_NACK, &p, sizeof(p));
+    uint32_t seq = rlc_link_next_seq();
+    (void)rlc_link_send_cmd(MSG_CMD_NACK, seq, &p, sizeof(p));
     ESP_LOGW(TAG, "NACK sent: type=0x%02x reason=0x%02x (%s)",
              msg_type, reason, rlc_nack_reason_str(reason));
 }
@@ -239,8 +241,8 @@ static uint8_t guard_arm(const rlc_fsm_event_t *evt)
     /* Guard 4: No other channel armed */
     if (s_armed_channel != 0) return NACK_CHANNEL_ALREADY_ARMED;
 
-    /* Guard 1: Base arm switch (key) must be ON — arm sense HIGH */
-    if (!arm_sense_get_debounced()) return NACK_BASE_SWITCH_OFF;
+    /* Guard 1: Base key switch must be ON — key_sense HIGH */
+    if (!key_sense_get_debounced()) return NACK_BASE_SWITCH_OFF;
 
     /* Guard 2: Continuity not OPEN */
     if (continuity_get_channel(ch) == CONT_OPEN) return NACK_NO_CONTINUITY;
@@ -248,10 +250,7 @@ static uint8_t guard_arm(const rlc_fsm_event_t *evt)
     /* Guard 8: Battery above minimum */
     if (rlc_battery_get_voltage_mv() < BASE_VBAT_MIN_ARM_MV) return NACK_LOW_BATTERY;
 
-    /* Guard 9: Arm sense check (redundant with guard 1, but explicit) */
-    if (!arm_sense_get_debounced()) return NACK_ARM_SENSE_FAULT;
-
-    /* Guard 10: Link quality (M2: correct NACK code) */
+    /* Guard 10: Link quality */
     if (!rlc_link_is_healthy()) return NACK_COMM_DEGRADED;
 
     return 0;  /* All guards pass */
@@ -417,8 +416,12 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* ARM for different channel while already armed */
             send_nack(MSG_CMD_ARM, evt->data.cmd.seq_number, NACK_CHANNEL_ALREADY_ARMED);
         } else if (evt->type == EVT_ARM_SENSE_CHANGED && !evt->data.arm_state.armed) {
+            /* Arm relay feedback lost — relay dropout or fault */
+            ESP_LOGW(TAG, "Arm sense LOW during ARMED — relay feedback lost");
+            do_disarm();
+        } else if (evt->type == EVT_KEY_SWITCH_CHANGED && !evt->data.arm_state.armed) {
             /* Key switch turned OFF */
-            ESP_LOGW(TAG, "Arm sense LOW during ARMED — key switch OFF");
+            ESP_LOGW(TAG, "Key switch OFF during ARMED — disarm");
             do_disarm();
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
             do_enter_error(ERR_VBAT_CRITICAL);
@@ -441,6 +444,9 @@ static void process_event(const rlc_fsm_event_t *evt)
             }
         } else if (evt->type == EVT_ARM_SENSE_CHANGED && !evt->data.arm_state.armed) {
             ESP_LOGW(TAG, "Arm sense LOW during PRE_FIRE — abort");
+            do_disarm();
+        } else if (evt->type == EVT_KEY_SWITCH_CHANGED && !evt->data.arm_state.armed) {
+            ESP_LOGW(TAG, "Key switch OFF during PRE_FIRE — abort");
             do_disarm();
         } else if (evt->type == EVT_CMD_DISARM) {
             send_ack(MSG_CMD_DISARM, evt->data.cmd.seq_number,
@@ -494,6 +500,19 @@ static void process_event(const rlc_fsm_event_t *evt)
             s_state = STATE_IDLE;
 
         } else if (evt->type == EVT_ARM_SENSE_CHANGED && !evt->data.arm_state.armed) {
+            /* Arm relay feedback lost during FIRING — cease fire */
+            fire_timer_stop();
+            relay_all_safe();
+            siren_off();
+            s_firing_channel = 0;
+            s_armed_channel = 0;
+            s_link_lost_pending = false;
+            rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+            status_update_trigger();
+            ESP_LOGW(TAG, "FIRING -> IDLE (arm sense lost)");
+            s_state = STATE_IDLE;
+
+        } else if (evt->type == EVT_KEY_SWITCH_CHANGED && !evt->data.arm_state.armed) {
             /* Key switch OFF during FIRING — same as CEASE_FIRE (FSD §7.2.5) */
             fire_timer_stop();
             relay_all_safe();
@@ -638,7 +657,14 @@ static void check_timers(void)
                 return;
             }
 
-            /* Guard: arm sense still HIGH (FSD §7.2.4) */
+            /* Guard: key switch still ON (FSD §7.2.4) */
+            if (!key_sense_get_debounced()) {
+                ESP_LOGW(TAG, "PRE_FIRE key switch OFF — abort");
+                do_disarm();
+                return;
+            }
+
+            /* Guard: arm sense still HIGH (relay integrity, FSD §7.2.4) */
             if (!arm_sense_get_debounced()) {
                 ESP_LOGW(TAG, "PRE_FIRE arm sense lost — abort");
                 do_disarm();
