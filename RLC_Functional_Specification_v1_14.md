@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.14
+**Version:** 1.15
 **Date:** 2026-04-14
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -28,6 +28,7 @@
 | 1.12 | 2026-04-13 | Documentation consistency audit. Fixed GPIO 47→48 for RGB LED in §3, §4.1, §11.3. Fixed v1.10 revision note: ULN2003A→IRLZ44N throughout, removed GPIO 48 from freed list. Added §5.4.9 Arm Relay Output section. Updated §5.4.10 (was §5.4.9) MOSFET quantity 9→10 (includes arm relay). Updated §5.4.11 (was §5.4.10) RGB LED to describe 8-pixel strip. Fixed §2.1 architecture diagram: arm switch sense label. Fixed Appendix C.1 pin count. Updated all cross-references for section renumbering. |
 | 1.13 | 2026-04-14 | Arm relay redesign: physical arm key switch removed from fire path (cannot handle igniter current). Arm relay (SPDT, driven via IRLZ44N MOSFET in series with physical key switch) now provides primary fire path interlock — forming a hardware AND gate (key switch ON AND software MOSFET drive required). Key switch moved to arm relay coil drive path (SPDT, carries only coil current). Arm sense circuit now reads ARM SENSE node (arm relay COM output) through voltage divider (27 kΩ / 10 kΩ) + 3.3 V zener clamp. Added arm status feedback LEDs (green = SAFE, red = key position, red = relay energised). Added contact welding detection via arm sense. Updated §2.1, §3, §5.4.2, §5.4.3, §5.4.4, §5.4.5, §5.4.9, §5.4.10, §7.2.2, §7.2.5, §7.2.7, §7.4.1, §9.1, §9.2, §9.7, §9.13. |
 | 1.14 | 2026-04-14 | Operational tuning: removed NVS key provisioning note (compile-time keys are acceptable). Made link retry more aggressive: 5 attempts at 2s intervals (was 15 at 2s then 5s). Changed missed ping RGB LED flash from 50ms to 250ms. Reduced PRE_FIRE_DELAY_MS from 5000ms to 2000ms. Reduced FIRE_PULSE_DURATION_MS from 2000ms to 1000ms. Made runtime UART logging compile-time optional (disabled by default, enabled via CONFIG_RLC_SERIAL_DEBUG_LOGGING). Updated §6.2.1, §6.4.1, §6.4.2, §7.2.3, §9.11, §14.1. |
+| 1.15 | 2026-04-16 | Circuit documentation correction after on-target testing revealed errors. Split §5.4.3 into arm relay feedback (GPIO 21, renamed from "Arm Switch Position Sense") and new §5.4.3b key switch sense (GPIO 42). Fixed §5.4.4 key switch diagram to show key sense connection (was "No separate GPIO"). Fixed §5.4.5 circuit topology to include key sense circuit. Fixed §7.2.2 arming guards: guard 1 now checks key sense GPIO 42 (was incorrectly checking arm sense GPIO 21, creating circular dependency). Fixed §7.2.3, §7.2.4, §7.2.7 to distinguish key switch events from arm relay feedback events. Updated debounce table, protocol fields, task priorities, boot sequence, test descriptions, and hardware notes. Updated §5.4.9 arm relay output sensing description. |
 
 ---
 
@@ -300,7 +301,7 @@ Deliverables:
 Deliverables:
 - `rlc_common`: Shift-register debounce engine (generic, configurable polling rate).
 - `rlc_common`: Battery voltage ADC driver (ADC1, 8-sample averaging, calibrated).
-- `rlc_base`: GPIO configuration for all 8 channel SPDT relays, arm switch sense inputs, arm switch, siren. All outputs with configurable polarity.
+- `rlc_base`: GPIO configuration for all 8 channel SPDT relays, arm relay feedback sense (GPIO 21), key switch sense (GPIO 42), arm switch, siren. All outputs with configurable polarity.
 - `rlc_base`: ADC1 configuration for battery voltage (GPIO 1) and 8 continuity inputs (GPIO 2–9).
 - `rlc_base`: `relay_fire_set()`, `relay_fire_all_off()`, `relay_all_safe()` functions.
 - `rlc_base`: Arm switch sense monitoring (single shared GPIO input from relay NO contact common node, §5.4.3).
@@ -512,11 +513,12 @@ All digital inputs (except the rotary encoder A/B pins) shall use a shift-regist
 | Input type | Register width | Polling interval | Debounce time | Stable values |
 |---|---|---|---|---|
 | **Fire button** | **8-bit** | 10 ms | **80 ms** | 0x00 = pressed, 0xFF = released |
-| Base arm switch (via sense circuit §5.4.3) | 16-bit | 10 ms | 160 ms | 0xFFFF = armed (HIGH, VBAT present), 0x0000 = disarmed (LOW, no VBAT) |
+| Base arm switch (via sense circuit §5.4.3) | 16-bit | 10 ms | 160 ms | 0xFFFF = arm relay closed (HIGH, VBAT on fire bus), 0x0000 = arm relay open (LOW) |
+| Base key switch (via sense circuit §5.4.3b) | 16-bit | 10 ms | 160 ms | 0xFFFF = key ON (HIGH, VBAT at coil+), 0x0000 = key OFF (LOW) |
 | Remote arm switch | 16-bit | 10 ms | 160 ms | 0x0000 = armed, 0xFFFF = disarmed |
 | Encoder push button | 16-bit | 10 ms | 160 ms | 0x0000 = pressed, 0xFFFF = released |
 
-**Note:** The base arm switch sense circuit (§5.4.3) reads HIGH when the arm switch is ON (VBAT clamped by zener), which is the opposite polarity from the remote arm switch (active LOW with pull-up). The debounce engine handles both polarities — the stable values are configured per input.
+**Note:** The base arm relay feedback sense circuit (§5.4.3) reads HIGH when VBAT is on the fire bus (arm relay closed), and the base key switch sense circuit (§5.4.3b) reads HIGH when the key switch is ON. Both are opposite polarity from the remote arm switch (active LOW with pull-up). The debounce engine handles both polarities — the stable values are configured per input.
 
 **Note:** Continuity inputs use ADC sampling with multi-sample averaging and hysteresis-based band classification (see §5.4.2), not the shift-register debounce engine.
 
@@ -580,7 +582,7 @@ The current-limiting resistors R_ref1 + R_ref2 (1.5 kΩ + 1.8 kΩ = 3.3 kΩ tota
 
 The 100 kΩ pull-down resistor (R_pull) serves a critical function: **without it, an open circuit leaves the ADC pin floating**, producing undefined readings. With R_pull, an open circuit reads a defined voltage of 3.3 × 100k / (3.3k + 100k) ≈ **3.19V**, which is clearly distinguishable from any connected igniter. The pull-down draws negligible current (33 µA) and does not materially affect readings when an igniter is connected, since R_pull (100 kΩ) is vastly larger than any igniter resistance.
 
-**Component count per channel:** 3 resistors (R_ref1 1.5 kΩ fusible + R_ref2 1.8 kΩ fusible + R_pull 100 kΩ). **Total additional components: 24 continuity resistors** (8× R_ref1 1.5 kΩ fusible + 8× R_ref2 1.8 kΩ fusible + 8× R_pull 100 kΩ) + **3 arm sense components** (1× 27 kΩ series + 1× 10 kΩ divider + 1× 3.3 V zener) + **9× 12V automotive SPDT relays** (8 channel + 1 arm relay) + **3 feedback LEDs** (1 green + 2 red) + **3 LED series resistors** + **10× IRLZ44N MOSFET driver circuits** (10 MOSFETs + 10 gate resistors + 10 pull-downs + 10 flyback diodes, see §5.4.10).
+**Component count per channel:** 3 resistors (R_ref1 1.5 kΩ fusible + R_ref2 1.8 kΩ fusible + R_pull 100 kΩ). **Total additional components: 24 continuity resistors** (8× R_ref1 1.5 kΩ fusible + 8× R_ref2 1.8 kΩ fusible + 8× R_pull 100 kΩ) + **3 arm sense components** (1× 27 kΩ series + 1× 10 kΩ divider + 1× 3.3 V zener) + **3 key sense components** (1× 27 kΩ series + 1× 10 kΩ divider + 1× 3.3 V zener) + **9× 12V automotive SPDT relays** (8 channel + 1 arm relay) + **3 feedback LEDs** (1 green + 2 red) + **3 LED series resistors** + **10× IRLZ44N MOSFET driver circuits** (10 MOSFETs + 10 gate resistors + 10 pull-downs + 10 flyback diodes, see §5.4.10).
 
 ##### Continuity Band Classification
 
@@ -601,42 +603,55 @@ The ADC voltage is converted to a continuity band using threshold comparison wit
 
 **Implication:** continuity readings are valid and meaningful whenever the channel relay is de-energised (NC position), regardless of arm switch position. The display always shows which igniters are connected and their connection quality. During FIRING (relay energised), the fired channel reads OPEN (expected — NC disconnected); all other channels remain readable.
 
-#### 5.4.3 Arm Switch Position Sense Input
+#### 5.4.3 Arm Relay Feedback Sense Input (GPIO 21)
 
 | Parameter | Value |
 |---|---|
 | Signal type | Digital input (GPIO) with voltage divider and zener clamp |
-| Quantity | 1 (shared — senses ARM SENSE node, the arm relay COM output) |
+| Quantity | 1 (senses ARM SENSE node — the arm relay COM output / fire bus) |
 | Pin | GPIO 21 |
-| Function | Senses whether the arm relay is closed and VBAT is present on the fire path. This simultaneously verifies: (1) the physical key switch is in the ON position, (2) the software has driven the arm relay MOSFET, (3) the arm relay contacts are actually closed, and (4) battery voltage is present. This is the **sole method** by which firmware detects arm relay state on the base unit. |
+| Function | Post-energise verification that the arm relay contacts are actually closed and VBAT is present on the fire bus. Used for the M1 arm relay verify flow and contact-welding detection (§5.4.3b provides separate key switch position sensing). |
 | Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp |
 | Debounce | 16-bit shift-register, 10 ms polling, 160 ms debounce (same engine as other digital inputs, §5.3) |
 
-The arm sense circuit reads the ARM SENSE node, which is the arm relay COM output (§5.4.9). This node carries VBAT whenever the arm relay is energised (contacts closed). A single sense circuit taps this node:
+The arm sense circuit reads the ARM SENSE node, which is the arm relay COM output — i.e., the fire bus (§5.4.9). This node carries VBAT whenever the arm relay contacts close (NO→COM). The arm relay coil drive path (§5.4.4) requires both the physical key switch ON and the MOSFET driven, so arm sense HIGH implies both conditions are met. However, the firmware also has a **separate** key switch sense input (§5.4.3b, GPIO 42) that reads the key switch position directly, enabling the firmware to distinguish between key switch OFF and arm relay dropout.
 
-```
-ARM SENSE node ─── R1 (27 kΩ) ───┬── GPIO 21 (arm switch sense)
-                                   │
-                              R2 (10 kΩ) ── GND
-                                   │
-                            3.3 V zener ── GND
-```
+The ARM SENSE node connects to GPIO 21 through a voltage divider (27 kΩ series, 10 kΩ to GND) with a 3.3 V zener diode clamp across the lower resistor.
 
 **Reading interpretation:**
-- **Arm relay de-energised (or key switch OFF):** ARM SENSE node is disconnected from VBAT (arm relay NO contact open). R2 (10 kΩ) pulls the GPIO to ~0 V. GPIO reads LOW (debounced: 0x0000 = disarmed).
-- **Arm relay energised AND key switch ON:** VBAT appears on ARM SENSE node via arm relay NO→COM. The voltage divider reduces VBAT to a safe range. The 3.3 V zener clamps any voltage above 3.3 V. GPIO reads HIGH (debounced: 0xFFFF = armed).
+- **Arm relay de-energised:** ARM SENSE node is disconnected from VBAT (arm relay COM↔NC, NC unused). R2 (10 kΩ) pulls the GPIO to ~0 V. GPIO reads LOW (debounced: 0x0000 = arm relay open).
+- **Arm relay energised:** VBAT appears on ARM SENSE node via arm relay NO→COM. The voltage divider reduces VBAT to a safe range. The 3.3 V zener clamps any voltage above 3.3 V. GPIO reads HIGH (debounced: 0xFFFF = arm relay closed, VBAT on fire bus).
 
 **Voltage divider calculation** (R1 = 27 kΩ, R2 = 10 kΩ):
 
 | VBAT | Divider output (V_div = VBAT × R2 / (R1 + R2)) | After zener | GPIO reads |
 |---|---|---|---|
-| 0 V (relay off) | 0 V | 0 V | LOW (disarmed) |
-| 9.0 V (min operating) | 2.43 V | 2.43 V | HIGH (armed) |
-| 12.6 V (full charge) | 3.41 V | 3.3 V (clamped) | HIGH (armed) |
+| 0 V (relay off) | 0 V | 0 V | LOW (relay open) |
+| 9.0 V (min operating) | 2.43 V | 2.43 V | HIGH (relay closed) |
+| 12.6 V (full charge) | 3.41 V | 3.3 V (clamped) | HIGH (relay closed) |
 
-This circuit simultaneously verifies four things: (1) the physical key switch is in the ON position (required for arm relay coil current), (2) the software has driven the arm relay MOSFET (GPIO 47 HIGH), (3) the arm relay contacts are actually closed (VBAT present on fire path), and (4) battery voltage is present. If the key switch is ON but the MOSFET is not driven, the arm relay stays de-energised and the pin reads LOW. If both are active but the relay contacts have failed open, the pin also reads LOW. If the battery is disconnected, the pin reads LOW regardless.
+**Contact welding detection:** The arm sense input uses the same 16-bit shift-register debounce engine as all other digital inputs (fire button, arm switch, encoder — §5.3), providing a 160 ms stable reading. When the arm relay is known to be de-energised (software-tracked intended state = OFF, not a raw GPIO readback), the firmware periodically checks that the debounced arm sense reads LOW. If the debounced sense reads HIGH while the relay is intended OFF, this indicates the arm relay contacts have welded shut — a critical hardware fault. The firmware SHALL set `ERR_RELAY_FAULT` and enter ERROR state.
 
-**Contact welding detection:** At boot and periodically during IDLE state, when the arm relay is known to be de-energised (GPIO 47 LOW), the firmware SHALL verify that the arm sense GPIO reads LOW. If it reads HIGH while the arm relay is de-energised, this indicates the arm relay contacts have welded shut — a critical hardware fault. The firmware SHALL set `ERR_RELAY_FAULT` and refuse all arming.
+**Component count:** 3 components total: 1× 27 kΩ series resistor (R1), 1× 10 kΩ divider/pull-down resistor (R2), 1× 3.3 V zener diode.
+
+#### 5.4.3b Key Switch Sense Input (GPIO 42)
+
+| Parameter | Value |
+|---|---|
+| Signal type | Digital input (GPIO) with voltage divider and zener clamp |
+| Quantity | 1 (senses key switch NO output — direct key switch position) |
+| Pin | GPIO 42 |
+| Function | Direct read of the physical key switch position. HIGH = key switch ON (VBAT present at key switch NO output). Used in `guard_arm()`, PRE_FIRE guard, and FSM disarm triggers. Enables the firmware to detect key switch position independently of arm relay state, resolving the circular dependency where arming requires the arm relay to already be closed. |
+| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp (identical to arm sense) |
+| Debounce | 16-bit shift-register, 10 ms polling, 160 ms debounce (same engine as arm sense, §5.3) |
+
+The key sense circuit reads the key switch NO output — the same node that feeds VBAT+ to the arm relay coil positive terminal (§5.4.4). When the key switch is ON, VBAT+ appears at this node. When OFF, the node is disconnected from VBAT+ and pulled low. The key switch NO output connects to GPIO 42 through a voltage divider (27 kΩ series, 10 kΩ to GND) with a 3.3 V zener diode clamp — identical to the arm sense circuit on GPIO 21.
+
+**Reading interpretation:**
+- **Key switch OFF:** Key switch COM↔NC. NO output is disconnected from VBAT+. R2 (10 kΩ) pulls GPIO to ~0 V. GPIO reads LOW.
+- **Key switch ON:** Key switch COM↔NO. VBAT+ appears at the key switch NO output (same node as arm relay coil+). The voltage divider reduces VBAT to a safe range. GPIO reads HIGH.
+
+**Why a separate GPIO is needed:** The arm relay feedback (GPIO 21, §5.4.3) can only read HIGH after the arm relay has been energised. The arming guard must verify the key switch is ON *before* energising the arm relay — otherwise arming creates a circular dependency (can't arm because arm relay isn't closed, can't close arm relay because can't verify arm conditions). GPIO 42 reads the key switch position directly, independently of arm relay state.
 
 **Component count:** 3 components total: 1× 27 kΩ series resistor (R1), 1× 10 kΩ divider/pull-down resistor (R2), 1× 3.3 V zener diode.
 
@@ -648,7 +663,7 @@ This circuit simultaneously verifies four things: (1) the physical key switch is
 | Location | In the arm relay coil drive path (between VBAT+ and arm relay coil positive terminal) |
 | Function | Hardware safety interlock — physically interrupts arm relay coil current when OFF, preventing the arm relay from energising regardless of software state |
 | Current carried | Arm relay coil current only (~80–150 mA at 12 V). Does NOT carry igniter current. |
-| Sensing | Via arm switch sense circuit (§5.4.3) only. No separate GPIO connection. The arm sense GPIO reads the arm relay output, which requires both this switch and the software MOSFET to be active. |
+| Sensing | Two independent sense circuits: (1) Key switch sense (§5.4.3b, GPIO 42) reads the key switch NO output directly, providing key position independently of arm relay state. (2) Arm relay feedback (§5.4.3, GPIO 21) reads the arm relay COM output (fire bus), which requires both this switch and the software MOSFET to be active. |
 
 The arm key switch is a physical SPDT switch on the base unit. It is wired in series between VBAT+ and the arm relay coil positive terminal, forming one input of a hardware AND gate with the IRLZ44N MOSFET (§5.4.9):
 
@@ -660,6 +675,8 @@ VBAT+ ── Key SW COM ──┬── Key SW NC ─── Green LED + R ──
                                   Red LED + R ── GND
                                   (KEY position indicator)
 ```
+
+**Key switch sense (§5.4.3b):** The key switch NO output node (same node as arm relay coil positive terminal) also connects to GPIO 42 through an independent voltage divider (27 kΩ / 10 kΩ) with 3.3 V zener clamp. This provides direct key switch position sensing independently of arm relay state.
 
 **Switch positions:**
 - **OFF (COM → NC):** Arm relay coil disconnected from VBAT. No current can flow through the coil, regardless of MOSFET state. Green LED illuminated — indicates SAFE. Arm relay cannot energise.
@@ -728,11 +745,13 @@ The following diagram shows the relationship between the arm key switch, arm rel
     VBAT+ ── Key SW COM ──┬── Key SW NC ── Green LED + R ── GND  (SAFE indicator)
                           └── Key SW NO ── Red LED + R ── GND    (ARM position indicator)
 
+    Key switch NO output also connects to GPIO 42 through voltage divider + zener (§5.4.3b).
+
     ARM RELAY COIL FEEDBACK:
     Red LED + series R across arm relay coil terminals (indicates relay energised)
 
-    ARM SENSE CIRCUIT (GPIO 21):
-    ARM SENSE node ── 27 kΩ ──┬── GPIO 21
+    ARM SENSE CIRCUIT (GPIO 21) — arm relay contact feedback:
+    ARM SENSE node ── 27 kΩ ──┬── GPIO 21 (arm relay feedback)
                                │
                           10 kΩ ── GND
                                │
@@ -771,7 +790,7 @@ The arm relay provides the primary fire path interlock. Its coil drive requires 
 
 The continuity circuit uses the channel SPDT relay NC contact for its sense path (unchanged from v1.12). R_ref = 3.3 kΩ limits the maximum current to 1 mA at 3.3V. R_pull = 100 kΩ provides a defined ADC reading for open circuits. Each of the 8 channels has an independent sensing circuit connected to a dedicated ADC1 pin.
 
-The arm sense circuit monitors the ARM SENSE node, which is the arm relay COM output. This provides definitive feedback that VBAT is present on the fire path, verifying that all three conditions are met: key switch ON, software drive active, AND arm relay contacts actually closed.
+The arm sense circuit (GPIO 21, §5.4.3) monitors the ARM SENSE node (fire bus), providing definitive feedback that VBAT is present on the fire path — verifying that the arm relay contacts are actually closed. The key sense circuit (GPIO 42, §5.4.3b) monitors the key switch position independently, enabling the firmware to detect key switch OFF before or after arm relay energisation.
 
 #### 5.4.6 Post-Fire Igniter Status Detection
 
@@ -834,7 +853,9 @@ Neither condition alone can energise the arm relay. A software bug cannot energi
 - **IDLE, POST_FIRE, LINK_LOST, ERROR:** arm relay de-energised (GPIO 47 LOW)
 - **Boot:** arm relay de-energised (GPIO 47 is high-impedance, 10 kΩ gate pull-down holds MOSFET off)
 
-The arm switch sense circuit (§5.4.3) monitors the arm relay COM output (ARM SENSE node), providing definitive feedback that the arm relay contacts are closed and VBAT is present on the fire path.
+Two sense circuits monitor the arm relay system:
+- **Arm relay feedback** (§5.4.3, GPIO 21): monitors the arm relay COM output (ARM SENSE node / fire bus), providing definitive feedback that the arm relay contacts are closed and VBAT is present on the fire path.
+- **Key switch sense** (§5.4.3b, GPIO 42): reads the key switch NO output directly, detecting key switch position independently of arm relay state. Used in arming guards and FSM disarm triggers.
 
 #### 5.4.10 IRLZ44N MOSFET Low-Side Drivers
 
@@ -1189,7 +1210,7 @@ Total header size: 12 bytes.
 | 0 | 2 | `continuity_bands` | 2 bits per channel (ch1 in bits 1:0, ch2 in bits 3:2, ... ch8 in bits 15:14). Values: 00 = OPEN, 01 = GOOD, 10 = MARGINAL, 11 = SHORT. Enum values match wire encoding directly (CONT_OPEN=0, CONT_GOOD=1, CONT_MARGINAL=2, CONT_SHORT=3). |
 | 2 | 2 | `channel_armed_bitmask` | Bits 0–7: armed state per channel (1 = armed). Bits 8–15: reserved. |
 | 4 | 2 | `channel_firing_bitmask` | Bits 0–7: currently firing per channel (1 = firing). Bits 8–15: reserved. |
-| 6 | 1 | `base_arm_switch` | 0 = disarmed, 1 = armed (debounced arm switch sense input, §5.4.3) |
+| 6 | 1 | `base_arm_switch` | 0 = disarmed, 1 = armed (debounced key switch sense input, §5.4.3b) |
 | 7 | 1 | `arm_switch_hw` | 0 = arm relay open / no VBAT on fire path, 1 = arm relay closed / VBAT detected on ARM SENSE node. Raw (non-debounced) reading of the arm sense GPIO (§5.4.3). Provides the remote with an independent view of the hardware state. In normal operation, this matches `base_arm_switch`. A mismatch (debounced says armed, raw says not) indicates a transient or fault. |
 | 8 | 2 | `battery_voltage_mv` | Base battery voltage in millivolts (uint16) |
 | 10 | 1 | `base_state` | Current base FSM state enum |
@@ -1436,7 +1457,7 @@ For the initial command:
 
 - Trigger: `CMD_ARM` received for channel N.
 - Guard conditions (ALL must be true):
-  1. Base key switch is in ARMED position (arm sense input §5.4.3 reads HIGH, confirming arm relay closed and VBAT on fire path, debounced stable).
+  1. Base key switch is in ARMED position (key switch sense input §5.4.3b reads HIGH, confirming VBAT present at key switch NO output, debounced stable). This check uses the dedicated key sense GPIO 42 — NOT the arm relay feedback GPIO 21 (which can only read HIGH after the arm relay is already energised).
   2. Channel N has continuity (band is GOOD, MARGINAL, or SHORT — only OPEN blocks arming).
   3. Channel N is in range (1–8).
   4. No other channel is currently armed (single-channel arming only).
@@ -1444,18 +1465,17 @@ For the initial command:
   6. Session token is valid.
   7. Sequence number is valid (not a replay).
   8. Base battery voltage is above `VBAT_MIN_ARM_MV` threshold.
-  9. **Arm sense check passes** — the arm sense input (§5.4.3) confirms HIGH (arm relay contacts closed and VBAT is present on the fire path). If the sense input reads LOW, a fault is indicated and arming is refused with `ERR_RELAY_FAULT`.
-  10. **Link quality is acceptable** — `ERR_COMM_DEGRADED` is NOT set (ping failure rate ≤ 30% in last 10 pings). Arming on a degraded link risks dead-man timeout false aborts during firing.
+  9. **Link quality is acceptable** — `ERR_COMM_DEGRADED` is NOT set (ping failure rate ≤ 30% in last 10 pings). Arming on a degraded link risks dead-man timeout false aborts during firing.
 - Actions on successful transition:
   1. Record armed channel number.
-  2. Energise arm relay (GPIO 47 HIGH). Verify arm sense GPIO reads HIGH within 200 ms (contact welding check — if not HIGH, immediately disarm and set `ERR_RELAY_FAULT`).
+  2. Energise arm relay (GPIO 47 HIGH). Verify arm sense GPIO 21 reads HIGH within 200 ms (M1 arm relay verify — confirms contacts actually closed and VBAT on fire bus. If not HIGH, immediately disarm and set `ERR_RELAY_FAULT`).
   3. Start siren pulsing (500 ms on / 500 ms off).
   4. Start arm timeout timer (`ARM_TIMEOUT_MS`, default: 10000 ms). If no CMD_FIRE is received before this timer expires, auto-disarm and return to IDLE.
   5. Send `CMD_ACK` (with channel field) to remote.
   6. Send `STATUS_UPDATE` with updated bitmasks.
   7. RGB LED → red slow blink.
 - **Note:** The channel SPDT relay remains de-energised (NC position) in ARMED state. The relay is only energised (switched to NO/fire position) in the FIRING state (§7.4.2). No current path to the igniter exists until fire command execution, because the relay NO contact is disconnected from COM. Continuity sensing remains active on all channels (no MOSFET switch to disable).
-- If any guard fails: send `CMD_NACK` with appropriate reason code (including 0x0B for arm switch sense fault). Remain in IDLE.
+- If any guard fails: send `CMD_NACK` with appropriate reason code (including 0x01 for base key switch OFF, 0x0B for arm sense fault). Remain in IDLE.
 - Exceptions:
   - CMD_ARM for wrong channel (e.g., 0 or 9+) → NACK reason 0x03.
   - CMD_ARM while another channel armed → NACK reason 0x0A.
@@ -1470,7 +1490,7 @@ For the initial command:
 - Guard conditions:
   1. Channel in the FIRE command matches the currently armed channel.
   2. Message integrity CRC is valid.
-  3. **Arm sense confirms arm relay still closed** (arm sense HIGH — key switch still ON, defence-in-depth re-verification).
+  3. **Key switch still ON** (key switch sense §5.4.3b reads HIGH) **AND arm sense confirms arm relay still closed** (arm sense §5.4.3 reads HIGH — defence-in-depth re-verification).
 - Actions on transition:
   1. Switch siren from pulsing to continuous.
   2. Start pre-fire countdown timer (`PRE_FIRE_DELAY_MS`, default: 2000 ms).
@@ -1482,7 +1502,8 @@ For the initial command:
 - Exceptions:
   - CMD_FIRE for wrong channel → NACK reason 0x05. Remain ARMED.
   - CMD_ARM for a different channel while armed → NACK reason 0x0A. Remain ARMED.
-  - Base key switch → OFF → arm relay coil current broken → immediate disarm (§7.2.7).
+  - Key switch OFF (§5.4.3b) → immediate disarm (§7.2.7).
+  - Arm sense lost (§5.4.3) → arm relay feedback lost, immediate disarm (§7.2.7).
 
 **Wrong-channel CMD_FIRE during PRE_FIRE or FIRING:** CMD_FIRE received during PRE_FIRE or FIRING for a channel other than the armed channel SHALL be silently discarded (not NACK'd, since repeated CMD_FIRE messages are fire-and-forget during these states). This prevents a remote firmware bug from disrupting an active firing sequence.
 
@@ -1492,7 +1513,7 @@ For the initial command:
 - Guard (ALL must be true):
   1. The base must have received at least one `CMD_FIRE` message within the last `FIRE_AUTHORIZATION_TIMEOUT_MS` (500 ms). **Implementation note:** The last-CMD_FIRE-received timestamp SHALL be updated in the ESP-NOW receive callback (see §6.4.1b), not deferred to the state machine task. This ensures the timestamp is not delayed by lower-priority task scheduling.
   2. **Link health: the last PONG was received within `HEARTBEAT_INTERVAL_MS + HEARTBEAT_TIMEOUT_MS` (1000 ms).** This uses the sum of the ping interval and pong timeout to allow for scheduling jitter while ensuring the link has not missed a full heartbeat cycle. This prevents energising the igniter at the exact moment the link dies.
-  3. **Arm sense confirms arm relay still closed** (arm sense HIGH — key switch still ON, defence-in-depth re-verification).
+  3. **Key switch still ON** (key switch sense §5.4.3b reads HIGH) **AND arm relay still closed** (arm sense §5.4.3 reads HIGH — defence-in-depth re-verification of relay contact integrity).
   4. **Link quality is acceptable** — `ERR_COMM_DEGRADED` is NOT set (ping failure rate ≤ 30% in last 10 pings). A degraded link risks dead-man timeout false aborts during firing.
 - Actions on transition:
   1. Drive the armed channel's SPDT relay output active (switch from NC/continuity to NO/fire path).
@@ -1505,7 +1526,8 @@ For the initial command:
   - **Pre-fire timer expires but link health check fails:** abort. `relay_all_safe()`, siren off, transition to LINK_LOST.
   - **Pre-fire timer expires but ERR_COMM_DEGRADED is set:** abort. `relay_all_safe()`, siren off, return to IDLE. Send STATUS_UPDATE.
   - CMD_CEASE_FIRE during PRE_FIRE → immediate abort. `relay_all_safe()`, siren off, return to IDLE. ACK the command.
-  - Base arm switch → DISARM during PRE_FIRE → immediate abort (key switch OFF breaks arm relay coil current, arm relay de-energises). `relay_all_safe()`, siren off, return to IDLE.
+  - Key switch OFF (§5.4.3b) during PRE_FIRE → immediate abort (key switch OFF breaks arm relay coil current, arm relay de-energises). `relay_all_safe()`, siren off, return to IDLE.
+  - Arm sense lost (§5.4.3) during PRE_FIRE → arm relay feedback lost, immediate abort. `relay_all_safe()`, siren off, return to IDLE.
   - Link lost during PRE_FIRE → immediate abort (igniter not yet energised, safe to abort). `relay_all_safe()`, siren for 4000 ms, LINK_LOST.
   - Battery drops critical during PRE_FIRE → immediate abort → ERROR.
 
@@ -1541,7 +1563,8 @@ For the initial command:
 This transition can be triggered from ARMED, PRE_FIRE, or FIRING (with caveats for FIRING per §7.2.5) by any of:
 
 - `CMD_DISARM` or `CMD_CEASE_FIRE` received.
-- Base key switch moved to OFF position (arm relay coil current broken).
+- Key switch moved to OFF position (key sense §5.4.3b detects transition, arm relay coil current broken).
+- Arm relay feedback lost (arm sense §5.4.3 reads LOW while arm relay should be energised — indicates relay dropout or contact fault).
 - Repeated `CMD_FIRE` not received for 500 ms during PRE_FIRE (dead-man timeout).
 - Base battery voltage drops below `VBAT_CRITICAL_MV`.
 - Arm timeout elapsed (`ARM_TIMEOUT_MS`, default: 10000 ms) — no CMD_FIRE received within the timeout period after entering ARMED state.
@@ -1920,7 +1943,7 @@ All FreeRTOS tasks SHALL be assigned priorities according to the following table
 
 | Task | Priority | Core | Stack (bytes) | Description |
 |---|---|---|---|---|
-| `arm_switch_task` | 7 (highest) | 0 | 2048 | Arm switch debounce polling (10 ms) + arm switch sense GPIO reading |
+| `arm_switch_task` | 7 (highest) | 0 | 4096 | Arm relay feedback (GPIO 21) + key switch sense (GPIO 42) debounce polling (10 ms). Both inputs use independent 16-bit debounce engines. |
 | `continuity_task` | 5 | 0 | 4096 | ADC continuity sampling, band classification |
 | `heartbeat_task` | 5 | 0 | 4096 | PING/PONG response, link-loss detection |
 | `state_machine_task` | 4 | 0 | 8192 | Base FSM, command processing, relay control |
@@ -1976,7 +1999,7 @@ Both units SHALL execute the following initialisation sequence in order. If any 
 | 4 | Initialise ADC calibration | Yes | §5.4.7, §5.4.2 |
 | 5 | Initialise ESP-NOW, set PMK, register peer | Yes | §6.2.1, §6.2.3 — retry 3× on failure |
 | 6 | Initialise display, read-back display ID | Yes (remote only) | §5.5.6 |
-| 7 | Configure all input GPIOs (including arm switch sense §5.4.3), start debounce engine | Yes | §5.3 |
+| 7 | Configure all input GPIOs (including arm relay feedback §5.4.3 and key switch sense §5.4.3b), start debounce engine | Yes | §5.3 |
 | 8 | Configure hardware watchdog and TWDT | Yes | §9.6 |
 | 9 | Start FreeRTOS tasks | Yes | §9.10 |
 | 10 | Begin link establishment (LINK_REQUEST / wait for link) | Yes | §6.4.1 |
@@ -2068,7 +2091,7 @@ If a firmware version mismatch is detected:
 Key elements:
 - **Top bar:** RSSI with graphical bar (averaged over last 3 frames), ping round-trip time, remote battery voltage with bar, base battery voltage with bar, link status indicator.
 - **Channel grid:** all 8 channels displayed with continuity band indicators. Blue filled circle (●) = GOOD. Yellow triangle (▲) = MARGINAL (with label). Red empty circle (○) = OPEN. Orange diamond (◆) = SHORT (with label). The selected channel is highlighted with `►[ CH N ]◄` cursor.
-- **Status area:** base arm switch state, remote arm switch state, arm switch sense confirmation.
+- **Status area:** base key switch state (§5.4.3b), arm relay feedback (§5.4.3), remote arm switch state.
 - **Instruction text:** context-sensitive prompt guiding the operator.
 
 Colour coding:
@@ -2436,7 +2459,7 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-A07 | Turn remote arm switch to DISARM while armed | DISARM sent. Base disarms. |
 | T-A08 | Rotate encoder while armed | Immediate disarm. Channel selection updates. Operator must re-arm. |
 | T-A09 | Verify continuity bands visible with arm switch OFF | All 8 channels show correct continuity band (GOOD/MARGINAL/OPEN/SHORT) on remote display regardless of base arm switch position. Use known resistor values: 0 Ω (short), 2 Ω (good), 100 Ω (marginal), open. |
-| T-A10 | ARM with arm switch sense fault (disconnect arm switch sense wire) | NACK 0x0B ("ARM SENSE FAULT"). Channel not armed. |
+| T-A10 | ARM with arm relay sense fault (disconnect arm relay feedback wire) | NACK 0x0B ("ARM SENSE FAULT"). Channel not armed. |
 | T-A11 | ARM with stale STATUS_UPDATE (> 4s old) | Remote blocks locally ("DATA STALE — CANNOT ARM"). |
 | T-A12 | ARM with low remote battery | Remote blocks locally ("REMOTE BATTERY LOW — CANNOT ARM"). |
 | T-A13 | Verify channel in CMD_ACK | Simulate wrong channel in ACK → "CHANNEL MISMATCH ERROR", CMD_DISARM sent. |
@@ -2477,8 +2500,8 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-S14 | Arm timeout | Arm a channel, do not press fire. After 10 seconds, base auto-disarms and returns to IDLE. |
 | T-S15 | ERR_COMM_DEGRADED blocks arming | Induce >30% ping failure rate. Attempt to arm. Base NACK's due to degraded link. |
 | T-S16 | ERR_COMM_DEGRADED blocks firing | Arm channel, press fire, induce >30% ping failure during PRE_FIRE. Base aborts instead of transitioning to FIRING. |
-| T-S17 | Arm switch sense verifies arm switch | With arm switch OFF: verify arm switch sense GPIO reads LOW. Turn arm switch ON: verify sense reads HIGH. Attempt ARM: verify guard 9 passes. |
-| T-S18 | Arm switch sense fault detection | Disconnect arm switch sense wire. Turn arm switch ON (debounced input reads ARMED). Attempt ARM: verify NACK 0x0B ("ARM SENSE FAULT"). |
+| T-S17 | Key switch sense verifies key switch | With key switch OFF: verify key sense GPIO 42 reads LOW. Turn key switch ON: verify key sense reads HIGH. Attempt ARM: verify guard 1 passes. |
+| T-S18 | Key switch sense fault detection | Disconnect key switch sense wire. Turn key switch ON (debounced input reads key OFF due to lost signal). Attempt ARM: verify NACK 0x01 ("BASE KEY OFF"). |
 | T-S19 | Post-fire igniter status via continuity | Fire a channel with test resistor (2 Ω). After fire pulse completes and relay returns to NC: verify continuity reads GOOD (resistor intact). Repeat with a fuse wire that burns: verify continuity reads OPEN after fire. |
 
 ### 15.5 Unit Tests (Host-Compilable)
@@ -2590,7 +2613,7 @@ typedef struct __attribute__((packed)) {
     uint16_t channel_armed_bitmask;    // bits 0-7: channels 1-8, bits 8-15: reserved
     uint16_t channel_firing_bitmask;   // bits 0-7: channels 1-8, bits 8-15: reserved
     uint8_t  base_arm_switch;
-    uint8_t  arm_switch_hw;            // hardware arm switch sense (0=OFF, 1=ON via §5.4.3)
+    uint8_t  arm_switch_hw;            // hardware key switch sense (0=OFF, 1=ON via §5.4.3b)
     uint16_t battery_voltage_mv;
     uint8_t  base_state;
     uint8_t  error_flags;
@@ -2625,7 +2648,7 @@ _Static_assert(sizeof(rlc_payload_cmd_nack_t) == 6, "CMD_NACK size mismatch");
 |---|---|---|---|---|
 | BOOT | Link established | — | IDLE | Start I/O polling, send initial STATUS_UPDATE |
 | BOOT | ESP-NOW init fails (3 retries) | — | ERROR | RGB LED red triple flash |
-| IDLE | CMD_ARM(ch) | All §7.2.2 guards (incl. arm switch sense) | ARMED | Record channel, arm relay ON, siren pulse, ACK(ch), STATUS_UPDATE |
+| IDLE | CMD_ARM(ch) | All §7.2.2 guards (incl. key switch sense) | ARMED | Record channel, arm relay ON, siren pulse, ACK(ch), STATUS_UPDATE |
 | IDLE | CMD_ARM(ch) | Any guard fails | IDLE | NACK with reason |
 | IDLE | CMD_FIRE(ch) | — | IDLE | NACK reason 0x05 (wrong state) |
 | IDLE | CMD_DISARM | — | IDLE | ACK (idempotent, already safe) |
@@ -2703,7 +2726,7 @@ _Static_assert(sizeof(rlc_payload_cmd_nack_t) == 6, "CMD_NACK size mismatch");
 
 ### C.1 Base Unit Pin Assignment
 
-Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm relay + arm switch sense. All outputs use configurable polarity. Continuity inputs use ADC1.
+Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm relay + arm relay feedback (GPIO 21) + key switch sense (GPIO 42). All outputs use configurable polarity. Continuity inputs use ADC1.
 
 | Function | GPIO | Notes |
 |---|---|---|
@@ -2737,7 +2760,8 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm
 - Continuity inputs use ADC1 GPIOs (2, 10, 4–9) for analogue band classification. Each requires two external series fusible resistors (1.5 kΩ + 1.8 kΩ) and one 100 kΩ pull-down resistor (24 resistors total). Continuity is sensed via the SPDT relay NC contact. No MOSFET switch is required — the SPDT relay provides inherent isolation.
 - SPDT relay outputs on GPIO 11–18, each driven via an IRLZ44N low-side MOSFET (§5.4.10). Active HIGH: GPIO HIGH = MOSFET on = relay energised (NO/fire position). GPIO LOW = relay de-energised (NC/continuity position).
 - ADC2 (GPIO 11–20) is unreliable with ESP-NOW active, but GPIO 11–18 are used as digital outputs only — ADC2 conflict does not apply to digital I/O.
-- GPIO 21 is the arm switch sense input — reads the ARM SENSE node (arm relay COM output) via voltage divider (27 kΩ / 10 kΩ) and 3.3 V zener clamp (§5.4.3). This is the sole method of detecting arm relay state (no separate digital arm switch GPIO). Simultaneously verifies key switch ON, MOSFET driven, arm relay contacts closed, and VBAT present.
+- GPIO 21 is the arm relay feedback sense input — reads the ARM SENSE node (arm relay COM output / fire bus) via voltage divider (27 kΩ / 10 kΩ) and 3.3 V zener clamp (§5.4.3). Provides post-energise verification that arm relay contacts are closed and VBAT is on the fire bus. Also used for contact-welding detection.
+- GPIO 42 is the key switch sense input — reads the key switch NO output directly via voltage divider (27 kΩ / 10 kΩ) and 3.3 V zener clamp (§5.4.3b). Detects key switch position independently of arm relay state. Used in arming guards, PRE_FIRE checks, and FSM disarm triggers.
 - GPIO 40 is the siren output, driven via IRLZ44N MOSFET (§5.4.10).
 - GPIO 47 is the arm relay output, driven via IRLZ44N MOSFET (§5.4.9). Arm relay coil positive terminal connected through physical key switch (§5.4.4) — hardware AND gate. Active HIGH. Primary fire path interlock.
 - GPIO 48 has the WS2812 8-pixel RGB LED strip for status indication.
