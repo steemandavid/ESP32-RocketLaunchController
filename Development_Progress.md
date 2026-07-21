@@ -588,7 +588,7 @@ Added dedicated key switch sense input to resolve circular dependency in `guard_
 
 **Preamble.** All remaining Phase 3 tests are on-target and require user interaction — there are no host-side unit tests in this project. Testing runs the two flashed units against each other with real relays, continuity banks, arm switches, encoder, and arm/fire buttons. Execute the plan top-to-bottom; later groups assume earlier groups passed.
 
-**Target hardware.** Base on `/dev/ttyACM0` (MAC `44:1B:F6:81:FA:F8`), Remote on `/dev/ttyACM1` (MAC `44:1B:F6:81:F1:70`). **Verify ports each session** — they shift when units hot-plug or reboot rapidly. Use `esptool.py -p /dev/ttyACMx chip_id` to confirm. Both running commit `e03b826` or later.
+**Target hardware.** Identify each board by its **stable by-id** under `/dev/serial/by-id/` — never `/dev/ttyACMx` (those numbers shift on every hot-plug). Prefer each board's **COM port** by-id (`usb-1a86_USB_Single_Serial_…` — the UART-bridge serial, stable across ESP32 chip swaps); the native-USB by-id (`usb-Espressif_…`) embeds the chip MAC and changes whenever a chip is swapped. Base MAC `44:1B:F6:D4:0D:68` (chip #3), Remote MAC `44:1B:F6:81:F1:70`. Confirm identity with `esptool.py -p <by-id> read-mac`. Both running commit `e03b826` or later.
 
 ### Phase 3 On-Target Testing Fixes
 
@@ -627,16 +627,16 @@ Bugs discovered and fixed during Phase 3 on-target testing (2026-04-15):
 **Test tooling.** Run these in two terminals throughout the session:
 ```bash
 # Terminal 1 — base log
-idf.py -B build_base -p /dev/ttyACM0 monitor
+idf.py -B build_base -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E044219-if00 monitor   # base COM
 # Terminal 2 — remote log
-./build_remote.sh && idf.py -p /dev/ttyACM1 monitor
+./build_remote.sh && idf.py -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00 monitor   # remote COM
 ```
 Watch for `state=` lines (base 5 s housekeeping log) and `rfsm:` / `bfsm:` tags.
 
 **Flash procedure (run once at session start).**
 ```bash
-./build_base.sh flash    # flashes /dev/ttyACM0
-./build_remote.sh flash  # flashes /dev/ttyACM1
+./build_base.sh flash    # flashes base (default PORT = base COM by-id; override with -p)
+./build_remote.sh flash  # flashes remote (default PORT = remote COM by-id; override with -p)
 ```
 
 **Pass criteria for Phase 3 as a whole.**
@@ -805,10 +805,10 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 
 | Item | Value |
 |------|-------|
-| Base MAC | `44:1B:F6:81:FA:F8` |
+| Base MAC | `44:1B:F6:D4:0D:68` (chip #3; #2 `44:1B:F6:81:FA:F8` & #1 `94:A9:90:31:18:38` destroyed) |
 | Remote MAC | `44:1B:F6:81:F1:70` |
-| Base serial | `/dev/ttyACM0` (verify with `udevadm` each session) |
-| Remote serial | `/dev/ttyACM1` (verify with `udevadm` each session) |
+| Base serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E044219-if00` (stable board serial) |
+| Remote serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00` (stable board serial) |
 | ESP-IDF version | v5.4.1 |
 | Target | ESP32-S3 (xtensa) |
 | Flash size | 16 MB |
@@ -847,7 +847,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 ## Build Commands
 
 ```
-./build_base.sh flash          # Build + flash base to /dev/ttyACM0
-./build_remote.sh flash        # Build + flash remote to /dev/ttyACM1
+./build_base.sh flash          # Build + flash base (COM by-id; override with -p)
+./build_remote.sh flash        # Build + flash remote (COM by-id; override with -p)
 ./build_base.sh flash -p PORT  # Custom port
 ```

@@ -336,7 +336,7 @@ Each test validates one hardware subsystem. Tests are performed manually using t
 cd rlc-hw-test-remote
 idf.py set-target esp32s3
 idf.py build
-idf.py -p /dev/ttyACM0 flash monitor
+idf.py -p /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_44:1B:F6:81:F1:70-if00 flash monitor   # remote native USB (hw-test console = USB-Serial/JTAG)
 ```
 
 The serial monitor serves as both the test CLI and the log output.

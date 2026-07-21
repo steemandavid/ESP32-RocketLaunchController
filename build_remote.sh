@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./build_remote.sh          # build only
-#   ./build_remote.sh flash    # build and flash to /dev/ttyACM1
+#   ./build_remote.sh flash    # build + flash (default PORT below; override with -p <by-id>)
 #   ./build_remote.sh -p PORT  # build and flash to custom port
 
 set -euo pipefail
@@ -14,7 +14,7 @@ SDKCONFIG_REMOTE="$SCRIPT_DIR/sdkconfig.remote"
 BUILD_DIR="$SCRIPT_DIR/build"
 
 # Default flash port (remote unit)
-PORT="/dev/ttyACM1"
+PORT="/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00"   # remote COM port — stable board serial (survives chip swaps). Find yours: ls /dev/serial/by-id/
 
 # Parse args
 DO_FLASH=false

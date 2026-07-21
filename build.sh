@@ -31,7 +31,7 @@ case "${1:-}" in
             idf.py set-target esp32s3 build
         echo ""
         echo "=== Base unit build complete ==="
-        echo "Flash with: idf.py -p /dev/ttyUSBx flash monitor"
+        echo "Flash with: idf.py -p <by-id> flash monitor   # list ports: ls /dev/serial/by-id/"
         ;;
     remote)
         echo "=== Building REMOTE unit firmware ==="
@@ -40,7 +40,7 @@ case "${1:-}" in
             idf.py set-target esp32s3 build
         echo ""
         echo "=== Remote unit build complete ==="
-        echo "Flash with: idf.py -p /dev/ttyUSBx flash monitor"
+        echo "Flash with: idf.py -p <by-id> flash monitor   # list ports: ls /dev/serial/by-id/"
         ;;
     clean)
         echo "Cleaning build directory..."
