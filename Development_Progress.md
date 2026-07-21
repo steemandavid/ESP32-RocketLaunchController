@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.14 (2026-04-14)
+**Spec:** RLC-FSPEC-001 v1.16 (2026-07-21)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend

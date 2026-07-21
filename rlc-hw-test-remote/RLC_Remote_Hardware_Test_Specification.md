@@ -37,15 +37,15 @@ ESP32-S3-DevKitC-1 with ESP32-S3-WROOM-1 N16R8 (16 MB Flash, 8 MB Octal PSRAM).
 |---|---|---|
 | Strapping pins — do not use | GPIO 0, 3, 45, 46 | Boot mode selection, JTAG |
 | Octal PSRAM — not available | GPIO 33, 34, 35, 36, 37 | Internal SPI bus for PSRAM |
-| USB — reserved | GPIO 19, 20 | USB D+/D- |
-| UART0 — reserved | GPIO 43, 44 | Serial debug/programming (used for test CLI) |
+| USB-Serial/JTAG (native) | GPIO 19, 20 | USB D+/D- — **test CLI console** (CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG) |
+| UART0 — reserved | GPIO 43, 44 | Main firmware UART console / programming (via CH340 bridge); not used by this test CLI |
 | On-board RGB LED | GPIO 48 | WS2812 — used for status |
 
 ---
 
 ## 3. Pin Assignments Under Test
 
-All pin assignments match the main RLC FSD (RLC-FSPEC-001 v1.11, Appendix C.2).
+All pin assignments match the main RLC FSD (RLC-FSPEC-001 v1.15, Appendix C.2).
 
 | Function | GPIO | Type | Notes |
 |---|---|---|---|
@@ -99,7 +99,7 @@ rlc-hw-test-remote/
 
 ## 5. Serial Command Interface
 
-The firmware SHALL provide a UART0 command-line interface at **115200 baud** (8N1). Commands are newline-terminated. The prompt SHALL be `remote> `. Unknown commands print `Unknown command. Type 'help' for usage.`
+The firmware SHALL provide a USB-Serial/JTAG command-line interface over native USB (the baud rate is not meaningful for the USB CDC transport; 115200 is accepted but ignored). Commands are newline-terminated. The prompt SHALL be `remote> `. Unknown commands print `Unknown command. Type 'help' for usage.`
 
 ### 5.1 General Commands
 
@@ -284,7 +284,7 @@ Each test validates one hardware subsystem. Tests are performed manually using t
 
 | ID | Test | Procedure | Pass Criteria |
 |---|---|---|---|
-| R-D01 | Initialisation and ID | `disp init`. | SPI initialised, display ID read successfully, matches expected ILI9488 ID. |
+| R-D01 | Initialisation and ID | `disp init`. | SPI initialised, display ID read successfully — returns a valid (non-zero) ILI9488-class ID (clone panels may report a non-standard ID such as 0x2A403300). |
 | R-D02 | Backlight | `disp backlight off`. Wait 2s. `disp backlight on`. | Screen visibly turns off and on. |
 | R-D03 | Colour fills | `disp fill 255 0 0`, `disp fill 0 255 0`, `disp fill 0 0 255`, `disp fill 255 255 255`, `disp fill 0 0 0`. | Each fill covers entire 480×320 area with correct colour. No artefacts. |
 | R-D04 | Test pattern | `disp test`. | Colour fills + horizontal and vertical bars render correctly. No corruption. |
@@ -294,7 +294,7 @@ Each test validates one hardware subsystem. Tests are performed manually using t
 | R-D08 | Pixel accuracy | `disp pixel 0 0 255 0 0`, `disp pixel 479 0 0 255 0`, `disp pixel 0 319 0 0 255`, `disp pixel 479 319 255 255 0`. | Pixels appear at exact corners. Confirms coordinate system and display orientation. |
 | R-D09 | Partial update | `disp fill 0 0 0`. Then `disp rect 100 100 200 100 255 0 0`. | Black background with red rectangle at correct position and size. Surrounding pixels undisturbed. |
 | R-D10 | SPI speed | `disp speed`. | Full-screen fill completes. Reports time in ms. At 20 MHz: expect ~50–100 ms for 480×320×3 bytes. |
-| R-D11 | Display ID re-read | After display is initialised: `disp id`. | Returns valid ILI9488 ID. Confirms SPI read-back works during operation (not just at init). |
+| R-D11 | Display ID re-read | After display is initialised: `disp id`. | Returns a valid (non-zero) ILI9488-class ID. Confirms SPI read-back works during operation (not just at init). |
 
 ### 7.5 Buzzer Tests
 
@@ -336,7 +336,7 @@ Each test validates one hardware subsystem. Tests are performed manually using t
 cd rlc-hw-test-remote
 idf.py set-target esp32s3
 idf.py build
-idf.py -p /dev/ttyUSB0 flash monitor
+idf.py -p /dev/ttyACM0 flash monitor
 ```
 
 The serial monitor serves as both the test CLI and the log output.

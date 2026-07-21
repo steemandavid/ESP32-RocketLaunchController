@@ -1,7 +1,7 @@
 /**
  * RLC Watchdog Timer
  *
- * Hardware watchdog with 2-second timeout.
+ * Task Watchdog (TWDT) with WATCHDOG_TIMEOUT_S (5 s) timeout.
  * Main loop and critical tasks must feed regularly.
  */
 

@@ -24,7 +24,7 @@ typedef enum {
     LED_PATTERN_POST_FIRE,      /* Yellow solid */
     LED_PATTERN_LINK_LOST,      /* Yellow fast blink (200ms on/off) */
     LED_PATTERN_ERROR,          /* Red triple flash */
-    LED_PATTERN_PING_FAIL,      /* Orange 50ms flash (overlay) */
+    LED_PATTERN_PING_FAIL,      /* Orange 250ms flash (overlay) */
 } rlc_led_pattern_t;
 
 /**

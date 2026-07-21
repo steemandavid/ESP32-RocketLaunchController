@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.15
-**Date:** 2026-04-14
+**Version:** 1.16
+**Date:** 2026-07-21
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -29,6 +29,7 @@
 | 1.13 | 2026-04-14 | Arm relay redesign: physical arm key switch removed from fire path (cannot handle igniter current). Arm relay (SPDT, driven via IRLZ44N MOSFET in series with physical key switch) now provides primary fire path interlock — forming a hardware AND gate (key switch ON AND software MOSFET drive required). Key switch moved to arm relay coil drive path (SPDT, carries only coil current). Arm sense circuit now reads ARM SENSE node (arm relay COM output) through voltage divider (27 kΩ / 10 kΩ) + 3.3 V zener clamp. Added arm status feedback LEDs (green = SAFE, red = key position, red = relay energised). Added contact welding detection via arm sense. Updated §2.1, §3, §5.4.2, §5.4.3, §5.4.4, §5.4.5, §5.4.9, §5.4.10, §7.2.2, §7.2.5, §7.2.7, §7.4.1, §9.1, §9.2, §9.7, §9.13. |
 | 1.14 | 2026-04-14 | Operational tuning: removed NVS key provisioning note (compile-time keys are acceptable). Made link retry more aggressive: 5 attempts at 2s intervals (was 15 at 2s then 5s). Changed missed ping RGB LED flash from 50ms to 250ms. Reduced PRE_FIRE_DELAY_MS from 5000ms to 2000ms. Reduced FIRE_PULSE_DURATION_MS from 2000ms to 1000ms. Made runtime UART logging compile-time optional (disabled by default, enabled via CONFIG_RLC_SERIAL_DEBUG_LOGGING). Updated §6.2.1, §6.4.1, §6.4.2, §7.2.3, §9.11, §14.1. |
 | 1.15 | 2026-04-16 | Circuit documentation correction after on-target testing revealed errors. Split §5.4.3 into arm relay feedback (GPIO 21, renamed from "Arm Switch Position Sense") and new §5.4.3b key switch sense (GPIO 42). Fixed §5.4.4 key switch diagram to show key sense connection (was "No separate GPIO"). Fixed §5.4.5 circuit topology to include key sense circuit. Fixed §7.2.2 arming guards: guard 1 now checks key sense GPIO 42 (was incorrectly checking arm sense GPIO 21, creating circular dependency). Fixed §7.2.3, §7.2.4, §7.2.7 to distinguish key switch events from arm relay feedback events. Updated debounce table, protocol fields, task priorities, boot sequence, test descriptions, and hardware notes. Updated §5.4.9 arm relay output sensing description. |
+| 1.16 | 2026-07-21 | Documentation accuracy corrections after remote display validation and full code review. Aligned all 8 buzzer/alarm pattern timings (§12.1 table, §6.4.2, App D.2) with `rlc_buzzer.c` (patterns had drifted shorter in firmware). Watchdog timeout 2 s → 5 s (§9.6, §14.1, T-S07) to match `WATCHDOG_TIMEOUT_S`. Softened ILI9488 display-ID health check (§5.5.6): clone panels report a non-standard ID (observed 0x2A403300); only a zero/garbage read-back or SPI failure is a fault. Fixed hw-test spec console transport (USB-Serial/JTAG `/dev/ttyACM*`, not UART0/`/dev/ttyUSB0`). Refreshed stale spec-version citations (Development_Progress.md, hw-test spec). Fixed stale code comments (`rlc_rgb_led.h` 50→250 ms; `rlc_watchdog.h` 2 s→5 s). |
 
 ---
 
@@ -1012,7 +1013,7 @@ Three indicator LEDs are driven directly from GPIO outputs. All three LEDs have 
 
 SPI bus shall use SPI2_HOST on the ESP32-S3.
 
-**Display health check:** at boot, the firmware SHALL read back the ILI9488 display ID register (command 0x04, "Read Display Identification Information") via SPI. If the read-back value does not match the expected ILI9488 ID, or the SPI transaction fails, the remote SHALL transition to ERROR state (the operator cannot safely control the system without visual feedback). A periodic display health check (every 5000 ms) SHALL re-read the display ID register during IDLE state. **The display health check SHALL be performed within `display_task`, serialised with normal display writes.** It SHALL NOT be performed from a separate task or timer callback. Display failure during ARMED, PRE_FIRE, or FIRING SHALL trigger an immediate CMD_DISARM and transition to ERROR.
+**Display health check:** at boot, the firmware SHALL read back the ILI9488 display ID register (command 0x04, "Read Display Identification Information") via SPI. If the read-back ID is invalid (e.g., 0x00000000 indicating no panel response) or the SPI transaction fails, the remote SHALL transition to ERROR state (the operator cannot safely control the system without visual feedback). ILI9488-class clone panels may report a non-standard ID (observed 0x2A403300 on this hardware); any non-zero read-back is considered valid — only a zero/garbage read-back or SPI failure is treated as a fault. A periodic display health check (every 5000 ms) SHALL re-read the display ID register during IDLE state. **The display health check SHALL be performed within `display_task`, serialised with normal display writes.** It SHALL NOT be performed from a separate task or timer callback. Display failure during ARMED, PRE_FIRE, or FIRING SHALL trigger an immediate CMD_DISARM and transition to ERROR.
 
 #### 5.5.7 Buzzer Output
 
@@ -1325,7 +1326,7 @@ Once linked, the remote sends a `PING` message every 500 ms. The base responds w
 
 **RSSI tracking:** the remote shall record the RSSI from each received frame (PONG, STATUS_UPDATE, ACK, NACK). The display shall show the average RSSI of the 3 most recently received frames.
 
-**Missed ping action (remote):** on each individual ping failure, the remote buzzer shall emit a single short beep (150 ms) and the RGB LED shall flash orange (250 ms) and then return to the current state colour.
+**Missed ping action (remote):** on each individual ping failure, the remote buzzer shall emit a single short beep (80 ms) and the RGB LED shall flash orange (250 ms) and then return to the current state colour.
 
 **PONG validation:** the remote shall verify that the `ping_timestamp` echoed in the PONG matches the timestamp sent in the corresponding PING. A PONG with a mismatched timestamp is discarded silently and does NOT count as a successful ping. The failure counter continues.
 
@@ -1915,9 +1916,9 @@ After a fire pulse completes, the base automatically disarms the channel and de-
 
 ### 9.6 Watchdog Timer
 
-Both units shall enable the ESP32-S3 hardware watchdog timer with a 2-second timeout. The main loop and all critical tasks must feed the watchdog. A watchdog reset results in a clean boot with all outputs in safe state.
+Both units shall enable the ESP32-S3 hardware watchdog timer with a 5-second timeout. The main loop and all critical tasks must feed the watchdog. A watchdog reset results in a clean boot with all outputs in safe state.
 
-**Task Watchdog Timer (TWDT):** Each critical task (arm switch, fire button, continuity, heartbeat, state machine) SHALL register with the ESP-IDF Task Watchdog Timer via `esp_task_wdt_add()`. The TWDT timeout SHALL be 2 seconds. Unlike the hardware watchdog (which detects total system lock), TWDT detects individual task starvation — if any registered task fails to call `esp_task_wdt_reset()` within the timeout, the TWDT triggers a panic or reset.
+**Task Watchdog Timer (TWDT):** Each critical task (arm switch, fire button, continuity, heartbeat, state machine) SHALL register with the ESP-IDF Task Watchdog Timer via `esp_task_wdt_add()`. The TWDT timeout SHALL be 5 seconds. Unlike the hardware watchdog (which detects total system lock), TWDT detects individual task starvation — if any registered task fails to call `esp_task_wdt_reset()` within the timeout, the TWDT triggers a panic or reset.
 
 ### 9.7 GPIO Initialisation Order
 
@@ -2271,14 +2272,14 @@ The remote uses an active buzzer for audible feedback. Patterns are implemented 
 
 | Pattern Name | Sequence (ms) | Usage |
 |---|---|---|
-| `BEEP_SHORT` | 200 on | Single confirmation beep |
-| `BEEP_DOUBLE` | 250 on, 300 off, 250 on | Arm confirmed |
-| `BEEP_TRIPLE` | 250 on, 250 off, 250 on, 250 off, 250 on | Error / NACK received |
+| `BEEP_SHORT` | 100 on | Single confirmation beep |
+| `BEEP_DOUBLE` | 100 on, 100 off, 100 on | Arm confirmed |
+| `BEEP_TRIPLE` | 100 on, 80 off, 100 on, 80 off, 100 on | Error / NACK received |
 | `BEEP_LONG` | 500 on | Disarm event |
-| `BEEP_PING_FAIL` | 150 on | Ping failure |
-| `BEEP_CONTINUITY_LOST` | 300 on, 300 off, 300 on, 300 off, 300 on | Continuity → OPEN disarm (distinctive pattern) |
-| `ALARM_LINK_LOST` | 400 on, 400 off, repeating | Link lost alarm |
-| `ALARM_CRITICAL` | 250 on, 250 off, repeating | Critical error alarm |
+| `BEEP_PING_FAIL` | 80 on | Ping failure |
+| `BEEP_CONTINUITY_LOST` | 200 on, 100 off, 200 on, 100 off, 200 on | Continuity → OPEN disarm (distinctive pattern) |
+| `ALARM_LINK_LOST` | 200 on, 200 off, repeating | Link lost alarm |
+| `ALARM_CRITICAL` | 100 on, 100 off, repeating | Critical error alarm |
 
 ### 12.2 Siren Patterns (Base only)
 
@@ -2369,7 +2370,7 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `POST_FIRE_COOLDOWN_MS` | 2000 | Cooldown before returning to IDLE |
 | `SIREN_LINK_LOST_DURATION_MS` | 4000 | Siren duration on link loss (4 × 500on/500off) |
 | `NACK_DISPLAY_DURATION_MS` | 3000 | How long NACK reason text is shown on display |
-| `WATCHDOG_TIMEOUT_S` | 2 | Hardware watchdog timeout |
+| `WATCHDOG_TIMEOUT_S` | 5 | Hardware watchdog timeout |
 | `ARM_TIMEOUT_MS` | 10000 | Maximum time in ARMED state without CMD_FIRE before auto-disarm |
 | `DEBOUNCE_POLL_INTERVAL_MS` | 10 | Default shift-register poll interval |
 
@@ -2490,7 +2491,7 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-S04 | Hold fire button at boot, then arm | Fire does not trigger (fresh press required). |
 | T-S05 | Corrupt a message (bit flip simulation) | Message rejected (CRC integrity check or ESP-NOW decrypt failure). |
 | T-S06 | Verify GPIO init order | Measure SPDT relay outputs with logic analyser during boot. Must be inactive (de-energised) before ESP-NOW init. |
-| T-S07 | Watchdog test: infinite loop in main task | Unit reboots within 2 seconds. All SPDT relays de-energised after reboot. |
+| T-S07 | Watchdog test: infinite loop in main task | Unit reboots within 5 seconds. All SPDT relays de-energised after reboot. |
 | T-S08 | Hold fire button, then arm (button already pressed at ARMED entry) | Fire does not trigger — fresh press detection requires 0xFF→0x00 transition after entering ARMED state. |
 | T-S09 | LINK_REQUEST while ARMED | Send LINK_REQUEST while base is ARMED. Base silently ignores it; session and armed state are unaffected. |
 | T-S10 | Display SPI failure at boot | Disconnect display MOSI. Remote fails display ID read-back and transitions to ERROR. |
@@ -2820,7 +2821,7 @@ This appendix provides a comprehensive reference of all protocol exceptions and 
 
 | Exception | Scenario | Handling |
 |---|---|---|
-| PONG not received within 500 ms | Single packet loss | Increment failure counter. Remote buzzer: 150 ms beep. RGB LED: orange flash (250 ms). |
+| PONG not received within 500 ms | Single packet loss | Increment failure counter. Remote buzzer: 80 ms beep. RGB LED: orange flash (250 ms). |
 | 3 consecutive PONG failures | Sustained link loss | Both units → LINK_LOST. Base disarms. Siren. Buzzer alarm. |
 | PONG with wrong ping_timestamp | Stale/mismatched pong | Discard silently. Do NOT count as success. Failure counter continues. |
 | PING received after link loss | Remote recovering | Base responds with PONG. Both → IDLE. |
