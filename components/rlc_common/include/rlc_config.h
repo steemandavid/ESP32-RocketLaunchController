@@ -83,7 +83,7 @@
 }
 
 /* Peer MAC addresses — actual hardware MACs */
-#define BASE_MAC_ADDR    { 0x44, 0x1B, 0xF6, 0x81, 0xFA, 0xF8 }
+#define BASE_MAC_ADDR    { 0x44, 0x1B, 0xF6, 0xD4, 0x0D, 0x68 }  /* chip #3 (2026-07-21); #2 44:1B:F6:81:FA:F8 & #1 94:A9:90:31:18:38 destroyed */
 #define REMOTE_MAC_ADDR  { 0x44, 0x1B, 0xF6, 0x81, 0xF1, 0x70 }
 
 /* ── Continuity Sensing (Base only, §14.5) ───────────────────── */
