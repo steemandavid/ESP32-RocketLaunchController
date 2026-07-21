@@ -465,7 +465,7 @@ They should be verified before Phase 3 work begins, or during Phase 5 hardening.
 ## Phase 3 — State Machines and Command Processing
 
 **FSD ref:** §4.3 Phase 3, §7 (Base FSM), §8 (Remote FSM), §6.3 (Commands)
-**Status:** ON-TARGET TESTING PAUSED — G1 partial (T-R04 PASS, T-R05 SKIP, T-R06 SKIP). Base ESP32 destroyed during first fire pulse. Software fixes applied (relay order + weld detection). Hardware protection (Schottky diode clamps) and replacement ESP32 required before resuming G2/G3.
+**Status:** ON-TARGET TESTING RESUMING (channel 1 only) — G1 partial (T-R04 PASS, T-R05 SKIP/code-reviewed, T-R06 pending). Blocker resolved 2026-07-21: base ESP32 chip #3 installed (MAC `44:1B:F6:D4:0D:68`), hardware protection fitted on **channel 1** (clamping diodes on the ADC input + snubber across the relay contact; channels 2–8 still unprotected — test channel 1 ONLY), software relay-order fix already in place. Both units reflashed; G0 re-verified with chip #3 (LINK_ACK, rssi=-35). Next: G2 arming (T-A01..T-A15) then G3 fire (T-F01..T-F09) on channel 1, pending battery connection.
 
 ### Phase 3 Architecture
 
@@ -710,7 +710,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 
 ### Phase 3 FSD Fire Tests (§15.3)
 
-**BLOCKED** — requires replacement base ESP32 + Schottky diode clamps on continuity ADC inputs. See bug #18.
+**Blocker resolved 2026-07-21** (chip #3 + clamping diodes + snubber on channel 1) — resume fire tests on **channel 1 only** until channels 2–8 receive the same protection. See bug #18.
 
 | ID | Test | Status |
 |----|------|--------|
