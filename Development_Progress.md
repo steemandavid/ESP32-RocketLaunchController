@@ -588,7 +588,7 @@ Added dedicated key switch sense input to resolve circular dependency in `guard_
 
 **Preamble.** All remaining Phase 3 tests are on-target and require user interaction — there are no host-side unit tests in this project. Testing runs the two flashed units against each other with real relays, continuity banks, arm switches, encoder, and arm/fire buttons. Execute the plan top-to-bottom; later groups assume earlier groups passed.
 
-**Target hardware.** Identify each board by its **stable by-id** under `/dev/serial/by-id/` — never `/dev/ttyACMx` (those numbers shift on every hot-plug). Prefer each board's **COM port** by-id (`usb-1a86_USB_Single_Serial_…` — the UART-bridge serial, stable across ESP32 chip swaps); the native-USB by-id (`usb-Espressif_…`) embeds the chip MAC and changes whenever a chip is swapped. Base MAC `44:1B:F6:D4:0D:68` (chip #3), Remote MAC `44:1B:F6:81:F1:70`. Confirm identity with `esptool.py -p <by-id> read-mac`. Both running commit `e03b826` or later.
+**Target hardware.** Identify each board by its **stable by-id** under `/dev/serial/by-id/` — never `/dev/ttyACMx` (those numbers shift on every hot-plug). Prefer each board's **COM port** by-id (`usb-1a86_USB_Single_Serial_…` — the UART-bridge serial, stable across ESP32 chip swaps); the native-USB by-id (`usb-Espressif_…`) embeds the chip MAC and changes whenever a chip is swapped. Base MAC `44:1B:F6:D4:0D:68` (chip #3), Remote MAC `AC:A7:04:E2:F2:8C` (chip #2; #1 flash-damaged). Confirm identity with `esptool.py -p <by-id> read-mac`. Both running commit `e03b826` or later.
 
 ### Phase 3 On-Target Testing Fixes
 
@@ -806,7 +806,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 | Item | Value |
 |------|-------|
 | Base MAC | `44:1B:F6:D4:0D:68` (chip #3; #2 `44:1B:F6:81:FA:F8` & #1 `94:A9:90:31:18:38` destroyed) |
-| Remote MAC | `44:1B:F6:81:F1:70` |
+| Remote MAC | `AC:A7:04:E2:F2:8C` (chip #2; #1 `44:1B:F6:81:F1:70` flash-damaged) |
 | Base serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E044219-if00` (stable board serial) |
 | Remote serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00` (stable board serial) |
 | ESP-IDF version | v5.4.1 |
