@@ -47,6 +47,22 @@
 
 #define COMPLETE_PULSE_ON_LINK_LOSS    1     /* 1 = complete fire pulse on link loss, 0 = immediate abort */
 
+/* Bitmask of channels whose continuity ADC input has the bug #18 hardware
+ * protection fitted (Schottky clamp diodes on the ADC pin + snubber across
+ * the relay contact). Bit 0 = ch1 ... bit 7 = ch8.
+ *
+ * Firing a channel without that protection couples VBAT onto an unclamped
+ * ADC input (GPIO 2-10) and destroys the ESP32 — this already happened twice
+ * (Dev-Progress bug #18). ARM is NACKed and the channel relay refuses to
+ * close for any channel not in this mask.
+ *
+ * Set to 0xFF once all eight channels are protected. */
+#define FIRE_PROTECTED_CHANNEL_MASK    0x01  /* channel 1 only (2026-07-21) */
+
+#define CHANNEL_IS_PROTECTED(ch) \
+    (((ch) >= 1) && ((ch) <= NUM_CHANNELS) && \
+     ((FIRE_PROTECTED_CHANNEL_MASK >> ((ch) - 1)) & 1u))
+
 /* ── Voltage Thresholds (millivolts) ──────────────────────────── */
 
 #define BASE_VBAT_DIVIDER_RATIO        4.3f

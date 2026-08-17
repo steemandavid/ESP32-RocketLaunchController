@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.16 (2026-07-21)
+**Spec:** RLC-FSPEC-001 v1.17 (2026-08-17)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -617,6 +617,57 @@ Bugs discovered and fixed during Phase 3 on-target testing (2026-04-15):
 
 **HARDWARE DAMAGE (2026-04-16):** Base unit ESP32-S3 destroyed during first on-target fire pulse (T-R06). Root cause: relay de-energization order allowed 6A arc at channel relay contacts to couple VBAT to continuity ADC inputs. Software fix applied (relay order reversed). Hardware protection (Schottky diode clamps on GPIO 2-10) required before resuming fire tests. Replacement ESP32 needed.
 
+**Bug #18 audit + software channel gate (2026-08-17).** Audited the software half of the
+fix and added a firmware gate against firing unprotected channels.
+
+- **Relay-order fix verified complete.** All 13 de-energise call sites in
+  `rlc_base_fsm.c` route through `relay_all_safe()` (arm relay OFF → 20 ms →
+  channel relays OFF); `relay_fire_set(ch, true)` at the PRE_FIRE→FIRING
+  transition is the only place a channel relay is ever energised. No path
+  bypasses the ordering.
+- **New: `FIRE_PROTECTED_CHANNEL_MASK`** in `rlc_config.h` (currently `0x01` —
+  channel 1 only). `guard_arm()` NACKs ARM on any channel outside the mask
+  (reusing `NACK_INVALID_CHANNEL`, so the wire protocol is unchanged; the real
+  reason is logged on the base), and `relay_fire_set()` refuses to energise an
+  unprotected channel relay as a last line of defence. De-energising is always
+  allowed. `relay_init()` logs a warning each boot while the mask != `0xFF`.
+  **Bump the mask to `0xFF` once channels 2–8 get their clamps + snubbers.**
+- **Residual exposure — the software fix only covers the break, not the make.**
+  The arm relay is energised on entry to ARMED, so VBAT is already live on the
+  fire bus when `relay_fire_set(ch, true)` transfers the channel contact
+  NC→NO. Contact bounce/arc at *make* can still couple VBAT toward the NC
+  contact — i.e. the unclamped ADC pin. Only the hardware protection (ADC clamp
+  diodes + contact snubber) closes that window; no relay ordering can. Treat the
+  clamps as mandatory, not belt-and-braces.
+- **The arm relay now breaks the 6 A fire current** (previously the channel
+  relay did), and the arc lands on the ARM SENSE node that GPIO 21 watches.
+  **As-built 2026-08-17 (confirmed with the user): the arm relay contact has NO
+  snubber, and GPIO 21 has NO clamp diode/zener — only the 27 kΩ/10 kΩ divider.**
+  The FSD (§5.4.3, §5.4.3b) states the 3.3 V zener as fitted on both GPIO 21 and
+  GPIO 42; it is **not** fitted on either. Doc/hardware mismatch — correct the FSD.
+  - *ESP32 risk on GPIO 21: moderate, not the ADC-pin scenario.* The continuity
+    front end is `3.3V → 3.3 kΩ → sense node → NC contact` with the ADC pin
+    tapping the sense node, i.e. **zero** series resistance to VBAT — hence
+    instant death. GPIO 21 has 27 kΩ in series, so DC VBAT is ~0.33 mA into the
+    internal clamp (survivable); the exposure is inductive spikes at contact
+    break (200 V → ~7 mA, marginal and cumulative).
+  - *The bigger risk is the interlock, not the MCU.* Unsnubbed 6 A DC break
+    erodes and eventually **welds** the arm relay contact — and a welded arm
+    relay leaves VBAT permanently on the fire bus, defeating the primary fire
+    path interlock. `weld_check()` detects it (hard ERROR, power-cycle to
+    clear), so it fails safe — but all switching wear now lands on the one
+    contact the safety case depends on.
+  - *Hardware to fit:* (a) RC snubber across the arm relay contact — start
+    47 Ω 0.5 W + 100 nF film rated ≥ 100 V; (b) TVS across the fire bus (arm
+    relay COM to GND, e.g. SMBJ18A/20A) to clamp the kick at the node the sense
+    divider watches; (c) clamp on GPIO 21 — the spec'd 3.3 V zener across R2, or
+    better a BAT54S dual Schottky (mid node to the GPIO, to 3V3 and GND) plus
+    ~10 nF to GND to slow edges; (d) the same clamp on GPIO 42 (key sense sits
+    on the fire-path high side too).
+- **Fire-pulse duration side effect:** igniter current now ends when the *arm*
+  relay opens, so the delivered pulse is ~`FIRE_PULSE_DURATION_MS` + arm-relay
+  release time. Account for this in T-F08 (oscilloscope timing).
+
 **Required test equipment.**
 - Power supply for base (≥ 9 V) and remote (≥ 3.7 V Li-ion or bench supply on VBAT)
 - 10 squib simulator resistors (≈ 10 Ω each) wired to channels 0–9
@@ -710,7 +761,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 
 ### Phase 3 FSD Fire Tests (§15.3)
 
-**Blocker resolved 2026-07-21** (chip #3 + clamping diodes + snubber on channel 1) — resume fire tests on **channel 1 only** until channels 2–8 receive the same protection. See bug #18.
+**Blocker resolved 2026-07-21** (chip #3 + clamping diodes + snubber on channel 1) — resume fire tests on **channel 1 only** until channels 2–8 receive the same protection. See bug #18. Channel-1-only is now enforced in firmware by `FIRE_PROTECTED_CHANNEL_MASK` (2026-08-17), not just by operator discipline.
 
 | ID | Test | Status |
 |----|------|--------|

@@ -1,5 +1,124 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-17 — Bug #18 audit, firmware channel gate, as-built hardware deviations (FSD v1.17)
+
+Focus: the bug that has now destroyed two base ESP32s during fire-path testing
+(Dev-Progress bug #18 — relay arc coupling VBAT onto unclamped GPIO inputs).
+
+### Audit: the software half of the fix is complete and correct
+
+- `relay_all_safe()` (`components/rlc_base/src/rlc_relay.c`) de-energises the arm
+  relay first, waits `RELAY_ARM_RELEASE_MS` (20 ms), then drops the channel relays.
+- Traced every call site: **all 13** de-energise paths in `rlc_base_fsm.c` route
+  through `relay_all_safe()` (end-of-pulse, cease-fire, disarm, key-off,
+  arm-sense-lost, link-lost, error entry). `relay_fire_set(ch, true)` at the
+  PRE_FIRE→FIRING transition is the **only** place a channel relay is energised.
+  Nothing bypasses the ordering. No code change needed here.
+
+### The software fix does not remove the hazard — three findings
+
+1. **It covers the break, not the make.** The arm relay energises on entry to
+   ARMED, so VBAT is already live on the fire bus when the channel contact
+   transfers NC→NO at fire start. Bounce/arc at *make* can still couple VBAT
+   toward the NC contact (the unclamped ADC pin). No relay ordering closes that
+   window — only the clamp diodes + contact snubber do. The clamps are
+   **mandatory**, not belt-and-braces.
+2. **Nothing in firmware prevented firing channels 2–8**, which have no clamps.
+   "Test channel 1 only" was operator discipline recorded in a changelog. One
+   encoder mis-turn = third dead ESP32. → fixed this session (see below).
+3. **The arm relay is now the sole contact breaking 6 A DC.** Its failure mode
+   under unsnubbed DC arcing is contact **welding** — and a welded arm relay
+   leaves VBAT permanently on the fire bus, defeating the primary fire-path
+   interlock. `weld_check()` detects it (hard ERROR, power-cycle to clear), so it
+   fails safe, but all switching wear now lands on the one contact the safety
+   case depends on.
+
+### As-built hardware deviations (confirmed with the user)
+
+The FSD described protection that is **not installed**:
+
+| Item | FSD says | As-built 2026-08-17 |
+|---|---|---|
+| GPIO 21 arm sense | 27 kΩ/10 kΩ divider + 3.3 V zener | divider only — **no zener** |
+| GPIO 42 key sense | 27 kΩ/10 kΩ divider + 3.3 V zener | divider only — **no zener** |
+| Arm relay contact | (snubber assumed) | **no snubber** |
+| Ch 1 continuity ADC | — | clamp diodes + snubber fitted |
+| Ch 2–8 continuity ADC | — | **unprotected** |
+
+Risk correction made this session: GPIO 21 is **not** in the same class as the
+dead ADC pins. The continuity front end is `3.3V → 3.3 kΩ → sense node → NC
+contact` with the ADC pin tapping the sense node — i.e. **zero** series
+resistance to VBAT, hence instant death. GPIO 21 has 27 kΩ in series, so DC VBAT
+is ~0.33 mA into the pin's internal clamp (survivable); its exposure is
+inductive spikes at contact break (~200 V → ~7 mA, marginal and cumulative).
+
+**Protection BOM to fit:**
+
+| Part | Where | Purpose |
+|---|---|---|
+| BAT54S dual Schottky (mid→GPIO, ends→3V3/GND) + ~10 nF to GND, or the spec'd 3.3 V zener | GPIO 21, GPIO 42 | clamp spike excursions on the fire-path sense nodes |
+| 47 Ω 0.5 W + 100 nF film, ≥ 100 V | across arm relay contact | suppress the 6 A DC break arc |
+| SMBJ18A/20A-class TVS | arm relay COM → GND | clamp the inductive kick at the sensed node |
+
+### Firmware change — bug #18 channel gate
+
+New in `components/rlc_common/include/rlc_config.h`:
+
+```c
+#define FIRE_PROTECTED_CHANNEL_MASK    0x01  /* channel 1 only (2026-07-21) */
+#define CHANNEL_IS_PROTECTED(ch) \
+    (((ch) >= 1) && ((ch) <= NUM_CHANNELS) && \
+     ((FIRE_PROTECTED_CHANNEL_MASK >> ((ch) - 1)) & 1u))
+```
+
+- `guard_arm()` (`rlc_base_fsm.c`) — new **guard 4b** NACKs ARM on any channel
+  outside the mask. Reuses `NACK_INVALID_CHANNEL` so the **wire protocol and the
+  remote firmware are unchanged**; the real reason is logged on the base.
+  Deliberately ordered **after** guard 4 (already-armed) so **T-A05** still
+  returns `NACK_CHANNEL_ALREADY_ARMED` (0x0A) as the test spec expects.
+- `relay_fire_set()` (`rlc_relay.c`) — refuses to energise an unprotected
+  channel relay (last line of defence). De-energising is **always** allowed.
+- `relay_init()` — logs a warning every boot while the mask != `0xFF`:
+  `bug #18 gate ACTIVE — firing allowed on mask 0x01 only`.
+- **Bump the mask to `0xFF` once channels 2–8 get their clamps + snubbers.**
+
+Base firmware builds clean (`./build_base.sh`, `base_app_main` verified in
+binary). **Not flashed** — no hardware was connected this session.
+
+### Documentation
+
+- `Development_Progress.md` — bug #18 section rewritten with the audit result,
+  the gate, the residual make-window, the arm-relay wear/weld path, the as-built
+  table and the BOM. Phase 3 fire-test note now says channel-1-only is
+  **enforced in firmware**, not just by operator discipline.
+- `RLC_Functional_Specification_v1_14.md` → **v1.17** (2026-08-17) with an
+  as-built deviation callout in §5.4.3, "NOT FITTED" markers on the §5.4.3 /
+  §5.4.3b protection rows, the §5.4.9 circuit diagram, and a changelog row.
+  (Filename still says `v1_14` — stale, content is v1.17.)
+
+### Operator decision recorded
+
+Chosen: **keep the gate at `0x01`, fit the GPIO clamps before the next fire
+pulse**, snubber + TVS before an extended campaign. Rejected alternatives were
+gating everything to `0x00` (blocks the whole G3 campaign) and proceeding with no
+hardware changes.
+
+### Notes / follow-ups
+
+- **Before the next fire pulse:** fit BAT54S (or zener) on GPIO 21 and GPIO 42.
+  This is the only item standing between the project and resuming G3.
+- **Reflash both units** — the remote still has not been flashed since the chip #2
+  MAC change (`AC:A7:04:E2:F2:8C`), and the base binary now carries the channel
+  gate. Re-verify LINK_ACK and confirm the new boot warning appears in the base log.
+- **T-F08 (scope timing):** the delivered igniter pulse is now
+  `FIRE_PULSE_DURATION_MS` **+ arm-relay release time**, because current ends when
+  the arm relay opens, not when the channel relay does.
+- Base pack was reading ~6.6 V at the end of the 2026-07-21 session — verify it is
+  not over-discharged before connecting.
+- Doc/hardware mismatches like the phantom zener are exactly the defect class the
+  v1.16 review pass was chasing; worth a dedicated as-built audit of the base board
+  against §5.4 before the campaign.
+
 ## 2026-07-31 — Remote chip #2 bring-up (chip #1 flash-damaged)
 
 ### Remote MAC update

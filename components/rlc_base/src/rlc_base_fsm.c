@@ -241,6 +241,17 @@ static uint8_t guard_arm(const rlc_fsm_event_t *evt)
     /* Guard 4: No other channel armed */
     if (s_armed_channel != 0) return NACK_CHANNEL_ALREADY_ARMED;
 
+    /* Guard 4b: Channel has the bug #18 hardware protection fitted.
+     * Reuses NACK_INVALID_CHANNEL so the wire protocol is unchanged — the real
+     * reason is logged here. Ordered after guard 4 so T-A05 (second channel
+     * while armed) still sees NACK_CHANNEL_ALREADY_ARMED. */
+    if (!CHANNEL_IS_PROTECTED(ch)) {
+        ESP_LOGE(TAG, "ARM ch %u refused — no ADC clamp/snubber fitted "
+                      "(protected mask 0x%02X), see bug #18",
+                 ch, FIRE_PROTECTED_CHANNEL_MASK);
+        return NACK_INVALID_CHANNEL;
+    }
+
     /* Guard 1: Base key switch must be ON — key_sense HIGH */
     if (!key_sense_get_debounced()) return NACK_BASE_SWITCH_OFF;
 

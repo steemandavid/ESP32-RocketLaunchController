@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.16
-**Date:** 2026-07-21
+**Version:** 1.17
+**Date:** 2026-08-17
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -30,6 +30,7 @@
 | 1.14 | 2026-04-14 | Operational tuning: removed NVS key provisioning note (compile-time keys are acceptable). Made link retry more aggressive: 5 attempts at 2s intervals (was 15 at 2s then 5s). Changed missed ping RGB LED flash from 50ms to 250ms. Reduced PRE_FIRE_DELAY_MS from 5000ms to 2000ms. Reduced FIRE_PULSE_DURATION_MS from 2000ms to 1000ms. Made runtime UART logging compile-time optional (disabled by default, enabled via CONFIG_RLC_SERIAL_DEBUG_LOGGING). Updated §6.2.1, §6.4.1, §6.4.2, §7.2.3, §9.11, §14.1. |
 | 1.15 | 2026-04-16 | Circuit documentation correction after on-target testing revealed errors. Split §5.4.3 into arm relay feedback (GPIO 21, renamed from "Arm Switch Position Sense") and new §5.4.3b key switch sense (GPIO 42). Fixed §5.4.4 key switch diagram to show key sense connection (was "No separate GPIO"). Fixed §5.4.5 circuit topology to include key sense circuit. Fixed §7.2.2 arming guards: guard 1 now checks key sense GPIO 42 (was incorrectly checking arm sense GPIO 21, creating circular dependency). Fixed §7.2.3, §7.2.4, §7.2.7 to distinguish key switch events from arm relay feedback events. Updated debounce table, protocol fields, task priorities, boot sequence, test descriptions, and hardware notes. Updated §5.4.9 arm relay output sensing description. |
 | 1.16 | 2026-07-21 | Documentation accuracy corrections after remote display validation and full code review. Aligned all 8 buzzer/alarm pattern timings (§12.1 table, §6.4.2, App D.2) with `rlc_buzzer.c` (patterns had drifted shorter in firmware). Watchdog timeout 2 s → 5 s (§9.6, §14.1, T-S07) to match `WATCHDOG_TIMEOUT_S`. Softened ILI9488 display-ID health check (§5.5.6): clone panels report a non-standard ID (observed 0x2A403300); only a zero/garbage read-back or SPI failure is a fault. Fixed hw-test spec console transport (USB-Serial/JTAG `/dev/ttyACM*`, not UART0/`/dev/ttyUSB0`). Refreshed stale spec-version citations (Development_Progress.md, hw-test spec). Fixed stale code comments (`rlc_rgb_led.h` 50→250 ms; `rlc_watchdog.h` 2 s→5 s). |
+| 1.17 | 2026-08-17 | Bug #18 as-built deviations and firmware channel gate. Recorded that the 3.3 V zener clamps on GPIO 21 (§5.4.3) and GPIO 42 (§5.4.3b) are **not fitted**, and that the arm relay contact has **no snubber** — the spec previously described all three as present. The bug #18 relay-order fix (arm relay OFF → 20 ms → channel relays OFF) makes the arm relay the sole contact breaking 6 A DC, placing that arc on the ARM SENSE node and putting the arm relay contact at risk of erosion/welding (detected by `weld_check()`, fails safe to ERROR). Added the required protection BOM (BAT54S or zener on GPIO 21/42, 47 Ω/100 nF contact snubber, SMBJ18A-class TVS on arm relay COM) and updated the §5.4.9 circuit diagram. Documented the new firmware gate `FIRE_PROTECTED_CHANNEL_MASK` (currently 0x01, channel 1 only): `guard_arm()` NACKs ARM on unprotected channels and `relay_fire_set()` refuses to energise them. Noted that the delivered fire pulse is now FIRE_PULSE_DURATION_MS + arm-relay release time (affects T-F08). |
 
 ---
 
@@ -612,12 +613,26 @@ The ADC voltage is converted to a continuity band using threshold comparison wit
 | Quantity | 1 (senses ARM SENSE node — the arm relay COM output / fire bus) |
 | Pin | GPIO 21 |
 | Function | Post-energise verification that the arm relay contacts are actually closed and VBAT is present on the fire bus. Used for the M1 arm relay verify flow and contact-welding detection (§5.4.3b provides separate key switch position sensing). |
-| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp |
+| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp — **zener NOT FITTED as-built 2026-08-17, see deviation note below** |
 | Debounce | 16-bit shift-register, 10 ms polling, 160 ms debounce (same engine as other digital inputs, §5.3) |
 
 The arm sense circuit reads the ARM SENSE node, which is the arm relay COM output — i.e., the fire bus (§5.4.9). This node carries VBAT whenever the arm relay contacts close (NO→COM). The arm relay coil drive path (§5.4.4) requires both the physical key switch ON and the MOSFET driven, so arm sense HIGH implies both conditions are met. However, the firmware also has a **separate** key switch sense input (§5.4.3b, GPIO 42) that reads the key switch position directly, enabling the firmware to distinguish between key switch OFF and arm relay dropout.
 
 The ARM SENSE node connects to GPIO 21 through a voltage divider (27 kΩ series, 10 kΩ to GND) with a 3.3 V zener diode clamp across the lower resistor.
+
+> **AS-BUILT DEVIATION (2026-08-17) — the zener clamp is NOT fitted.** On the
+> current base hardware, GPIO 21 (§5.4.3) and GPIO 42 (§5.4.3b) have the
+> 27 kΩ/10 kΩ divider only; neither 3.3 V zener is installed, and the arm relay
+> contact has no snubber. This matters because the bug #18 relay-order fix made
+> the arm relay the sole contact breaking 6 A DC, putting that arc on the ARM
+> SENSE node. The 27 kΩ series resistor limits DC VBAT to ~0.33 mA into the pin's
+> internal clamp (survivable), so the exposure is inductive spikes at contact
+> break, plus contact erosion trending toward a welded arm relay. Required before
+> an extended fire-test campaign: BAT54S dual Schottky (or the spec'd zener) on
+> GPIO 21 and GPIO 42, a 47 Ω/100 nF snubber across the arm relay contact, and an
+> SMBJ18A-class TVS from arm relay COM to GND. Firmware currently restricts
+> firing to channel 1 via `FIRE_PROTECTED_CHANNEL_MASK`. See
+> `Development_Progress.md` bug #18.
 
 **Reading interpretation:**
 - **Arm relay de-energised:** ARM SENSE node is disconnected from VBAT (arm relay COM↔NC, NC unused). R2 (10 kΩ) pulls the GPIO to ~0 V. GPIO reads LOW (debounced: 0x0000 = arm relay open).
@@ -643,7 +658,7 @@ The ARM SENSE node connects to GPIO 21 through a voltage divider (27 kΩ series,
 | Quantity | 1 (senses key switch NO output — direct key switch position) |
 | Pin | GPIO 42 |
 | Function | Direct read of the physical key switch position. HIGH = key switch ON (VBAT present at key switch NO output). Used in `guard_arm()`, PRE_FIRE guard, and FSM disarm triggers. Enables the firmware to detect key switch position independently of arm relay state, resolving the circular dependency where arming requires the arm relay to already be closed. |
-| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp (identical to arm sense) |
+| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp (identical to arm sense) — **zener NOT FITTED as-built 2026-08-17, see §5.4.3 deviation note** |
 | Debounce | 16-bit shift-register, 10 ms polling, 160 ms debounce (same engine as arm sense, §5.3) |
 
 The key sense circuit reads the key switch NO output — the same node that feeds VBAT+ to the arm relay coil positive terminal (§5.4.4). When the key switch is ON, VBAT+ appears at this node. When OFF, the node is disconnected from VBAT+ and pulled low. The key switch NO output connects to GPIO 42 through a voltage divider (27 kΩ series, 10 kΩ to GND) with a 3.3 V zener diode clamp — identical to the arm sense circuit on GPIO 21.
@@ -756,7 +771,12 @@ The following diagram shows the relationship between the arm key switch, arm rel
                                │
                           10 kΩ ── GND
                                │
-                        3.3 V zener ── GND
+                        3.3 V zener ── GND   [NOT FITTED as-built 2026-08-17]
+
+    ARM RELAY CONTACT SNUBBER: [NOT FITTED as-built 2026-08-17]
+    The bug #18 relay-order fix makes the arm relay the sole contact breaking
+    6 A DC. Required: 47 Ω/100 nF RC across the contact + SMBJ18A-class TVS
+    from arm relay COM to GND.
 
     CONTINUITY CIRCUIT (per channel, via channel relay NC contact):
 
