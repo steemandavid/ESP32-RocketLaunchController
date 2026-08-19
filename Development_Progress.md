@@ -19,7 +19,7 @@
 | 1 | Foundation and Communication | COMPLETE |
 | 2 | Input/Output and Debouncing | COMPLETE |
 | 3 | State Machines and Command Processing | CODE COMPLETE |
-| 4 | Display | NOT STARTED |
+| 4 | Display | CODE COMPLETE |
 | 5 | Hardening and Final Testing | NOT STARTED |
 
 ---
