@@ -102,8 +102,18 @@ safety path.
 
 The remote's 480×320 ILI9488 display renders into a PSRAM framebuffer and
 flushes only the dirty bounding box over SPI, at 10 Hz. Continuity is shown with
-distinct shapes as well as colours so the grid stays readable with red-green
-colour blindness.
+distinct shapes as well as colours, so the grid stays readable regardless of
+colour vision. No text is drawn smaller than 12×16 px per character — anything
+smaller proved unreadable at arm's length in the field.
+
+The base carries an 8-pixel NeoPixel strip, one pixel per igniter channel,
+showing the same continuity colours as the remote's grid: both resolve them
+from the `RLC_COLOR_CONT_*` constants in `rlc_config.h`, written as HTML
+`0xRRGGBB` values, so restyling both units is a one-line change. The strip
+doubles as a link-quality bar while booting and keeps igniter status visible
+(dimmed) between flashes of the error pattern. The armed and firing patterns
+are deliberately left as whole-strip red, so the "pad is live" signal is never
+diluted into a data display.
 
 ## Status
 
@@ -126,6 +136,9 @@ Known open items before any field use:
   rail rather than the specified 2S remote pack.
 - The base does not yet act on the remote battery voltage it receives in PING
   (FSD §7 requires NACK `0x0C`).
+- The continuity palette (`RLC_COLOR_CONT_*`) deviates from FSD §10.2.0, which
+  specifies blue for GOOD to avoid a red-green pair; the specification needs
+  updating to match, or the palette reverting.
 
 ## Documentation
 

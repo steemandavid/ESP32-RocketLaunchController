@@ -118,6 +118,67 @@ divider is sized for 8.4 V full scale, so feeding the remote's battery input
 from 12.8 V would put ~4.6 V on GPIO 1, above the 3.3 V absolute maximum —
 the same failure class as bug #18.
 
+### Base 8-pixel status strip + shared colour config
+
+An 8-way NeoPixel strip is wired to the base's `PIN_RGB_LED` (GPIO 48), sharing
+the data line with the DevKit's built-in NeoPixel — the built-in LED therefore
+mirrors pixel 0 (channel 1). One pixel per igniter channel:
+
+| Continuity | Colour | Constant |
+|---|---|---|
+| GOOD | dark green `#006400` | `RLC_COLOR_CONT_GOOD` |
+| MARGINAL | light green `#90EE90` | `RLC_COLOR_CONT_MARGINAL` |
+| OPEN | yellow `#FFFF00` | `RLC_COLOR_CONT_OPEN` |
+| SHORT | red `#FF0000` | `RLC_COLOR_CONT_SHORT` |
+
+Defined once in `rlc_config.h` as HTML `0xRRGGBB` values and used by **both**
+the strip and the remote display's channel grid, so pad and handheld always
+agree; restyling is a one-line change.
+
+Other strip uses (the user invited these):
+
+| Pattern | Strip |
+|---|---|
+| `IDLE` | Channel map (base only; the remote's single pixel keeps solid green) |
+| `IDLE_ARM_ON` | Map breathing 100 %/25 % — status stays readable while the key-ON warning stays obvious |
+| `BOOT`/`LINKING` | RSSI bar once the peer is heard (green ≥ −60, amber ≥ −80, red below); blue pulse until then |
+| `ERROR` | Red triple flash unchanged, map dimmed to 20 % in the 700 ms gap |
+| `ARMED`, `PRE_FIRE`, `FIRING` | **Unchanged** whole-strip red per FSD §11 — the firing-path signal should not be diluted into a data display |
+
+New driver API: `rlc_rgb_led_set_channel_bands()`, `set_active_channel()`,
+`set_rssi()`. Fed from the base **housekeeping loop** every 100 ms rather than
+from the FSM, so the fire path is untouched.
+
+Two consequences worth noting:
+
+- **Deviation from FSD §10.2.0**, which specifies blue for GOOD precisely to
+  avoid a red-green pair for colour-blind operators. Display shape coding still
+  carries the meaning without colour, but on the strip colour is the only
+  channel, and dark-green vs light-green at `RGB_LED_BRIGHTNESS` 30 differ
+  mostly in brightness. FSD needs updating or the palette reverting.
+- About 20 display call sites had been borrowing `C_GOOD`/`C_OPEN`/`C_MARGINAL`
+  as generic blue/red/yellow accents. Left alone, the ERROR frame and the word
+  "ARMED" would have turned yellow. They now use dedicated
+  `C_FAULT`/`C_WARN`/`C_INFO`/`C_GREEN`.
+
+### Display legibility — scale 2 is the floor
+
+Field feedback: scale-1 text (6x8 px/char) is unreadable at arm's length;
+"Connected to base" (scale 2, 12x16 px) is the reference size. Nothing is now
+drawn below scale 2 — the only remaining scale-1 arguments in `rlc_display.c`
+are frame and rule thicknesses in pixels.
+
+Tripling the area of every small string forced layout changes: channel cells
+shortened 86 → 80 px to free two scale-2 status rows, and nine strings
+abbreviated to fit 480 px at 12 px/char (`Turn ARM key, then hold encoder to
+arm channel N` → `TURN ARM KEY TO ARM CH N`, `HOLD FIRE BUTTON - RELEASE TO
+ABORT` → `RELEASE TO ABORT`, and so on — full table in
+`Development_Progress.md`). The NACK overlay no longer falls back to scale 1
+for long strings; every NACK reason string fits at scale 2.
+
+Tightest fits to watch in daylight: `MARGINAL` is 96 px in a 118 px cell, and
+the arm-sense row runs to 420 px of 480 at its widest.
+
 ### Notes
 
 - Base firmware rebuilt clean after the `rlc_link.h` change — the base unit was
@@ -127,6 +188,10 @@ the same failure class as bug #18.
   push a few kB. Worth measuring properly under T-D09.
 - `task_wdt: esp_task_wdt_reset(): task not found` at boot is pre-existing and
   unrelated to this work.
+- **The base was never flashed this session** — the strip changes are built at
+  `build_base/rlc.bin` and await a flash when the pad side is clear. The remote
+  was reflashed after every change and boots clean each time.
+- A `README.md` was added to the repository this session.
 
 ---
 
