@@ -1,5 +1,93 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-19 — Phase 4: remote display implementation (FSD §10)
+
+Built the remote unit's display functionality end to end, deliberately kept
+independent of the ongoing base firing-sequence debugging. Everything is
+remote-side except one additive field in the shared link status struct.
+
+### Architecture
+
+`components/rlc_remote/src/rlc_display.c` (~1200 lines) replaces the Phase 1–3
+logging stub.
+
+| Element | Choice | Why |
+|---|---|---|
+| Panel init | Ported verbatim from the validated `rlc-hw-test-remote` sequence | Known-good on this clone (ID `0x2A403300`) |
+| Framebuffer | 480×320×3 RGB666 in **PSRAM** (460,800 B) | The board has 8 MB OCT PSRAM; no per-pixel SPI round trips |
+| Flush | Dirty **bounding box** only, streamed row-by-row through an internal-RAM DMA bounce buffer | FSD §10.3 partial refresh; PSRAM is not the DMA source |
+| Ownership | `display_task` (prio 2, core 1, 8192 stack — FSD §9.10) is the only toucher of SPI | The FSM and input tasks never block on the panel |
+| Frame rate | 10 Hz (`DISPLAY_FRAME_MS` 100) | FSD §10.3 requires ≥ 5 Hz; pre-fire countdown wants 100 ms |
+| Screen choice | Derived from the remote FSM state, with latched overrides (ERROR, FW mismatch) and a timed overlay (NACK/toast) | No duplicated selection logic at call sites |
+
+Text is the 5×7 bitmap font from the hardware test, scaled 1–4×. Continuity is
+drawn with **shape as well as colour** — filled circle (GOOD), triangle
+(MARGINAL), ring (OPEN), diamond (SHORT) — so the grid survives red-green
+colour blindness, per FSD §10.2.0.
+
+### Screens implemented (FSD §10.2)
+
+Splash + progress bar, firmware mismatch, main status (top bar with RSSI bar /
+ping RTT / both battery gauges, 4×2 continuity grid, legend, arm-sense line,
+context prompt), armed (pulsing red border, large channel number, arm-sense
+confirmation), pre-fire/firing (100 ms countdown, then "IGNITION ACTIVE" on
+red), fire complete (2 s with return countdown), link lost (amber), error, and
+the 3 s NACK overlay. All 14 Phase 4 development tasks are now DONE.
+
+### Supporting changes
+
+| Change | File | Purpose |
+|---|---|---|
+| `remote_fsm_get_status()` | `rlc_remote_fsm.c/h` | Spinlock-guarded snapshot of the cached STATUS_UPDATE (continuity bands, base battery, arm sense, error flags). All 5 cache-update sites refactored through a new `cache_status()` helper. |
+| `remote_fsm_get_prefire_remaining_ms()` | `rlc_remote_fsm.c/h` | Drives the pre-fire countdown |
+| `rlc_link_status_t.ping_rtt_ms` | `rlc_link.c/h` | PING→PONG round-trip computed in `handle_pong()` for the top bar |
+| Display health check | `rlc_remote_main.c` | FSD §9.13 step 6 / T-S10: `display_init()` failure **or** a zero ID read-back halts the remote in ERROR |
+| FSM display hooks | `rlc_remote_fsm.c` | The three `/* Phase 4 */` placeholders became real calls, plus NACK overlays on ARM/FIRE rejection, toasts for local rejections (arm key off, battery low, stale status, degraded link), and `display_fire_complete()` |
+| `do_enter_error_text()` | `rlc_remote_fsm.c` | All 6 battery-critical paths now latch "REMOTE BATTERY CRITICAL" so the ERROR screen says something |
+
+### On-target result
+
+Flashed and booted successfully:
+
+```
+I (1584) rlc_disp: ILI9488 init: 480x320 RGB666 @ 20 MHz, ID 0x2A403300 (healthy)
+I (1584) rlc_disp: display task started (prio 2, core 1)
+```
+
+Links to the base in ~30 ms, no watchdog trips, no crash. T-D01 (panel ID
+read-back) **PASS**; T-D02…T-D09 (visual layout checks) still pending — the
+layouts have not been verified by eye.
+
+**Bench caveat:** with no LiPo connected the remote's battery ADC reads 0 mV, so
+the FSM enters ERROR at ~4.9 s (pre-existing Phase 2/3 behaviour) and the panel
+sits on the ERROR screen. Connect the remote battery to reach IDLE and see the
+main status screen.
+
+### Remote serial port changed
+
+The documented remote by-id `usb-1a86_USB_Single_Serial_5B5E042156-if00` no
+longer exists. Enumerated `/dev/serial/by-id/` and confirmed by `read_mac`:
+
+| Port | MAC | Unit |
+|---|---|---|
+| `usb-1a86_USB_Single_Serial_5B5E043219-if00` | `ac:a7:04:e2:f2:8c` | **Remote** |
+| `usb-1a86_USB_Single_Serial_5B5E044219-if00` | `44:1b:f6:d4:0d:68` | Base |
+
+`build_remote.sh` and `Development_Progress.md` updated to `…5B5E043219`. (Note:
+`esptool` in this IDF v5.4.1 install takes `read_mac`, not `read-mac`.)
+
+### Notes
+
+- Base firmware rebuilt clean after the `rlc_link.h` change — the base unit was
+  not flashed or otherwise touched.
+- A full-screen redraw is ~460 kB over SPI (~180 ms at 20 MHz), which exceeds
+  one 100 ms frame. That only happens on screen changes; steady-state frames
+  push a few kB. Worth measuring properly under T-D09.
+- `task_wdt: esp_task_wdt_reset(): task not found` at boot is pre-existing and
+  unrelated to this work.
+
+---
+
 ## 2026-08-17 — Bug #18 audit, firmware channel gate, as-built hardware deviations (FSD v1.17)
 
 Focus: the bug that has now destroyed two base ESP32s during fire-path testing

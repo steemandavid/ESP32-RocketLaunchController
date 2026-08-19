@@ -82,6 +82,7 @@ static uint16_t          s_remote_battery_mv = 0;
 /* Timing state (monotonic ms via esp_timer_get_time() / 1000). */
 static int64_t           s_last_linkreq_ms = 0;
 static int64_t           s_last_ping_sent_ms = 0;   /* remote: when last PING sent   */
+static uint16_t          s_ping_rtt_ms = 0;         /* remote: last round-trip time  */
 static uint32_t          s_last_ping_timestamp = 0; /* remote: stamp in last PING    */
 static bool              s_ping_outstanding = false;
 static int64_t           s_last_ping_rx_ms = 0;     /* base: when last PING received */
@@ -437,6 +438,12 @@ static void handle_pong(const uint8_t *payload, uint16_t plen)
 
     s_ping_outstanding = false;
     s_missed_pings = 0;
+
+    /* Round-trip time for the display top bar (FSD §10.2.2) */
+    int64_t rtt = now_ms() - s_last_ping_sent_ms;
+    if (rtt < 0) rtt = 0;
+    if (rtt > UINT16_MAX) rtt = UINT16_MAX;
+    s_ping_rtt_ms = (uint16_t)rtt;
 
     /* Phase 3: Track ping success in health window. */
     s_ping_window[s_ping_window_idx] = true;
@@ -803,6 +810,7 @@ void rlc_link_get_status(rlc_link_status_t *out)
     out->rssi_avg_dbm   = s_rssi_avg;
     out->last_rssi_dbm  = s_rssi_last;
     out->missed_pings   = s_missed_pings;
+    out->ping_rtt_ms    = s_ping_rtt_ms;
     out->linkreq_attempts = s_linkreq_attempts;
     memcpy(out->peer_fw, s_peer_fw, 3);
     out->peer_fw_known  = s_peer_fw_known;

@@ -45,6 +45,10 @@ static volatile bool        s_fire_repeat_active = false;
 static rlc_payload_status_update_t s_last_status;
 static int64_t  s_last_status_rx_ms = 0;
 
+/* Guards s_last_status/s_last_status_rx_ms: written here on the FSM task,
+ * read by the display task (remote_fsm_get_status). */
+static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
+
 /* Software timer timestamps */
 static int64_t  s_prefire_start_ms = 0;
 
@@ -76,6 +80,16 @@ static inline int64_t now_ms(void)
     return esp_timer_get_time() / 1000;
 }
 
+/* Cache the latest STATUS_UPDATE from the base (FSM task only). */
+static void cache_status(const rlc_payload_status_update_t *st)
+{
+    int64_t t = now_ms();
+    portENTER_CRITICAL(&s_status_lock);
+    memcpy(&s_last_status, st, sizeof(s_last_status));
+    s_last_status_rx_ms = t;
+    portEXIT_CRITICAL(&s_status_lock);
+}
+
 static bool is_status_fresh(void)
 {
     return (s_last_status_rx_ms > 0) &&
@@ -105,7 +119,7 @@ static void handle_multi_arm_violation(uint16_t armed_mask)
     s_prefire_start_ms = 0;
     rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
     buzzer_play(BUZZER_ALARM_CRITICAL);
-    /* Display "MULTI-ARM ERROR" — Phase 4 */
+    display_error("MULTI-ARM DETECTED");
     s_state = STATE_ERROR;
 }
 
@@ -117,6 +131,26 @@ uint8_t     remote_fsm_get_armed_channel(void){ return s_armed_channel; }
 QueueHandle_t remote_fsm_get_queue(void)      { return s_evt_queue; }
 TaskHandle_t  remote_fsm_get_task(void)       { return s_fsm_task; }
 bool remote_fsm_is_fire_repeat_active(void)   { return s_fire_repeat_active; }
+
+bool remote_fsm_get_status(rlc_payload_status_update_t *out)
+{
+    if (!out) return false;
+    int64_t rx_ms;
+    portENTER_CRITICAL(&s_status_lock);
+    memcpy(out, &s_last_status, sizeof(*out));
+    rx_ms = s_last_status_rx_ms;
+    portEXIT_CRITICAL(&s_status_lock);
+
+    return (rx_ms > 0) && ((now_ms() - rx_ms) < 2 * STATUS_UPDATE_INTERVAL_MS);
+}
+
+uint32_t remote_fsm_get_prefire_remaining_ms(void)
+{
+    if (s_state != STATE_PRE_FIRE || s_prefire_start_ms == 0) return 0;
+    int64_t elapsed = now_ms() - s_prefire_start_ms;
+    if (elapsed >= PRE_FIRE_DELAY_MS) return 0;
+    return (uint32_t)(PRE_FIRE_DELAY_MS - elapsed);
+}
 
 volatile uint8_t *remote_fsm_get_armed_channel_ptr(void)
 {
@@ -298,6 +332,14 @@ static void do_enter_link_lost(void)
     s_state = STATE_LINK_LOST;
 }
 
+/* Latch a description for the ERROR screen (FSD §10.2.6) unless a more
+ * specific one was already set by the caller. */
+static void do_enter_error_text(const char *text)
+{
+    display_error(text);
+    do_enter_error();
+}
+
 static void do_enter_error(void)
 {
     s_fire_repeat_active = false;
@@ -355,12 +397,10 @@ static int wait_for_ack(uint8_t expected_channel, uint32_t timeout_ms,
                 }
                 /* M5: Preserve critical events instead of silently discarding. */
                 if (evt.type == EVT_STATUS_UPDATE) {
-                    memcpy(&s_last_status, &evt.data.status_update.status,
-                           sizeof(rlc_payload_status_update_t));
-                    s_last_status_rx_ms = now_ms();
+                    cache_status(&evt.data.status_update.status);
                 }
                 if (evt.type == EVT_BATTERY_CRITICAL) {
-                    do_enter_error();
+                    do_enter_error_text("REMOTE BATTERY CRITICAL");
                     return WAIT_FOR_ACK_STATE_HANDLED;  /* R1 */
                 }
             }
@@ -387,7 +427,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             do_enter_idle();
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
             ESP_LOGW(TAG, "BATTERY_CRITICAL during LINKING -> ERROR");
-            do_enter_error();
+            do_enter_error_text("REMOTE BATTERY CRITICAL");
         }
         break;
 
@@ -400,7 +440,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* Guard 1: Arm switch must be ON */
             if (!arm_switch_is_armed()) {
                 ESP_LOGI(TAG, "ARM rejected: arm switch OFF");
-                /* Display: "Turn ARM key first" — Phase 4 */
+                display_toast("TURN ARM KEY FIRST");
                 break;
             }
 
@@ -409,6 +449,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 ESP_LOGW(TAG, "ARM rejected: remote battery low (%u mv)",
                          rlc_battery_get_voltage_mv());
                 buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("REMOTE BATTERY LOW");
                 break;
             }
 
@@ -416,6 +457,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             if (!is_status_fresh()) {
                 ESP_LOGW(TAG, "ARM rejected: stale STATUS_UPDATE");
                 buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("NO BASE STATUS DATA");
                 break;
             }
 
@@ -423,6 +465,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             if (!rlc_link_is_healthy()) {
                 ESP_LOGW(TAG, "ARM rejected: link not healthy");
                 buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("LINK DEGRADED");
                 break;
             }
 
@@ -455,7 +498,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 ESP_LOGW(TAG, "ARM NACK: 0x%02x (%s)",
                          nack_reason, rlc_nack_reason_str(nack_reason));
                 buzzer_play(BUZZER_BEEP_TRIPLE);
-                /* NACK display for 3s — Phase 4 */
+                display_nack(rlc_nack_reason_str(nack_reason));
             } else if (result == -2) {
                 /* Channel mismatch */
                 ESP_LOGE(TAG, "ARM ACK channel mismatch");
@@ -474,9 +517,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             do_enter_link_lost();
         } else if (evt->type == EVT_STATUS_UPDATE) {
             /* Cache STATUS_UPDATE */
-            memcpy(&s_last_status, &evt->data.status_update.status,
-                   sizeof(rlc_payload_status_update_t));
-            s_last_status_rx_ms = now_ms();
+            cache_status(&evt->data.status_update.status);
             /* R2: multi-arm detection — base must never report >1 channel armed */
             if (is_multi_armed(s_last_status.channel_armed_bitmask)) {
                 handle_multi_arm_violation(s_last_status.channel_armed_bitmask);
@@ -485,7 +526,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* R4: track selected channel in IDLE so getter is not stale */
             s_selected_channel = evt->data.encoder.channel;
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
-            do_enter_error();
+            do_enter_error_text("REMOTE BATTERY CRITICAL");
         }
         break;
 
@@ -544,6 +585,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 /* NACK */
                 ESP_LOGW(TAG, "FIRE NACK: 0x%02x (%s)",
                          nack_reason, rlc_nack_reason_str(nack_reason));
+                display_nack(rlc_nack_reason_str(nack_reason));
                 do_disarm_and_idle();
             } else if (result == WAIT_FOR_ACK_STATE_HANDLED) {
                 /* R1: LINK_LOST or BATTERY_CRITICAL was handled inline by
@@ -570,9 +612,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             s_selected_channel = evt->data.encoder.channel;
             do_disarm_and_idle();
         } else if (evt->type == EVT_STATUS_UPDATE) {
-            memcpy(&s_last_status, &evt->data.status_update.status,
-                   sizeof(rlc_payload_status_update_t));
-            s_last_status_rx_ms = now_ms();
+            cache_status(&evt->data.status_update.status);
 
             uint16_t armed_mask = s_last_status.channel_armed_bitmask;
 
@@ -596,7 +636,7 @@ static void process_event(const rlc_fsm_event_t *evt)
         } else if (evt->type == EVT_LINK_LOST) {
             do_enter_link_lost();
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
-            do_enter_error();
+            do_enter_error_text("REMOTE BATTERY CRITICAL");
         }
         break;
 
@@ -619,9 +659,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             send_cmd_cease_fire();
             do_enter_idle();
         } else if (evt->type == EVT_STATUS_UPDATE) {
-            memcpy(&s_last_status, &evt->data.status_update.status,
-                   sizeof(rlc_payload_status_update_t));
-            s_last_status_rx_ms = now_ms();
+            cache_status(&evt->data.status_update.status);
 
             /* Check if base aborted */
             if (s_last_status.base_state != STATE_PRE_FIRE &&
@@ -638,7 +676,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* N1: stop firing immediately; base will dead-man timeout in 500 ms */
             s_fire_repeat_active = false;
             send_cmd_cease_fire();
-            do_enter_error();
+            do_enter_error_text("REMOTE BATTERY CRITICAL");
         }
         break;
 
@@ -655,15 +693,14 @@ static void process_event(const rlc_fsm_event_t *evt)
             send_cmd_cease_fire();
             do_enter_idle();
         } else if (evt->type == EVT_STATUS_UPDATE) {
-            memcpy(&s_last_status, &evt->data.status_update.status,
-                   sizeof(rlc_payload_status_update_t));
-            s_last_status_rx_ms = now_ms();
+            cache_status(&evt->data.status_update.status);
 
             /* Fire complete detected via STATUS_UPDATE */
             if (s_last_status.base_state == STATE_POST_FIRE ||
                 s_last_status.base_state == STATE_IDLE) {
                 ESP_LOGI(TAG, "Fire complete detected (base state=%d)",
                          s_last_status.base_state);
+                display_fire_complete(s_armed_channel);
                 s_fire_repeat_active = false;
                 do_enter_idle();
             }
@@ -674,7 +711,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* N1: stop firing immediately; base will dead-man timeout in 500 ms */
             s_fire_repeat_active = false;
             send_cmd_cease_fire();
-            do_enter_error();
+            do_enter_error_text("REMOTE BATTERY CRITICAL");
         }
         break;
 

@@ -146,7 +146,7 @@ Test specs: `rlc-hw-test-base/RLC_Base_Hardware_Test_Specification.md` and
 | 3 | Verify CRC32-C test vector (§6.2.2) | DONE | `rlc_selftest_run()` — `"123456789"` → `0xE3069283` |
 | 4 | Initialise ADC calibration | DONE | `rlc_battery_init()` with calibration |
 | 5 | Initialise ESP-NOW, PMK, register peer (3 retries) | DONE | `rlc_espnow_init()` + `rlc_espnow_add_peer()` |
-| 6 | Initialise display + read-back ID (remote only) | STUB | `display_init()` is no-op (Phase 4) |
+| 6 | Initialise display + read-back ID (remote only) | DONE | Phase 4: `display_init()` + `display_is_healthy()`; ERROR halt on failure |
 | 7 | Configure input GPIOs + debounce engine | DONE | Phase 1: debounce engine exists; GPIOs are Phase 2 |
 | 8 | Configure hardware watchdog + TWDT | DONE | `rlc_watchdog_init()` + `esp_task_wdt_add()` in link task |
 | 9 | Start FreeRTOS tasks | DONE | link_task (prio 6), led_task (prio 1) |
@@ -680,7 +680,7 @@ fix and added a firmware gate against firing unprotected channels.
 # Terminal 1 — base log
 idf.py -B build_base -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E044219-if00 monitor   # base COM
 # Terminal 2 — remote log
-./build_remote.sh && idf.py -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00 monitor   # remote COM
+./build_remote.sh && idf.py -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E043219-if00 monitor   # remote COM
 ```
 Watch for `state=` lines (base 5 s housekeeping log) and `rfsm:` / `bfsm:` tags.
 
@@ -786,26 +786,58 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 ## Phase 4 — Display
 
 **FSD ref:** §4.3 Phase 4, §10 (Display Specification)
-**Status:** NOT STARTED
+**Status:** CODE COMPLETE — awaiting on-target verification
+
+Implemented independently of the base firing-sequence debugging: the display
+lives entirely in the remote unit (`components/rlc_remote/src/rlc_display.c`).
+
+Architecture: a PSRAM framebuffer (480x320x3, RGB666) is rendered by
+`display_task` (prio 2, core 1, 8192 stack — FSD §9.10); only the dirty
+bounding box is flushed over SPI through an internal-RAM row bounce buffer.
+No other task touches SPI, so the FSM and input tasks never block on the panel.
+Screens are derived from the remote FSM state, with latched overrides for
+ERROR / firmware mismatch and a timed overlay for NACKs and notices.
 
 ### Phase 4 Development Tasks
 
-| # | Task | FSD ref | Status |
-|---|------|---------|--------|
-| 1 | ILI9488 SPI display driver (480x320, SPI2_HOST, 20 MHz) | §10.1 | TODO |
-| 2 | Display health check (ID read-back at boot) | §9.13 step 6 | TODO |
-| 3 | Screen layout manager | §10.3 | TODO |
-| 4 | Splash screen | §10.3.1 | TODO |
-| 5 | Main status screen (IDLE) — RSSI bar, battery, continuity grid, channel | §10.3.2 | TODO |
-| 6 | Armed screen — channel indicator, continuity, status | §10.3.3 | TODO |
-| 7 | Firing / Pre-fire screen — countdown, pulse indicator | §10.3.4 | TODO |
-| 8 | Link lost screen | §10.3.5 | TODO |
-| 9 | Error screen | §10.3.6 | TODO |
-| 10 | Fire complete screen | §10.3.7 | TODO |
-| 11 | Firmware mismatch screen | §10.3.8 | TODO |
-| 12 | Partial refresh (dirty-rectangle) for dynamic elements | §10.4 | TODO |
-| 13 | NACK reason display (human-readable text) | §10.5 | TODO |
-| 14 | Display refresh rate >= 5 Hz | §10.4 | TODO |
+| # | Task | FSD ref | Status | Implementation |
+|---|------|---------|--------|----------------|
+| 1 | ILI9488 SPI display driver (480x320, SPI2_HOST, 20 MHz) | §10.1 | DONE | Init sequence ported from validated `rlc-hw-test-remote` |
+| 2 | Display health check (ID read-back at boot) | §9.13 step 6 | DONE | `display_is_healthy()`; remote halts in ERROR on failure (T-S10) |
+| 3 | Screen layout manager | §10.3 | DONE | `display_task` + `screen_for_state()` |
+| 4 | Splash screen | §10.2.1 | DONE | Title, version, attempt counter, progress bar |
+| 5 | Main status screen (IDLE) — RSSI bar, battery, continuity grid, channel | §10.2.2 | DONE | Top bar (RSSI/RTT/both batteries), 4x2 channel grid, legend, arm-sense line |
+| 6 | Armed screen — channel indicator, continuity, status | §10.2.3 | DONE | Pulsing red border, large channel number, arm-sense confirmation |
+| 7 | Firing / Pre-fire screen — countdown, pulse indicator | §10.2.4 | DONE | 100 ms countdown, "IGNITION ACTIVE" on red field |
+| 8 | Link lost screen | §10.2.5 | DONE | Amber frame, last-contact seconds, ping attempts |
+| 9 | Error screen | §10.2.6 | DONE | `display_error()` latches text until reboot |
+| 10 | Fire complete screen | §10.2.4a | DONE | Shown for POST_FIRE_COOLDOWN_MS with return countdown |
+| 11 | Firmware mismatch screen | §10.2.1 | DONE | Auto-detected from `RLC_LINK_STATE_VERSION_MISMATCH` |
+| 12 | Partial refresh (dirty-rectangle) for dynamic elements | §10.3 | DONE | Dirty bounding box; full redraw only on screen change |
+| 13 | NACK reason display (human-readable text) | §10.2.7 | DONE | 3 s overlay via `display_nack()`; `display_toast()` for local rejections |
+| 14 | Display refresh rate >= 5 Hz | §10.3 | DONE | 10 Hz frame loop (`DISPLAY_FRAME_MS` 100) |
+
+Supporting changes:
+- `remote_fsm_get_status()` — spinlock-guarded snapshot of the cached
+  STATUS_UPDATE (continuity bands, base battery, arm sense, error flags).
+- `remote_fsm_get_prefire_remaining_ms()` — drives the pre-fire countdown.
+- `rlc_link_status_t.ping_rtt_ms` — PING/PONG round-trip for the top bar.
+- FSM display hooks: NACK overlays, "TURN ARM KEY FIRST" and other local
+  rejection toasts, multi-arm error screen, fire-complete screen.
+
+### Phase 4 On-Target Tests (pending)
+
+| ID | Test | Status |
+|----|------|--------|
+| T-D01 | Panel ID read-back at boot (expect clone ID 0x2A403300) | TODO |
+| T-D02 | Splash → main status transition on link-up | TODO |
+| T-D03 | Continuity grid matches base STATUS_UPDATE for all 8 channels | TODO |
+| T-D04 | Encoder rotation moves the cyan selection cursor | TODO |
+| T-D05 | ARMED screen on arm, red pulse, arm-sense confirmed | TODO |
+| T-D06 | Pre-fire countdown smoothness (100 ms steps) | TODO |
+| T-D07 | NACK overlay text + 3 s timeout, screen restored cleanly | TODO |
+| T-D08 | Link-lost screen and recovery back to main status | TODO |
+| T-D09 | Full-screen redraw time and steady-state frame rate | TODO |
 
 ---
 
@@ -859,7 +891,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 | Base MAC | `44:1B:F6:D4:0D:68` (chip #3; #2 `44:1B:F6:81:FA:F8` & #1 `94:A9:90:31:18:38` destroyed) |
 | Remote MAC | `AC:A7:04:E2:F2:8C` (chip #2; #1 `44:1B:F6:81:F1:70` flash-damaged) |
 | Base serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E044219-if00` (stable board serial) |
-| Remote serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00` (stable board serial) |
+| Remote serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E043219-if00` (verified 2026-08-19 by `read_mac` → `ac:a7:04:e2:f2:8c`; was `...5B5E042156` before the board swap) |
 | ESP-IDF version | v5.4.1 |
 | Target | ESP32-S3 (xtensa) |
 | Flash size | 16 MB |
@@ -891,7 +923,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 | `cmd_fire_repeat_task` (fire_rep) | 4 | 0 | 2048 | 3 DONE |
 | `battery_task` | 3 | 0 | 3072 | 2 |
 | `encoder_task` | 3 | 0 | 4096 | 2 |
-| `display_task` | 2 | 1 | 8192 | 4 |
+| `display_task` | 2 | 1 | 8192 | 4 DONE |
 | `buzzer_task` | 1 | 1 | 2048 | 2 |
 | `rgb_led_task` | 1 (lowest) | 1 | 2048 | 1 DONE |
 

@@ -88,10 +88,13 @@ The firmware covers all core functionality:
 - Battery monitoring on both units
 - Siren, buzzer, and RGB LED status indicators
 - 12 boot-time self-test suites
+- LCD display on the remote (480×320 colour screen): status, continuity grid,
+  arming/firing screens, and error/NACK messages
 
 **What's not done yet:**
 
-- LCD display (480×320 color screen on the remote — currently the system uses LEDs and buzzer for feedback)
+- On-target verification of the display screens (the driver runs and the panel
+  reports healthy; the layouts have not been checked by eye yet)
 - Field hardening and environmental testing
 - Enclosure / physical build
 

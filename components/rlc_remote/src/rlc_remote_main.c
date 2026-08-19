@@ -130,7 +130,16 @@ void remote_app_main(void)
         vTaskDelay(portMAX_DELAY);
     }
 
-    display_init();
+    /* §9.13 step 6: display init + health check (ID read-back).
+     * FSD §15.4 T-S10: a display failure at boot must halt in ERROR. */
+    if (display_init() != 0 || !display_is_healthy()) {
+        ESP_LOGE(TAG, "display init/health check FAILED (id=0x%08lX) — halting",
+                 (unsigned long)display_get_id());
+        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
+        vTaskDelay(portMAX_DELAY);
+    }
+    display_start_task();
+
     encoder_init();
     buzzer_init();
 
