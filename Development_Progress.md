@@ -32,6 +32,8 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
+| 23 | Remote VBAT divider has no ADC headroom — a full 2S pack sits at 97 % of the ADC's usable ceiling | Hardware | OPEN | Accuracy only. Costs ~0.7 % at full charge; thresholds are unaffected as they sit at 71-78 % of range. |
+| 22 | Remote GPIO 1 has no overvoltage clamp — the bug #21 zener was removed and not replaced | Hardware | OPEN | Protection only. The divider's series impedance is the sole limit on an overvoltage fault. |
 | 21 | Remote VBAT sense was non-linear — 3.3 V zener leakage into a 6.4 kΩ divider | Hardware | **Zener removed 2026-08-19, sense verified and calibrated. PARTIAL — no replacement clamp fitted, so GPIO 1 is unprotected.** | Nothing functionally. Production thresholds restored. Remaining risk is overvoltage exposure on GPIO 1 until a BAT54-class clamp is fitted. |
 | 20 | Shipped crypto keys are public — AES-128-CCM and the keyed CRC32 check are ineffective against anyone who has read the source | Security | OPEN — rotation deferred by decision | Field use where an adversary is in the threat model. No effect on bench work. |
 | 19 | Base LED strip: dead 4th pixel in the chain — channel 4 stuck, channels 5-8 dark | Hardware | OPEN — needs reflow or replacement | Channels 4-8 of the base strip; T-L15 for those channels |
@@ -1071,6 +1073,76 @@ channels 4-8 are blocked by bug #19 (dead pixel at channel 4).
 | T-D07 | NACK overlay text + 3 s timeout, screen restored cleanly | TODO |
 | T-D08 | Link-lost screen and recovery back to main status | TODO |
 | T-D09 | Full-screen redraw time and steady-state frame rate | TODO |
+
+---
+
+### Bug #22 — Remote GPIO 1 has no overvoltage clamp (2026-08-19, OPEN)
+
+**State.** The 3.3 V zener on the remote's VBAT ADC node was removed to fix
+bug #21 and **has not been replaced**. GPIO 1 is currently protected only by
+the divider's series impedance.
+
+**Risk.** Feeding the remote's battery input from a base-range supply (12 V+)
+puts >4.2 V on a 3.3 V pin. With the 18 kΩ/10 kΩ divider the fault current
+through the ESP32's internal ESD diodes is limited to roughly 110 µA at 12 V
+in, which is survivable but is not protection to rely on — this is the bug #18
+failure class that has already destroyed two base ESP32s.
+
+**Fix.** Fit a low-leakage Schottky from the ADC node to the 3.3 V rail:
+**BAT54** (or BAT85 / BAT43 / 1N5711). Anode to the divider centre / ADC pin,
+cathode to 3.3 V. Leakage around 1 µA gives ~6 mV of droop into the present
+6429 Ω source — negligible, versus the 144 µA and 925 mV the zener produced.
+
+**Do NOT fit a 1N5819.** As a 1 A power Schottky its large junction leaks far
+more, and in this position the leakage flows from the 3.3 V rail *into* the
+node, biasing readings **upward** — the dangerous direction for a battery
+threshold, since it masks a flat pack. A 1N4148 is an acceptable interim
+(nanoamp leakage) at the cost of clamping at ~4.0 V rather than ~3.6 V.
+
+**Error budget for any candidate part**, against the present divider:
+
+| Divider | Thevenin Z | Leakage for < 20 mV error |
+|---|---|---|
+| 18 kΩ/10 kΩ (now) | 6429 Ω | < 3.1 µA |
+| 3.0 kΩ/1.2 kΩ (bug #23) | 857 Ω | < 23 µA |
+
+Fixing bug #23 relaxes this requirement 7.5×, so the two are best done together.
+
+**Verification:** re-run the sweep with `tools/vbat-cal` after fitting. A flat
+implied ratio means the part is fine; drift means it is leaking. Do not take
+this from a datasheet — the rig exists, and the measurement takes ten minutes.
+
+---
+
+### Bug #23 — Remote VBAT divider has no ADC headroom (2026-08-19, OPEN)
+
+**Problem.** The specified 2.8:1 divider (18 kΩ + 10 kΩ) puts a fully charged
+2S pack at **3000 mV on the ADC pin — 97 % of the ADC's usable ceiling** of
+3160 mV. FSD §5.5 states this outright: "0–3.0 V ADC range for 0–8.4 V
+battery". The ESP32-S3's 12 dB attenuator departs from linear above roughly
+3.0 V, so the top of the normal operating range sits in the compression zone.
+
+**Measured effect.** After bug #21 was fixed, the implied ratio still declines
+from 2.8469 at 4.94 V to 2.8024 at 8.56 V — a 1.6 % drift that is entirely ADC
+compression, not the resistors. It is the dominant remaining error, ~0.7 % at
+full charge.
+
+**Not safety-critical.** The arming thresholds (6400/6600/7000) sit at 71-78 %
+of the ADC range, comfortably linear, and all three under-read slightly so
+protection trips early. What suffers is the **display gauge** near full charge.
+
+**Fix.** Rescale to **3.0 kΩ / 1.2 kΩ**: ratio 3.50, a full pack at 2400 mV
+(76 % of ceiling), Thevenin impedance 857 Ω, draw 2.0 mA — negligible on a
+2200 mAh pack (over 1000 hours). The lower impedance also relaxes the bug #22
+clamp-leakage requirement 7.5×.
+
+**On adoption:** `REMOTE_VBAT_DIVIDER_RATIO` becomes ~3.5 and **this
+calibration must be re-run** — the current 2.8211 is specific to the present
+resistors.
+
+**The base has the same class of problem** (a full 3S pack sits at 92 % of its
+ceiling, ~0.7 % error) and would benefit from ~5.5:1. Not separately tracked;
+worth doing when the base is next open for the bug #18 clamps.
 
 ---
 

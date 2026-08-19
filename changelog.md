@@ -1,5 +1,45 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-19 (bench, cont.) — Remote calibrated, thresholds restored, bugs #22/#23
+
+Removing the bug #21 zener restored the remote's sense path: implied ratio now
+spans 1.6 % across 4.94-8.56 V instead of 30 %. `REMOTE_VBAT_DIVIDER_RATIO`
+2.8 → **2.8211** (gain-only over the operating band, 57 mV worst case). The
+resistors were 0.75 % off nominal — never the fault.
+
+The bench supply was noisy enough to clip individual samples at full scale,
+which can only bias a mean upward, so `tools/vbat-cal` now reports a **median**
+of 129 samples. Measured 2× more stable than the mean (14 counts of
+line-to-line variation against 31) and immune to the clipping.
+
+**FSD §5.6.2 production thresholds restored** now the sense is trustworthy:
+MIN_ARM 3200→7000, MIN_OPERATE 3100→6600, CRITICAL 3000→6400, FULL 4200→8400.
+Verified against the calibration data — 6400 reads 6356, 6600 reads 6561,
+7000 reads 6971 — so every threshold under-reads slightly and protection trips
+early rather than late.
+
+Confirmed on target: the remote boots to IDLE reporting `vbat=7267 mV` and
+links at −40 dBm. Before this work the same pack would have read ~5500 mV and
+locked the unit in STATE_ERROR.
+
+### New bugs tracked
+
+- **#22 — remote GPIO 1 has no overvoltage clamp.** The zener was removed and
+  not replaced; the divider's series impedance is the only limit. Fix is a
+  BAT54-class Schottky to the 3.3 V rail. Recorded explicitly that a 1N5819 is
+  unsuitable — its leakage flows rail→node and would bias readings *upward*,
+  the direction that masks a flat pack.
+- **#23 — remote divider has no ADC headroom.** A full 2S pack sits at 97 % of
+  the ADC ceiling; the FSD's own "0–3.0 V for 0–8.4 V" wording bakes it in.
+  Accuracy only, ~0.7 % at full charge; thresholds sit at 71-78 % and are
+  unaffected. Fix is 3.0 kΩ/1.2 kΩ (ratio 3.5), which also relaxes the #22
+  clamp-leakage requirement 7.5×, so the two are best done together. The base
+  has the same class of problem at 92 %.
+
+Bug #21 downgraded to PARTIAL — sense correct, protection still missing.
+
+Both units reflashed with current RLC firmware and verified linked.
+
 ## 2026-08-19 (bench) — Battery divider calibration: base done, remote reveals bug #21
 
 Method: DVM at the board terminals as reference, `tools/vbat-cal` streaming raw
