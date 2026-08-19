@@ -863,6 +863,32 @@ Data is fed from the base housekeeping loop (100 ms) via
 `rlc_rgb_led_set_channel_bands()` / `set_active_channel()` / `set_rssi()`,
 deliberately not from the FSM, so the fire path is untouched.
 
+### Display Legibility — Minimum Font Size (2026-08-19)
+
+Field feedback: scale-1 text (6x8 px per character) is unreadable at arm's
+length. **Scale 2 (12x16 px) is now the floor** — no text on any screen is
+drawn below it; the only remaining scale-1 calls are 1-pixel frame and rule
+thicknesses. "Connected to base" on the splash is the reference size.
+
+Layout consequences: channel cells shortened from 86 to 80 px to free two
+scale-2 status rows, and several strings abbreviated so they still fit 480 px
+at 12 px/character:
+
+| Was | Now |
+|---|---|
+| `Turn ARM key, then hold encoder to arm channel N` | `TURN ARM KEY TO ARM CH N` |
+| `ARM SENSE ON  HW ON  KEY SAFE` | `ARM ON  HW ON  KEY SAFE` |
+| `BASE ERROR FLAGS 0x0A` | `BASE ERROR 0x0A` |
+| `PRESS AND HOLD FIRE TO LAUNCH` | `HOLD FIRE TO LAUNCH` |
+| `HOLD FIRE BUTTON - RELEASE TO ABORT` | `RELEASE TO ABORT` |
+| `Returning to IDLE in 1.8s` | `IDLE IN 1.8s` |
+| `Ping attempts: 7   RSSI -45 dBm` | `Attempts 7   RSSI -45 dBm` |
+| `System halted. Power cycle required.` | `System halted - power cycle` |
+| `ESP32 ROCKET LAUNCH CONTROLLER` (mismatch screen) | `ROCKET LAUNCH CONTROLLER` |
+
+The NACK/toast overlay previously fell back to scale 1 for long strings; it now
+always renders at scale 2 (every NACK reason string fits).
+
 ### Phase 4 Findings — Battery Thresholds (2026-08-19)
 
 Raised while diagnosing a "remote power fail" report on the bench. Neither is a

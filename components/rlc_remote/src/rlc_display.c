@@ -563,9 +563,12 @@ static void draw_top_bar_dynamic(const disp_data_t *d)
 
 /* ── Screen: main status (IDLE) — FSD §10.2.2 ─────────────────── */
 
+/* Scale 2 (12x16 px per character) is the smallest font readable at arm's
+ * length in daylight — nothing on any screen goes below it. The grid is sized
+ * so the legend and two status rows all fit at that size. */
 #define GRID_Y      58
 #define CELL_W      118
-#define CELL_H      86
+#define CELL_H      80
 #define GRID_X      6
 
 static void cell_origin(int ch, int *x, int *y)
@@ -578,7 +581,7 @@ static void cell_origin(int ch, int *x, int *y)
 static void draw_legend(void)
 {
     int y = GRID_Y + 2 * (CELL_H + 4) + 4;
-    fill_rect(0, y, DW, 18, C_BLACK);
+    fill_rect(0, y, DW, CHAR_H(2), C_BLACK);
 
     struct { uint8_t band; const char *txt; } items[] = {
         { CONT_GOOD,     "GOOD" },
@@ -586,11 +589,11 @@ static void draw_legend(void)
         { CONT_OPEN,     "OPEN" },
         { CONT_SHORT,    "SHORT" },
     };
-    int x = 12;
+    int x = 8;
     for (int i = 0; i < 4; i++) {
         draw_continuity_glyph(x + 6, y + 8, 6, items[i].band);
-        draw_text(x + 18, y + 4, items[i].txt, 1, C_GREY);
-        x += 18 + text_width(items[i].txt, 1) + 20;
+        draw_text(x + 18, y, items[i].txt, 2, C_GREY);
+        x += 18 + text_width(items[i].txt, 2) + 18;
     }
 }
 
@@ -621,20 +624,20 @@ static void draw_channel_cell(int ch, const disp_data_t *d)
 
     char label[8];
     snprintf(label, sizeof(label), "CH%d", ch);
-    draw_text(x + 8, y + 8, label, 2, selected ? C_SELECTED : C_WHITE);
+    draw_text(x + 6, y + 6, label, 2, selected ? C_SELECTED : C_WHITE);
 
     if (d->status_fresh) {
-        draw_continuity_glyph(x + CELL_W / 2, y + 46, 14, band);
+        draw_continuity_glyph(x + CELL_W / 2, y + 42, 13, band);
         const char *txt = continuity_label(band);
-        draw_text(x + (CELL_W - text_width(txt, 1)) / 2, y + CELL_H - 16, txt, 1,
+        draw_text(x + (CELL_W - text_width(txt, 2)) / 2, y + CELL_H - 20, txt, 2,
                   continuity_colour(band));
     } else {
-        draw_text(x + (CELL_W - text_width("NO DATA", 1)) / 2, y + 44,
-                  "NO DATA", 1, C_GREY);
+        draw_text(x + (CELL_W - text_width("NO DATA", 2)) / 2, y + 40,
+                  "NO DATA", 2, C_GREY);
     }
 
     if (armed) {
-        draw_text(x + CELL_W - text_width("ARM", 1) - 8, y + 10, "ARM", 1, C_WHITE);
+        draw_text(x + CELL_W - text_width("ARM", 2) - 6, y + 6, "ARM", 2, C_WHITE);
     }
 }
 
@@ -646,28 +649,28 @@ static void draw_main_dynamic(const disp_data_t *d)
         draw_channel_cell(ch, d);
     }
 
-    /* Status area — base key switch, arm sense, remote key (FSD §10.2.2) */
+    /* Status area — base key switch, arm sense, remote key (FSD §10.2.2).
+     * Labels are abbreviated so the whole row fits at scale 2. */
     char buf[64];
-    int y = DH - 40;
+    int y = DH - 66;
     snprintf(buf, sizeof(buf), "SEL CH %u", d->selected);
-    draw_field(6, y, 12 * CHAR_W(2), buf, 2, C_SELECTED, C_BLACK);
+    draw_field(6, y, 8 * CHAR_W(2), buf, 2, C_SELECTED, C_BLACK);
 
-    snprintf(buf, sizeof(buf), "ARM SENSE %s  HW %s  KEY %s",
+    snprintf(buf, sizeof(buf), "ARM %s  HW %s  KEY %s",
              (d->status_fresh && d->status.base_arm_switch) ? "ON " : "OFF",
              (d->status_fresh && d->status.arm_switch_hw)   ? "ON " : "OFF",
              d->remote_key_armed ? "ARM " : "SAFE");
-    draw_field(180, y + 4, DW - 186, buf, 1, C_WHITE, C_BLACK);
+    draw_field(120, y, DW - 126, buf, 2, C_WHITE, C_BLACK);
 
     if (d->status_fresh && d->status.error_flags) {
-        snprintf(buf, sizeof(buf), "BASE ERROR FLAGS 0x%02X", d->status.error_flags);
-        draw_text_centred_bg(DH - 16, buf, 1, C_FAULT, C_BLACK);
+        snprintf(buf, sizeof(buf), "BASE ERROR 0x%02X", d->status.error_flags);
+        draw_text_centred_bg(DH - 30, buf, 2, C_FAULT, C_BLACK);
     } else if (!d->remote_key_armed) {
-        snprintf(buf, sizeof(buf), "Turn ARM key, then hold encoder to arm channel %u",
-                 d->selected);
-        draw_text_centred_bg(DH - 16, buf, 1, C_GREY, C_BLACK);
+        snprintf(buf, sizeof(buf), "TURN ARM KEY TO ARM CH %u", d->selected);
+        draw_text_centred_bg(DH - 30, buf, 2, C_GREY, C_BLACK);
     } else {
-        snprintf(buf, sizeof(buf), "Hold encoder to arm channel %u", d->selected);
-        draw_text_centred_bg(DH - 16, buf, 1, C_WARN, C_BLACK);
+        snprintf(buf, sizeof(buf), "HOLD ENCODER TO ARM CH %u", d->selected);
+        draw_text_centred_bg(DH - 30, buf, 2, C_WARN, C_BLACK);
     }
 }
 
@@ -704,12 +707,12 @@ static void draw_armed_dynamic(const disp_data_t *d, bool blink_on)
     snprintf(buf, sizeof(buf), "CONTINUITY %s", continuity_label(band));
     draw_text_centred_bg(BOX_Y + 112, buf, 2, continuity_colour(band), C_BLACK);
 
-    draw_text_centred(BOX_Y + 142, "PRESS AND HOLD FIRE TO LAUNCH", 1, C_WHITE);
+    draw_text_centred(BOX_Y + 140, "HOLD FIRE TO LAUNCH", 2, C_WHITE);
 
-    snprintf(buf, sizeof(buf), "ARM SENSE %s   REMOTE KEY %s",
+    snprintf(buf, sizeof(buf), "SENSE %s  KEY %s",
              (d->status_fresh && d->status.base_arm_switch) ? "CONFIRMED" : "OFF",
              d->remote_key_armed ? "ARMED" : "SAFE");
-    draw_text_centred_bg(DH - 24, buf, 1, C_WHITE, C_BLACK);
+    draw_text_centred_bg(DH - 26, buf, 2, C_WHITE, C_BLACK);
 }
 
 /* ── Screen: PRE_FIRE / FIRING — FSD §10.2.4 ──────────────────── */
@@ -746,7 +749,7 @@ static void draw_firing_dynamic(const disp_data_t *d, bool blink_on)
         draw_text_centred_bg(BOX_Y + 92, buf, 3, C_WARN, C_BLACK);
     }
 
-    draw_text_centred_bg(BOX_Y + 140, "HOLD FIRE BUTTON - RELEASE TO ABORT", 1,
+    draw_text_centred_bg(BOX_Y + 138, "RELEASE TO ABORT", 2,
                          C_WHITE, igniting ? C_ARMED_BG : C_BLACK);
 }
 
@@ -771,9 +774,9 @@ static void draw_fire_complete_dynamic(const disp_data_t *d, uint8_t ch,
 
     int64_t left = until_ms - now_ms();
     if (left < 0) left = 0;
-    snprintf(buf, sizeof(buf), "Returning to IDLE in %lld.%llds",
+    snprintf(buf, sizeof(buf), "IDLE IN %lld.%llds",
              (long long)(left / 1000), (long long)((left % 1000) / 100));
-    draw_text_centred_bg(BOX_Y + 130, buf, 1, C_GREY, C_BLACK);
+    draw_text_centred_bg(BOX_Y + 132, buf, 2, C_GREY, C_BLACK);
 }
 
 /* ── Screen: link lost — FSD §10.2.5 ──────────────────────────── */
@@ -784,7 +787,7 @@ static void draw_link_lost_static(void)
     draw_frame(0, 0, DW, DH, 8, C_AMBER);
     draw_text_centred(40, "! LINK LOST !", 4, C_AMBER);
     draw_text_centred(110, "No response from base unit", 2, C_WHITE);
-    draw_text_centred(150, "All channels disarmed (assumed)", 1, C_WHITE);
+    draw_text_centred(148, "All channels disarmed (assumed)", 2, C_WHITE);
     draw_text_centred(250, "Attempting to reconnect...", 2, C_WHITE);
 }
 
@@ -798,9 +801,9 @@ static void draw_link_lost_dynamic(const disp_data_t *d)
     snprintf(buf, sizeof(buf), "Last contact: %lu s ago", (unsigned long)secs);
     draw_text_centred_bg(185, buf, 2, C_WHITE, C_BLACK);
 
-    snprintf(buf, sizeof(buf), "Ping attempts: %u   RSSI %d dBm",
+    snprintf(buf, sizeof(buf), "Attempts %u   RSSI %d dBm",
              d->link.missed_pings, d->link.rssi_avg_dbm);
-    draw_text_centred_bg(290, buf, 1, C_GREY, C_BLACK);
+    draw_text_centred_bg(288, buf, 2, C_GREY, C_BLACK);
 }
 
 /* ── Screen: error — FSD §10.2.6 ──────────────────────────────── */
@@ -825,7 +828,7 @@ static void draw_error_screen(const char *text)
         y += CHAR_H(2) + 6;
     }
 
-    draw_text_centred(250, "System halted. Power cycle required.", 1, C_WARN);
+    draw_text_centred(248, "System halted - power cycle", 2, C_WARN);
 }
 
 /* ── Screen: splash / firmware mismatch — FSD §10.2.1 ─────────── */
@@ -840,7 +843,7 @@ static void draw_splash_static(void)
     fill_rect(90, 138, DW - 180, 1, C_DGREY);
     draw_text_centred(152, "VRO - VLAAMSE RAKET ORGANISATIE", 2, C_INFO);
 
-    draw_text_centred(DH - 22, "(C) 2026 David Steeman", 1, C_GREY);
+    draw_text_centred(DH - 26, "(C) 2026 David Steeman", 2, C_GREY);
 }
 
 static void draw_splash_dynamic(const disp_data_t *d, int attempt,
@@ -880,7 +883,7 @@ static void draw_fw_mismatch(const uint8_t *base_ver, const uint8_t *remote_ver)
     char buf[40];
     fill_rect(0, 0, DW, DH, C_BLACK);
     draw_frame(0, 0, DW, DH, 8, C_WARN);
-    draw_text_centred(40, "ESP32 ROCKET LAUNCH CONTROLLER", 1, C_GREY);
+    draw_text_centred(34, "ROCKET LAUNCH CONTROLLER", 2, C_GREY);
     draw_text_centred(70, "! FIRMWARE MISMATCH !", 3, C_WARN);
 
     snprintf(buf, sizeof(buf), "Base:   v%u.%u.%u",
@@ -890,8 +893,8 @@ static void draw_fw_mismatch(const uint8_t *base_ver, const uint8_t *remote_ver)
              remote_ver[0], remote_ver[1], remote_ver[2]);
     draw_text(110, 175, buf, 2, C_WHITE);
 
-    draw_text_centred(230, "Reflash both units with", 1, C_GREY);
-    draw_text_centred(248, "matching firmware.", 1, C_GREY);
+    draw_text_centred(226, "Reflash both units with", 2, C_GREY);
+    draw_text_centred(250, "matching firmware.", 2, C_GREY);
 }
 
 /* ── Overlay: NACK / toast — FSD §10.2.7 ──────────────────────── */
@@ -903,10 +906,8 @@ static void draw_overlay(const char *text, bool is_nack)
     uint32_t bg = is_nack ? C_ARMED_BG : 0x604000;
     fill_rect(20, y, DW - 40, h, bg);
     draw_frame(20, y, DW - 40, h, 3, is_nack ? C_FAULT : C_AMBER);
-    draw_text_centred(y + 14, is_nack ? "COMMAND REJECTED" : "NOTICE", 1, C_WHITE);
-
-    int scale = (text_width(text, 2) <= DW - 60) ? 2 : 1;
-    draw_text((DW - text_width(text, scale)) / 2, y + 36, text, scale, C_WHITE);
+    draw_text_centred(y + 12, is_nack ? "COMMAND REJECTED" : "NOTICE", 2, C_WHITE);
+    draw_text_centred(y + 40, text, 2, C_WHITE);
 }
 
 /* ── Screen selection ─────────────────────────────────────────── */
