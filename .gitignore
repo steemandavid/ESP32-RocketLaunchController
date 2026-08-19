@@ -6,3 +6,8 @@ dependencies.lock
 build_base/
 build_remote/
 sdkconfig.*.resolved
+
+# strip-diag tool build output
+tools/strip-diag/build/
+tools/strip-diag/sdkconfig
+tools/strip-diag/sdkconfig.old

@@ -1,5 +1,76 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-19 (bench) — Strip bring-up: orientation is per unit, and bug #19
+
+Bringing the new strip rendering up on real hardware turned up two separate
+problems on the base, neither of them in the layer logic.
+
+### Base strip was dark — 5 V not connected
+
+Resolved by the user. Worth recording that the base's UART-bridge port also
+vanished mid-session (the board was replugged onto its native USB port), which
+is why the console went quiet: the RLC firmware's console is on UART0.
+
+### Orientation is NOT the same on both units
+
+v1.18 assumed both strips were wired data-in at the channel-8 end. They are
+not. Characterised with the new `tools/strip-diag` firmware — a single-pixel
+walk along the chain lit channel 1 first on the base:
+
+| Unit | Data-in end | Mapping | `RLC_STRIP_REVERSED` | Built-in LED |
+|---|---|---|---|---|
+| Base | channel 1 | channel N → pixel `N-1` | 0 | channel 1 |
+| Remote | channel 8 | channel N → pixel `7-(N-1)` | 1 | channel 8 |
+
+`RLC_STRIP_REVERSED` is now selected per unit via `CONFIG_RLC_UNIT_BASE`
+(`rlc_config.h` gained `#include "sdkconfig.h"` for this). The host renderer
+tests build and run **once per unit**, so both orientations are asserted —
+30 checks each, all passing.
+
+### Bug #19 — dead pixel at channel 4 on the base strip (OPEN)
+
+Channels 1-3 render correctly, channel 4 is stuck solid blue and never updates,
+channels 5-8 stay dark — stable across every pattern.
+
+`tools/strip-diag` paints *static* solid frames (red/green/blue/yellow/white)
+and walks a single pixel. Channels 1-3 rendered all five colours correctly, so
+the data line from GPIO 48 is clean. The fault is at the 4th pixel in the chain:
+it holds a value latched at power-up and never updates, so its data input is not
+receiving valid bits — dead LED controller, or a broken joint between pixel 3's
+DOUT and pixel 4's DIN. Channels 5-8 are dark because nothing valid propagates
+past it and a WS2812 that never received a frame stays off.
+
+Explicitly **not** a supply or logic-level problem. An earlier hypothesis blamed
+3.3 V data into a 5 V strip; the static-frame evidence disproved it — marginal
+levels corrupt the pixels nearest DIN and flicker, rather than producing three
+perfect pixels and a stable stuck one. Recording that here so nobody re-buys a
+level shifter.
+
+**Fix required (hardware):** reflow or replace the 4th LED, or cut the strip
+after pixel 3 and splice in a replacement.
+
+### New tool
+
+`tools/strip-diag/` — standalone WS2812 bring-up firmware for GPIO 48. Paints
+known static frames, walks a single pixel to identify the DIN end, and varies
+RMT resolution and brightness. It builds against the **project's own**
+`managed_components/espressif__led_strip` via `EXTRA_COMPONENT_DIRS`, so it
+exercises byte-for-byte the same driver as the RLC firmware. Console is on
+USB-Serial/JTAG (native USB port).
+
+### Verified
+
+- Remote, by eye: ch1 red (SHORT), ch2-8 yellow (OPEN), ch2 breathing as the
+  selected channel. Mapping, colours, cursor and orientation all correct.
+- Both units rebuilt and reflashed; link healthy (rssi −35, no missed pings).
+- Host suite: 30 checks × 2 orientations, 0 failures.
+
+### Note
+
+The remote's LiPo came disconnected during the base work, so it reads
+`vbat=0 mV` and sits in STATE_ERROR (known bench behaviour — USB alone does not
+energise the VBAT divider). Reconnect the pack to return to IDLE.
+
 ## 2026-08-19 (later) — LED strip becomes an igniter status display, both units
 
 The 8-way NeoPixel strip did not reflect igniter status: only one pixel lit,

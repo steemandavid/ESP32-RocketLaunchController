@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "sdkconfig.h"
 
 /* ── Timing Constants ─────────────────────────────────────────── */
 
@@ -169,11 +170,20 @@
 #define RGB_LED_BRIGHTNESS_BASE    30
 #define RGB_LED_BRIGHTNESS_REMOTE  30
 
-/* Strip data-in is at the channel-8 end on BOTH units, so channel N lives at
- * pixel index 7-(N-1). Pixel 0 is therefore channel 8 — and since the DevKit's
- * on-board LED sits in parallel on the same data line, the on-board LED
- * mirrors channel 8. Set to 0 if a strip is ever rewired DIN-at-channel-1. */
+/* Strip orientation, per unit — the two strips are wired data-in at opposite
+ * ends (verified 2026-08-19 with tools/strip-diag, single-pixel walk):
+ *
+ *   Base   — DIN at the CHANNEL-1 end: channel N is pixel N-1, on-board LED
+ *            (parallel on the same data line) mirrors channel 1.
+ *   Remote — DIN at the CHANNEL-8 end: channel N is pixel 7-(N-1), on-board
+ *            LED mirrors channel 8.
+ *
+ * Set to 1 when data-in is at the channel-8 end. */
+#ifdef CONFIG_RLC_UNIT_BASE
+#define RLC_STRIP_REVERSED         0
+#else
 #define RLC_STRIP_REVERSED         1
+#endif
 
 /* Alarm wink: a brief full-strip flash over the continuity map, so igniter
  * status stays readable while the alarm stays unmissable. */

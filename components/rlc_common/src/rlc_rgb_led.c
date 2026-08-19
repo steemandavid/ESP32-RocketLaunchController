@@ -36,10 +36,10 @@ static volatile bool     s_key_warning = false;
 
 /* ── Pixel helpers ────────────────────────────────────────────── */
 
-/* Channel index 0..7 → pixel index on the strip. Data-in is at the
- * channel-8 end on both units (RLC_STRIP_REVERSED), so channel 1 is the
- * last pixel in the data stream and pixel 0 — which the on-board LED
- * mirrors — is channel 8. */
+/* Channel index 0..7 → pixel index on the strip. The two units are wired
+ * data-in at opposite ends (RLC_STRIP_REVERSED, set per unit in rlc_config.h),
+ * so pixel 0 — which the parallel on-board LED mirrors — is channel 1 on the
+ * base and channel 8 on the remote. */
 static inline int pixel_for_channel(int ch_idx)
 {
 #if RLC_STRIP_REVERSED

@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.18
+**Version:** 1.19
 **Date:** 2026-08-19
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -32,6 +32,7 @@
 | 1.16 | 2026-07-21 | Documentation accuracy corrections after remote display validation and full code review. Aligned all 8 buzzer/alarm pattern timings (§12.1 table, §6.4.2, App D.2) with `rlc_buzzer.c` (patterns had drifted shorter in firmware). Watchdog timeout 2 s → 5 s (§9.6, §14.1, T-S07) to match `WATCHDOG_TIMEOUT_S`. Softened ILI9488 display-ID health check (§5.5.6): clone panels report a non-standard ID (observed 0x2A403300); only a zero/garbage read-back or SPI failure is a fault. Fixed hw-test spec console transport (USB-Serial/JTAG `/dev/ttyACM*`, not UART0/`/dev/ttyUSB0`). Refreshed stale spec-version citations (Development_Progress.md, hw-test spec). Fixed stale code comments (`rlc_rgb_led.h` 50→250 ms; `rlc_watchdog.h` 2 s→5 s). |
 | 1.17 | 2026-08-17 | Bug #18 as-built deviations and firmware channel gate. Recorded that the 3.3 V zener clamps on GPIO 21 (§5.4.3) and GPIO 42 (§5.4.3b) are **not fitted**, and that the arm relay contact has **no snubber** — the spec previously described all three as present. The bug #18 relay-order fix (arm relay OFF → 20 ms → channel relays OFF) makes the arm relay the sole contact breaking 6 A DC, placing that arc on the ARM SENSE node and putting the arm relay contact at risk of erosion/welding (detected by `weld_check()`, fails safe to ERROR). Added the required protection BOM (BAT54S or zener on GPIO 21/42, 47 Ω/100 nF contact snubber, SMBJ18A-class TVS on arm relay COM) and updated the §5.4.9 circuit diagram. Documented the new firmware gate `FIRE_PROTECTED_CHANNEL_MASK` (currently 0x01, channel 1 only): `guard_arm()` NACKs ARM on unprotected channels and `relay_fire_set()` refuses to energise them. Noted that the delivered fire pulse is now FIRE_PULSE_DURATION_MS + arm-relay release time (affects T-F08). |
 | 1.18 | 2026-08-19 | RGB LED strip repurposed as an igniter continuity display on **both** units. §11 rewritten around a six-layer rendering model: the 8-pixel strip shows one pixel per igniter channel at all times, and system status *modulates* the map (alarm wink, stale dim, breathing) rather than replacing it — only the firing path (ARMED/PRE_FIRE/FIRING) and ERROR still take the whole strip. Removed the per-state whole-strip colours for IDLE, LINK_LOST and POST_FIRE, the boot-time RSSI bar, and the 250 ms whole-strip orange ping-miss flash (§11.2 — the 80 ms buzzer beep remains the per-miss indicator). §5.5.8: the **remote now carries an 8-pixel external strip**, not just the on-board LED. §5.4.11/§5.5.8: strip data-in is at the channel-8 end on both units, so pixel 0 — which the on-board LED mirrors in parallel — is channel 8; the on-board LEDs no longer carry independent meaning. Added alarm-wink palette and strip tuning constants to §14.1. Added host-compiled renderer tests (§15.5, T-L01…T-L09).
+| 1.19 | 2026-08-19 | Strip orientation corrected to a **per-unit** setting after bench characterisation with the new `tools/strip-diag` firmware. The two strips are wired data-in at opposite ends: base at the channel-1 end (`RLC_STRIP_REVERSED = 0`, on-board LED mirrors channel 1), remote at the channel-8 end (`RLC_STRIP_REVERSED = 1`, on-board LED mirrors channel 8). v1.18 wrongly assumed both were reversed. Updated §11.0, §5.4.11, §5.5.8, §14.1. Host renderer tests (§15.5) now run once per unit so both orientations are asserted.
 
 ---
 
@@ -932,7 +933,7 @@ GPIO      (10k)│
 | Type | WS2812 (NeoPixel) addressable RGB LED strip (8 external pixels) + on-board LED on GPIO 48 |
 | Pin | GPIO 48 (fixed, on-board) |
 | Pixels | 8 addressable external pixels, one per igniter channel. Pixel 0 also drives the on-board LED in parallel. |
-| Pixel order | **Data-in at the channel-8 end** — channel N is pixel `7-(N-1)` (`RLC_STRIP_REVERSED = 1`). Pixel 0, and therefore the on-board LED, is channel 8. |
+| Pixel order | **Data-in at the channel-1 end** — channel N is pixel `N-1` (`RLC_STRIP_REVERSED = 0`). Pixel 0, and therefore the on-board LED, is channel 1. |
 | Driver | ESP32-S3 RMT peripheral |
 | Function | Igniter continuity display with status modulation (see §11) |
 
@@ -1048,7 +1049,7 @@ SPI bus shall use SPI2_HOST on the ESP32-S3.
 
 #### 5.5.8 RGB LED (Status Indicator)
 
-Same as Base Unit §5.4.11: an 8-pixel WS2812 strip on GPIO 48, one pixel per igniter channel, with the on-board WS2812 in parallel mirroring pixel 0 (channel 8). Data-in is at the channel-8 end, as on the base.
+Same as Base Unit §5.4.11: an 8-pixel WS2812 strip on GPIO 48, one pixel per igniter channel, with the on-board WS2812 in parallel mirroring pixel 0. **Unlike the base, data-in is at the channel-8 end**, so channel N is pixel `7-(N-1)` (`RLC_STRIP_REVERSED = 1`) and the on-board LED mirrors channel 8.
 
 The remote's map is driven from the continuity bands in the cached STATUS_UPDATE rather than from local sensing, so it can go stale; §11.1 layer 4 dims it when it does. Brightness is set independently of the base via `RGB_LED_BRIGHTNESS_REMOTE`, since the remote runs from the smaller 2S pack.
 
@@ -2255,7 +2256,12 @@ Both units carry a WS2812 (NeoPixel) 8-pixel addressable strip on GPIO 48, drive
 
 The strip is an **igniter continuity display**: one pixel per channel, showing the same continuity bands as the remote's channel grid, in the same colours (§10.2.0, `RLC_COLOR_CONT_*`). System status **modulates** that map rather than replacing it, so the operator never loses sight of the pad. The only exceptions are the firing path and ERROR, which take the whole strip so those signals stay unmistakable.
 
-**Pixel order.** Strip data-in is at the **channel-8 end** on both units, so channel N is at pixel index `7-(N-1)` (`RLC_STRIP_REVERSED = 1`). Pixel 0 is channel 8, and the on-board LED mirrors channel 8.
+**Pixel order.** The two strips are wired data-in at **opposite ends**, so `RLC_STRIP_REVERSED` is set per unit (verified 2026-08-19 with `tools/strip-diag`):
+
+| Unit | Data-in end | Mapping | `RLC_STRIP_REVERSED` | On-board LED shows |
+|---|---|---|---|---|
+| Base | channel 1 | channel N → pixel `N-1` | 0 | channel 1 |
+| Remote | channel 8 | channel N → pixel `7-(N-1)` | 1 | channel 8 |
 
 ### 11.1 Rendering layers
 
@@ -2436,7 +2442,7 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `BASE_MAC_ADDR` | 6-byte MAC of the base unit |
 | `REMOTE_MAC_ADDR` | 6-byte MAC of the remote unit |
 | `RGB_LED_BRIGHTNESS_BASE` / `_REMOTE` | 0–255, default: 30 each |
-| `RLC_STRIP_REVERSED` | 1 — data-in at the channel-8 end on both units |
+| `RLC_STRIP_REVERSED` | per unit — 0 (base, data-in at channel 1), 1 (remote, data-in at channel 8) |
 | `RLC_STRIP_ALARM_WINK_MS` / `_PERIOD_MS` | 300 / 3000 |
 | `RLC_STRIP_STALE_DIM_PCT` / `_ERROR_DIM_PCT` | 10 / 20 |
 | `RLC_STRIP_BREATHE_LOW_PCT` / `_CURSOR_LOW_PCT` | 25 / 40 |

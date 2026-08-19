@@ -10,7 +10,9 @@
  * take the whole strip so those signals stay unmistakable.
  *
  * The DevKit's on-board LED sits in parallel on the same data line and so
- * mirrors pixel 0. With RLC_STRIP_REVERSED it has no independent meaning.
+ * mirrors pixel 0; it has no independent meaning. Which channel that is
+ * depends on the unit's strip orientation (RLC_STRIP_REVERSED): channel 1 on
+ * the base, channel 8 on the remote.
  *
  * Rendering layers, highest priority first:
  *
@@ -88,7 +90,7 @@ void rlc_rgb_led_set_brightness(uint8_t brightness);
 /**
  * Publish the igniter continuity map: 2 bits per channel, same encoding as
  * STATUS_UPDATE (00=OPEN, 01=GOOD, 10=MARGINAL, 11=SHORT), channel 1 in the
- * least significant pair. Channel N is drawn at pixel 7-(N-1) when
+ * least significant pair. Channel N is drawn at pixel N-1, or 7-(N-1) when
  * RLC_STRIP_REVERSED is set, in the colours configured by RLC_COLOR_CONT_*.
  *
  * Until this is called at least once the strip shows the cyan boot chase.

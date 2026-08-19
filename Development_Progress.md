@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.18 (2026-08-19)
+**Spec:** RLC-FSPEC-001 v1.19 (2026-08-19)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -829,10 +829,17 @@ Supporting changes:
 
 An 8-way NeoPixel strip is wired to `PIN_RGB_LED` (GPIO 48) on **both** units,
 one pixel per igniter channel. Each DevKit's built-in NeoPixel sits in parallel
-on the same data line (confirmed on the bench) and so mirrors pixel 0. Data-in
-is at the **channel-8 end** on both strips, so channel N is pixel `7-(N-1)` and
-the built-in LED shows **channel 8**. The built-in LEDs no longer carry any
-independent meaning — the old link/boot indication is gone.
+on the same data line (confirmed on the bench) and so mirrors pixel 0. The
+built-in LEDs no longer carry any independent meaning — the old link/boot
+indication is gone.
+
+**The two strips are wired data-in at opposite ends**, so `RLC_STRIP_REVERSED`
+is set per unit in `rlc_config.h` (verified with `tools/strip-diag`):
+
+| Unit | Data-in end | Mapping | `RLC_STRIP_REVERSED` | Built-in LED shows |
+|---|---|---|---|---|
+| Base | channel 1 | channel N → pixel `N-1` | 0 | channel 1 |
+| Remote | channel 8 | channel N → pixel `7-(N-1)` | 1 | channel 8 |
 
 | Continuity | Colour | Constant |
 |---|---|---|
@@ -960,9 +967,42 @@ pack: USB power alone does not energise the VBAT sense. Note the divider is
 sized for 8.4 V full scale; feeding the battery input from a 12 V+ supply puts
 >4.5 V on GPIO 1, above the 3.3 V absolute maximum (bug #18 failure class).
 
+### Bug #19 — Base LED strip: dead pixel at channel 4 (2026-08-19, OPEN)
+
+**Symptom.** With the base strip powered, channels 1-3 render correctly,
+**channel 4 is stuck solid blue and never updates**, and channels 5-8 stay dark.
+Stable across every test pattern.
+
+**Diagnosis.** Characterised with `tools/strip-diag`, which paints static solid
+frames (red/green/blue/yellow/white) and walks a single pixel along the chain.
+Channels 1-3 rendered all five colours correctly, so the data line from GPIO 48
+is clean. The single-pixel walk lit ch1 first, proving the base strip's data-in
+is at the **channel-1 end** — the opposite of the remote, and the reason the
+first firmware showed the map mirrored on this unit.
+
+The fault is at the **4th pixel in the data chain**: it holds a value latched at
+power-up (blue) and never updates, meaning its data input is not receiving valid
+bits — a dead LED controller, or a broken joint between pixel 3's DOUT and pixel
+4's DIN. Channels 5-8 are dark because a WS2812 that has never received a frame
+stays off; nothing valid propagates past the fault.
+
+**Not** a supply or logic-level problem: three pixels rendering five different
+static patterns perfectly rules out marginal 3.3 V data levels, which corrupt the
+pixels *nearest* DIN and produce flicker rather than a stable pattern. (An
+earlier working hypothesis blamed level shifting; the static-frame evidence
+disproved it.)
+
+**Fix required (hardware):** reflow or replace the 4th LED in the base strip, or
+cut the strip after pixel 3 and splice in a replacement section. Until then the
+base shows only channels 1-3.
+
+**Preceding cause, resolved:** the strip was entirely dark because its 5 V feed
+was not connected.
+
 ### LED Strip Tests (2026-08-19)
 
-Host renderer tests — `./tests/host/run.sh`, 30 checks, all passing:
+Host renderer tests — `./tests/host/run.sh`, run once per unit (the two strip
+orientations), 30 checks each, all passing:
 
 | ID | Test | Status |
 |----|------|--------|
@@ -984,17 +1024,18 @@ On-target, both units flashed and running:
 | T-L11 | Base boots, links, no watchdog trips | PASS | rssi −34 dBm, vbat 11618 mV, key ON, cont=0x0000 |
 | T-L12 | Remote boots, links, no watchdog trips | PASS | rssi −42 dBm, vbat 5740 mV, arm switch ON, sel=1 |
 | T-L13 | Link-loss alarm path: remote held in reset | PASS | Base detected loss in 1.5 s, held LINK_LOST 25 s, recovered to IDLE cleanly |
-| T-L14 | Strip colours match the map **by eye** | TODO | Needs the operator to look at the strip |
+| T-L14 | Strip colours match the map **by eye** | PASS | Remote verified: ch1 red/SHORT, ch2-8 yellow/OPEN, ch2 breathing as cursor |
 | T-L15 | Continuity change moves the right pixel | TODO | Needs a resistor on a known channel |
 | T-L16 | Alarm wink legible at arm's length in daylight | TODO | May drive a brightness change |
-| T-L17 | Remote cursor pulse follows the encoder | TODO | |
+| T-L17 | Remote cursor pulse follows the encoder | PASS | Cursor observed on the selected channel |
+| T-L18 | Base strip renders all 8 channels | FAIL | Bug #19 — dead pixel at channel 4; ch1-3 correct |
 
-**Expected strip state at the end of this session** (from the logs, unverified
-by eye): both units show **all 8 pixels yellow** (cont=0x0000, every channel
-OPEN — nothing connected). The base map **breathes** at 250 ms because the key
-switch is ON with nothing armed; the remote breathes **channel 1 only** because
-its arm switch is ON and channel 1 is selected. No alarm winks — both linked,
-both packs above their arming floors, no relay fault.
+**Verified by eye on the remote (2026-08-19):** channel 1 red (SHORT), channels
+2-8 yellow (OPEN), channel 2 breathing as the selected channel — mapping,
+colours, cursor breathing and the reversed orientation all confirmed correct.
+
+**Base:** channels 1-3 render correctly once the orientation was fixed;
+channels 4-8 are blocked by bug #19 (dead pixel at channel 4).
 
 ### Phase 4 On-Target Tests (pending)
 
