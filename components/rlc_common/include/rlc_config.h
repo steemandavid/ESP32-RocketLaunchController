@@ -39,6 +39,10 @@
 #define SIREN_LINK_LOST_DURATION_MS    4000
 #define NACK_DISPLAY_DURATION_MS       3000
 
+/* Minimum time the splash screen stays up, even if the link comes up sooner
+ * (linking typically completes in well under a second). FSD §10.2.1. */
+#define SPLASH_MIN_DURATION_MS         10000
+
 #define WATCHDOG_TIMEOUT_S             5
 #define DEBOUNCE_POLL_INTERVAL_MS      10
 #define CONT_RELAY_DROPOUT_MS          50    /* Relay settling before first ADC sample (§5.4.6) */
@@ -75,6 +79,13 @@
 #define REMOTE_VBAT_MIN_ARM_MV         3200
 #define REMOTE_VBAT_MIN_OPERATE_MV     3100
 #define REMOTE_VBAT_CRITICAL_MV        3000
+
+/* Full-charge endpoints for the display battery gauges (FSD §10.2.2).
+ * These must be switched together with the thresholds above: on the bench
+ * the remote reads the 3.3 V USB rail, in production it reads a 2S pack.
+ * Production values: REMOTE 8400 (2S LiPo), BASE 12600 (3S LiPo). */
+#define REMOTE_VBAT_FULL_MV            4200
+#define BASE_VBAT_FULL_MV              12600
 
 /* ── Hardware Configuration ───────────────────────────────────── */
 

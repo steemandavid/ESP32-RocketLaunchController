@@ -127,6 +127,7 @@ static spi_device_handle_t s_spi   = NULL;
 static uint8_t            *s_fb    = NULL;   /* PSRAM framebuffer, RGB666 */
 static uint8_t            *s_line  = NULL;   /* internal DMA-capable row buffer */
 static bool                s_healthy = false;
+static int64_t             s_boot_ms = 0;     /* display_init() timestamp */
 static uint32_t            s_panel_id = 0;
 static TaskHandle_t        s_task = NULL;
 
@@ -539,7 +540,7 @@ static void draw_top_bar_dynamic(const disp_data_t *d)
                (d->vbat_mv && d->vbat_mv < REMOTE_VBAT_MIN_ARM_MV) ? C_MARGINAL : C_WHITE,
                C_BLACK);
     draw_bar(256 + 10 * CHAR_W(2), BAR_TXT_Y1, 92, CHAR_H(2),
-             pct_from_range(d->vbat_mv, REMOTE_VBAT_CRITICAL_MV, 4200),
+             pct_from_range(d->vbat_mv, REMOTE_VBAT_CRITICAL_MV, REMOTE_VBAT_FULL_MV),
              (d->vbat_mv < REMOTE_VBAT_MIN_ARM_MV) ? C_OPEN : C_GOOD, C_BLACK);
 
     /* Base battery from STATUS_UPDATE (3S: 9.0-12.6 V) */
@@ -549,7 +550,7 @@ static void draw_top_bar_dynamic(const disp_data_t *d)
     draw_field(256, BAR_TXT_Y2, 10 * CHAR_W(2), buf, 2,
                (bmv && bmv < BASE_VBAT_MIN_ARM_MV) ? C_MARGINAL : C_WHITE, C_BLACK);
     draw_bar(256 + 10 * CHAR_W(2), BAR_TXT_Y2, 92, CHAR_H(2),
-             pct_from_range(bmv, BASE_VBAT_CRITICAL_MV, 12600),
+             pct_from_range(bmv, BASE_VBAT_CRITICAL_MV, BASE_VBAT_FULL_MV),
              (bmv && bmv < BASE_VBAT_MIN_ARM_MV) ? C_OPEN : C_GOOD, C_BLACK);
 }
 
@@ -825,22 +826,46 @@ static void draw_error_screen(const char *text)
 static void draw_splash_static(void)
 {
     fill_rect(0, 0, DW, DH, C_BLACK);
-    draw_text_centred(50, "ESP32 WIRELESS ROCKET", 3, C_WHITE);
-    draw_text_centred(90, "LAUNCH CONTROLLER", 3, C_WHITE);
-    draw_text_centred(140, "v" RLC_VERSION_STRING, 2, C_SELECTED);
-    draw_text_centred(200, "Connecting to base...", 2, C_WHITE);
+    draw_text_centred(26, "ESP32 WIRELESS ROCKET", 3, C_WHITE);
+    draw_text_centred(64, "LAUNCH CONTROLLER", 3, C_WHITE);
+    draw_text_centred(106, "v" RLC_VERSION_STRING, 2, C_SELECTED);
+
+    fill_rect(90, 138, DW - 180, 1, C_DGREY);
+    draw_text_centred(152, "VRO - VLAAMSE RAKET ORGANISATIE", 2, C_GOOD);
+
+    draw_text_centred(DH - 22, "(C) 2026 David Steeman", 1, C_GREY);
 }
 
-static void draw_splash_dynamic(int attempt, int max_attempts)
+static void draw_splash_dynamic(const disp_data_t *d, int attempt,
+                                int max_attempts, int64_t hold_until_ms)
 {
-    char buf[32];
+    char buf[40];
     if (max_attempts <= 0) max_attempts = LINK_REQUEST_MAX_RETRIES;
     if (attempt > max_attempts) attempt = max_attempts;
 
-    snprintf(buf, sizeof(buf), "Attempt %d / %d", attempt, max_attempts);
-    draw_text_centred_bg(238, buf, 2, C_WHITE, C_BLACK);
+    bool linked = (d->link.state == RLC_LINK_STATE_LINKED);
 
-    draw_bar(90, 272, 300, 20, (attempt * 100) / max_attempts, C_SELECTED, C_BLACK);
+    draw_text_centred_bg(196, linked ? "Connected to base" : "Connecting to base...",
+                         2, linked ? C_GOOD : C_WHITE, C_BLACK);
+
+    if (linked) {
+        snprintf(buf, sizeof(buf), "RSSI %d dBm", d->link.rssi_avg_dbm);
+    } else {
+        snprintf(buf, sizeof(buf), "Attempt %d / %d", attempt, max_attempts);
+    }
+    draw_text_centred_bg(228, buf, 2, C_WHITE, C_BLACK);
+
+    /* Once linked, the bar runs out the remaining splash hold so the operator
+     * can see how long the screen stays up (SPLASH_MIN_DURATION_MS). */
+    int pct;
+    if (linked) {
+        int64_t left = hold_until_ms - now_ms();
+        if (left < 0) left = 0;
+        pct = 100 - (int)((left * 100) / SPLASH_MIN_DURATION_MS);
+    } else {
+        pct = (attempt * 100) / max_attempts;
+    }
+    draw_bar(90, 262, 300, 20, pct, linked ? C_GOOD : C_SELECTED, C_BLACK);
 }
 
 static void draw_fw_mismatch(const uint8_t *base_ver, const uint8_t *remote_ver)
@@ -943,11 +968,17 @@ static void display_task(void *arg)
             fw_remote[2] = RLC_VERSION_PATCH;
         }
 
+        /* The splash stays up for at least SPLASH_MIN_DURATION_MS — linking
+         * usually completes in well under a second, which is too fast to read.
+         * Errors still take precedence over the hold. */
+        int64_t splash_until_ms = s_boot_ms + SPLASH_MIN_DURATION_MS;
+
         screen_t want;
-        if (fw_mismatch)      want = SCR_FW_MISMATCH;
-        else if (err_latched) want = SCR_ERROR;
-        else if (fire_done)   want = SCR_FIRE_COMPLETE;
-        else                  want = screen_for_state(&d);
+        if (fw_mismatch)                 want = SCR_FW_MISMATCH;
+        else if (err_latched)            want = SCR_ERROR;
+        else if (now_ms() < splash_until_ms) want = SCR_SPLASH;
+        else if (fire_done)              want = SCR_FIRE_COMPLETE;
+        else                             want = screen_for_state(&d);
 
         /* A retiring overlay leaves a hole — force a full redraw. */
         bool full = (want != current) || (overlay_drawn && !overlay_on);
@@ -969,9 +1000,10 @@ static void display_task(void *arg)
 
         switch (want) {
             case SCR_SPLASH:
-                draw_splash_dynamic(splash_att > 0 ? splash_att
+                draw_splash_dynamic(&d,
+                                    splash_att > 0 ? splash_att
                                                    : (int)d.link.linkreq_attempts + 1,
-                                    splash_max);
+                                    splash_max, splash_until_ms);
                 break;
             case SCR_MAIN:
                 draw_main_dynamic(&d);
@@ -1106,6 +1138,7 @@ int display_init(void)
     }
     memset(s_fb, 0, (size_t)DW * DH * 3);
     dirty_clear();
+    s_boot_ms = now_ms();
 
     /* §9.13 step 6: health check — panel ID read-back */
     uint8_t id[4] = {0};

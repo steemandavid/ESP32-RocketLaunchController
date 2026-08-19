@@ -76,6 +76,48 @@ longer exists. Enumerated `/dev/serial/by-id/` and confirmed by `read_mac`:
 `build_remote.sh` and `Development_Progress.md` updated to `…5B5E043219`. (Note:
 `esptool` in this IDF v5.4.1 install takes `read_mac`, not `read-mac`.)
 
+### Splash screen refinements (follow-up)
+
+- New `SPLASH_MIN_DURATION_MS` in `rlc_config.h` (5 s, then raised to **10 s** on
+  request). The display task holds the splash for that long from
+  `display_init()` regardless of how fast the link comes up — linking completes
+  in well under a second, which is too fast to read. ERROR and firmware
+  mismatch still take precedence over the hold.
+- While the hold runs after linking, the status line switches to "Connected to
+  base" in blue with live RSSI, and the progress bar counts the remaining hold
+  down, so the screen reads as deliberate rather than stuck.
+- Added `VRO - VLAAMSE RAKET ORGANISATIE` (blue, under a divider rule) and
+  `(C) 2026 David Steeman` (footer). The 5×7 font has no `©` glyph.
+- Battery gauge endpoints moved out of the display into `rlc_config.h` as
+  `REMOTE_VBAT_FULL_MV` / `BASE_VBAT_FULL_MV`, beside the thresholds they must
+  track.
+
+### Battery threshold findings (from a "remote power fail" report)
+
+The user reported the base flagging a remote power failure while running from a
+12.8 V supply. Two findings, neither of them a display bug:
+
+1. **The base never checks the remote's battery.** FSD §7 (line 1357) requires
+   NACK `0x0C` ("REMOTE BATTERY LOW") when the PING-reported remote voltage is
+   below `REMOTE_VBAT_MIN_ARM_MV`. `remote_battery_voltage_mv` arrives in every
+   PING but nothing in `components/rlc_base/` reads it; `check_arm_guards()`
+   tests only the base's own pack. **Requirement not implemented.**
+2. **`rlc_config.h` still holds the bench-test overrides** — 3200 / 3100 /
+   3000 mV, sized for the 3.3 V USB rail, versus the FSD §5.6.2 production 2S
+   values 7000 / 6600 / 6400. As shipped the remote would arm on a 2S pack at
+   3.3 V per cell. Must be switched back (along with `REMOTE_VBAT_FULL_MV`
+   4200 → 8400) before field use.
+
+What the user was actually seeing is the **remote judging itself**:
+`rlc_remote_battery.c` samples GPIO 1 (ADC1_CH0) every 1 s through the
+18 kΩ/10 kΩ (2.8:1) divider; below `REMOTE_VBAT_CRITICAL_MV` it posts an
+edge-triggered `EVT_BATTERY_CRITICAL` and the remote FSM enters STATE_ERROR
+(unrecoverable). The bench reading is **0 mV — the divider is unfed**, not a
+flat pack; USB power does not energise the VBAT sense. Also flagged: the
+divider is sized for 8.4 V full scale, so feeding the remote's battery input
+from 12.8 V would put ~4.6 V on GPIO 1, above the 3.3 V absolute maximum —
+the same failure class as bug #18.
+
 ### Notes
 
 - Base firmware rebuilt clean after the `rlc_link.h` change — the base unit was

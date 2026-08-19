@@ -805,7 +805,7 @@ ERROR / firmware mismatch and a timed overlay for NACKs and notices.
 | 1 | ILI9488 SPI display driver (480x320, SPI2_HOST, 20 MHz) | §10.1 | DONE | Init sequence ported from validated `rlc-hw-test-remote` |
 | 2 | Display health check (ID read-back at boot) | §9.13 step 6 | DONE | `display_is_healthy()`; remote halts in ERROR on failure (T-S10) |
 | 3 | Screen layout manager | §10.3 | DONE | `display_task` + `screen_for_state()` |
-| 4 | Splash screen | §10.2.1 | DONE | Title, version, attempt counter, progress bar |
+| 4 | Splash screen | §10.2.1 | DONE | Title, version, VRO + author credits, attempt counter, progress bar; held for `SPLASH_MIN_DURATION_MS` (10 s) so it is readable even when linking completes in <1 s |
 | 5 | Main status screen (IDLE) — RSSI bar, battery, continuity grid, channel | §10.2.2 | DONE | Top bar (RSSI/RTT/both batteries), 4x2 channel grid, legend, arm-sense line |
 | 6 | Armed screen — channel indicator, continuity, status | §10.2.3 | DONE | Pulsing red border, large channel number, arm-sense confirmation |
 | 7 | Firing / Pre-fire screen — countdown, pulse indicator | §10.2.4 | DONE | 100 ms countdown, "IGNITION ACTIVE" on red field |
@@ -825,12 +825,41 @@ Supporting changes:
 - FSM display hooks: NACK overlays, "TURN ARM KEY FIRST" and other local
   rejection toasts, multi-arm error screen, fire-complete screen.
 
+### Phase 4 Findings — Battery Thresholds (2026-08-19)
+
+Raised while diagnosing a "remote power fail" report on the bench. Neither is a
+display bug; both are open items.
+
+1. **The base never checks the remote's battery.** FSD §7 (line 1357) requires
+   the base to refuse ARM with NACK `0x0C` ("REMOTE BATTERY LOW") when the
+   voltage reported in PING is below `REMOTE_VBAT_MIN_ARM_MV`, as defence in
+   depth against a remote firmware bug. `remote_battery_voltage_mv` arrives in
+   every PING but nothing in `components/rlc_base/` reads it, and
+   `check_arm_guards()` only tests the base's own pack. **Requirement not
+   implemented.**
+2. **`rlc_config.h` still carries the bench-test threshold overrides**
+   (`REMOTE_VBAT_MIN_ARM_MV` 3200 / `MIN_OPERATE` 3100 / `CRITICAL` 3000, sized
+   for the 3.3 V USB rail). FSD §5.6.2 production values for the specified 2S
+   pack are 7000 / 6600 / 6400. As shipped, the remote would arm on a 2S pack at
+   3.3 V per cell — well under the FSD floor. **Must be switched back before
+   field use**, together with `REMOTE_VBAT_FULL_MV` (bench 4200 → 2S 8400),
+   the new display gauge endpoint.
+
+Remote battery criteria, for reference: `rlc_remote_battery.c` samples GPIO 1
+(ADC1_CH0) once per second through the 18 kΩ/10 kΩ (2.8:1) divider, 8-sample
+average. Below `REMOTE_VBAT_CRITICAL_MV` it posts `EVT_BATTERY_CRITICAL`
+(edge-triggered) and the remote FSM enters STATE_ERROR — unrecoverable, power
+cycle required. A reading of **0 mV means the divider is unfed**, not a flat
+pack: USB power alone does not energise the VBAT sense. Note the divider is
+sized for 8.4 V full scale; feeding the battery input from a 12 V+ supply puts
+>4.5 V on GPIO 1, above the 3.3 V absolute maximum (bug #18 failure class).
+
 ### Phase 4 On-Target Tests (pending)
 
 | ID | Test | Status |
 |----|------|--------|
 | T-D01 | Panel ID read-back at boot (expect clone ID 0x2A403300) | TODO |
-| T-D02 | Splash → main status transition on link-up | TODO |
+| T-D02 | Splash holds 10 s, then transitions to main status | TODO |
 | T-D03 | Continuity grid matches base STATUS_UPDATE for all 8 channels | TODO |
 | T-D04 | Encoder rotation moves the cyan selection cursor | TODO |
 | T-D05 | ARMED screen on arm, red pulse, arm-sense confirmed | TODO |
