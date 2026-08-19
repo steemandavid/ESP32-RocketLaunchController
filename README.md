@@ -153,6 +153,11 @@ Known open items before any field use:
 - The continuity palette (`RLC_COLOR_CONT_*`) deviates from FSD §10.2.0, which
   specifies blue for GOOD to avoid a red-green pair; the specification needs
   updating to match, or the palette reverting.
+- The ESP-NOW encryption keys and the integrity-check key are committed to this
+  public repository (bug #20), so two of the three communication-security layers
+  offer no protection against anyone who has read the source. Only the replay
+  protection, whose session token is random per link-up, still holds. The keys
+  need rotating **and** moving out of tracked files before field use.
 - The base's NeoPixel strip has a **dead pixel at channel 4** (bug #19): the
   fourth LED in the data chain no longer forwards data, so channels 4–8 are
   unusable on that unit. Channels 1–3 and the whole remote strip are fine. The

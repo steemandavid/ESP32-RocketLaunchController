@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.19
+**Version:** 1.20
 **Date:** 2026-08-19
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -33,6 +33,7 @@
 | 1.17 | 2026-08-17 | Bug #18 as-built deviations and firmware channel gate. Recorded that the 3.3 V zener clamps on GPIO 21 (§5.4.3) and GPIO 42 (§5.4.3b) are **not fitted**, and that the arm relay contact has **no snubber** — the spec previously described all three as present. The bug #18 relay-order fix (arm relay OFF → 20 ms → channel relays OFF) makes the arm relay the sole contact breaking 6 A DC, placing that arc on the ARM SENSE node and putting the arm relay contact at risk of erosion/welding (detected by `weld_check()`, fails safe to ERROR). Added the required protection BOM (BAT54S or zener on GPIO 21/42, 47 Ω/100 nF contact snubber, SMBJ18A-class TVS on arm relay COM) and updated the §5.4.9 circuit diagram. Documented the new firmware gate `FIRE_PROTECTED_CHANNEL_MASK` (currently 0x01, channel 1 only): `guard_arm()` NACKs ARM on unprotected channels and `relay_fire_set()` refuses to energise them. Noted that the delivered fire pulse is now FIRE_PULSE_DURATION_MS + arm-relay release time (affects T-F08). |
 | 1.18 | 2026-08-19 | RGB LED strip repurposed as an igniter continuity display on **both** units. §11 rewritten around a six-layer rendering model: the 8-pixel strip shows one pixel per igniter channel at all times, and system status *modulates* the map (alarm wink, stale dim, breathing) rather than replacing it — only the firing path (ARMED/PRE_FIRE/FIRING) and ERROR still take the whole strip. Removed the per-state whole-strip colours for IDLE, LINK_LOST and POST_FIRE, the boot-time RSSI bar, and the 250 ms whole-strip orange ping-miss flash (§11.2 — the 80 ms buzzer beep remains the per-miss indicator). §5.5.8: the **remote now carries an 8-pixel external strip**, not just the on-board LED. §5.4.11/§5.5.8: strip data-in is at the channel-8 end on both units, so pixel 0 — which the on-board LED mirrors in parallel — is channel 8; the on-board LEDs no longer carry independent meaning. Added alarm-wink palette and strip tuning constants to §14.1. Added host-compiled renderer tests (§15.5, T-L01…T-L09).
 | 1.19 | 2026-08-19 | Strip orientation corrected to a **per-unit** setting after bench characterisation with the new `tools/strip-diag` firmware. The two strips are wired data-in at opposite ends: base at the channel-1 end (`RLC_STRIP_REVERSED = 0`, on-board LED mirrors channel 1), remote at the channel-8 end (`RLC_STRIP_REVERSED = 1`, on-board LED mirrors channel 8). v1.18 wrongly assumed both were reversed. Updated §11.0, §5.4.11, §5.5.8, §14.1. Host renderer tests (§15.5) now run once per unit so both orientations are asserted.
+| 1.20 | 2026-08-19 | Recorded bug #20 in §6.2.1: the PMK, LMK and `CMD_INTEGRITY_KEY` are committed to a public repository, so the AES-128-CCM security boundary and the keyed CRC32 integrity check are ineffective against an adversary who has read the source; only the §6.2.2 replay protection (random per-link-up session token) still holds. Keys must be rotated **and** moved out of tracked files, since git history preserves superseded values. Also corrected §6.2.1's key location: `rlc_config.h`, not the non-existent `protocol_config.h`.
 
 ---
 
@@ -1105,12 +1106,14 @@ The remote's map is driven from the continuity bands in the cached STATUS_UPDATE
 
 ESP-NOW provides built-in **AES-128-CCM** encryption per peer. This is the system's primary security boundary against external adversaries. The implementation shall:
 
-1. Define a shared 16-byte Primary Master Key (PMK) at compile time (stored in `protocol_config.h`).
+1. Define a shared 16-byte Primary Master Key (PMK) at compile time (stored in `rlc_config.h`).
 2. Derive or define a 16-byte Local Master Key (LMK) per peer.
 3. Register each peer with encryption enabled (`esp_now_peer_info_t.encrypt = true`).
 4. The PMK and LMK shall be identical on both units (symmetric).
 
 **Note:** PMK and LMK are compile-time constants. Changing keys requires recompilation and reflashing both units.
+
+> **OPEN — bug #20 (as-built deviation).** The keys named above, and the `CMD_INTEGRITY_KEY` of §6.2.2, are committed to a **public** repository. Against an adversary who has read the source, this security boundary does not hold and the keyed integrity check does not detect forgery — only the §6.2.2 replay protection, whose session token is random per link-up, remains effective. The keys must be rotated **and moved out of tracked files** before any field use where an adversary is in the threat model; rotating alone is insufficient because git history preserves superseded values. See Development_Progress.md bug #20.
 
 #### 6.2.2 Application-Layer Integrity and Replay Protection
 

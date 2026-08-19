@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.19 (2026-08-19)
+**Spec:** RLC-FSPEC-001 v1.20 (2026-08-19)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -1053,6 +1053,58 @@ channels 4-8 are blocked by bug #19 (dead pixel at channel 4).
 
 ---
 
+### Bug #20 — Shipped crypto keys are public; two of three comms layers are ineffective (2026-08-19, OPEN)
+
+**Problem.** `ESPNOW_PMK`, `ESPNOW_LMK` and `CMD_INTEGRITY_KEY` are compile-time
+constants committed to `rlc_config.h`, and the repository is **public on
+GitHub**. Anyone who reads the repo holds the keys.
+
+FSD §6.2.1 calls ESP-NOW's AES-128-CCM "the system's **primary security boundary
+against external adversaries**". With the PMK/LMK public, that boundary does not
+exist against anyone who has seen the source. The same applies to the
+application-layer CRC32 integrity check (§6.2.2), which is keyed with the
+equally public `CMD_INTEGRITY_KEY` — it still detects accidental corruption, but
+it does not detect forgery.
+
+Of the three communication-security layers, only the third survives:
+
+| Layer | FSD | Status with public keys |
+|---|---|---|
+| AES-128-CCM encryption (ESP-NOW) | §6.2.1 | **Ineffective** — PMK/LMK are public |
+| CRC32-C integrity with pre-shared key | §6.2.2 | **Ineffective against forgery**; still catches corruption |
+| Replay protection (session token + sequence) | §6.2.2 | **Effective** — the token is random per link-up, not compile-time |
+
+Note the residual protection is meaningful: a random session token is generated
+at each link-up, so a captured frame cannot simply be replayed into a later
+session. The gap is *forgery* by someone who has read the repository, not replay.
+
+**Also inaccurate:** FSD §6.2.1 says the PMK is "stored in `protocol_config.h`".
+No such file exists — all three keys live in
+`components/rlc_common/include/rlc_config.h`.
+
+**Not a bench problem.** This has no effect on bench testing or on the current
+test backlog. It matters before any field use where an adversary is in the
+threat model.
+
+**Fix (deferred — keys to be rotated later).** Options, roughly in order of
+effort:
+
+1. **Rotate the keys and keep them out of the repo.** Move the three constants
+   to an untracked header (e.g. `rlc_secrets.h`, git-ignored) with a checked-in
+   `rlc_secrets.h.example`. Cheapest change that closes the exposure; still
+   requires recompiling and reflashing both units to change keys, per §6.2.1.
+2. **NVS provisioning.** Store the keys in NVS, written once per unit at
+   provisioning time. FSD v1.8 recorded compile-time keys as a known limitation
+   and v1.14 explicitly walked that back ("compile-time keys are acceptable") —
+   that judgement was made before the repository was public and should be
+   revisited.
+
+Rotating alone is not sufficient while the keys remain in tracked files: git
+history preserves every previous value, so a rotated key committed to the repo
+is public the moment it is pushed.
+
+---
+
 ## Phase 5 — Hardening and Final Testing
 
 **FSD ref:** §4.3 Phase 5, §15 (Test Requirements)
@@ -1069,6 +1121,7 @@ channels 4-8 are blocked by bug #19 (dead pixel at channel 4).
 | 5 | Edge case testing (rapid toggling, button mashing, power cycling) | §15 | TODO |
 | 6 | Documentation: build instructions, flash procedure, wiring diagram | §4.3 | TODO |
 | 7 | Final version number setting | §4.3 | TODO |
+| 8 | Rotate ESP-NOW/integrity keys and move them out of the tracked repo (bug #20) | §6.2.1, §6.2.2 | TODO |
 
 ### Phase 5 FSD Safety Tests (§15.4)
 

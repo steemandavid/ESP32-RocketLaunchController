@@ -1,5 +1,65 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-19 (merge) — Branch merged to main; bug #20 raised
+
+### Merged to main
+
+`docs/fsd-v1.16-accuracy-corrections` merged into `main` with `--no-ff`
+(`acb8bb5`) and pushed. It was a pure fast-forward situation — `main`'s tip was
+the merge base, so no commits existed on `main` that weren't on the branch and
+no conflict was possible. The merge commit exists to summarise 17 commits whose
+branch name had long since stopped describing them.
+
+`main` now carries Phase 4's display, the LED igniter strip, the bug #18 channel
+gate, the host test suite, `tools/strip-diag`, and FSD v1.15→v1.19. The public
+repository has a README on its front page for the first time.
+
+### Caught during the merge — test runner was not executable
+
+`tests/host/run.sh` was committed as mode **644**. It ran fine in-session
+because the working copy had been `chmod +x`'d, but the bit was never recorded,
+so `./tests/host/run.sh` — the exact command the README documents — would fail
+on a fresh clone. Fixed in `3d0fe86` via `git update-index --chmod=+x`, and
+verified by cloning `main` into a temp directory and running the suite there:
+30 checks × 2 orientations, 0 failures.
+
+(`tools/test_tr04.py` is also 644, but appears to be invoked as
+`python3 tools/test_tr04.py`, so it was left alone.)
+
+### Bug #20 — shipped crypto keys are public (OPEN, deferred by decision)
+
+`ESPNOW_PMK`, `ESPNOW_LMK` and `CMD_INTEGRITY_KEY` are compile-time constants in
+`rlc_config.h`, and the repository is public. They were already on `main` before
+the merge, so nothing was newly exposed — but FSD §6.2.1 calls AES-128-CCM "the
+system's primary security boundary against external adversaries", and that claim
+does not hold when the keys are readable.
+
+| Layer | FSD | Status |
+|---|---|---|
+| AES-128-CCM (ESP-NOW) | §6.2.1 | Ineffective — keys public |
+| CRC32-C integrity, pre-shared key | §6.2.2 | Ineffective against forgery; still catches corruption |
+| Replay protection (session token + sequence) | §6.2.2 | **Effective** — token is random per link-up |
+
+No effect on bench testing. **Keys to be rotated later** — user's decision.
+Recorded that rotation alone is insufficient while the keys live in tracked
+files, since git history preserves superseded values; they need to move to an
+untracked header or NVS provisioning. Note FSD v1.14 explicitly accepted
+compile-time keys, a judgement made before the repo was public and worth
+revisiting.
+
+Also corrected: §6.2.1 cited `protocol_config.h` as the key location. No such
+file exists — the keys are in `components/rlc_common/include/rlc_config.h`.
+
+### Documentation
+
+- FSD **v1.20**: bug #20 note in §6.2.1, key-location correction, revision row.
+- `Development_Progress.md`: full bug #20 record with fix options, plus a new
+  Phase 5 development task for the key rotation.
+- `README.md`: bug #20 added to the known-open-items list.
+- `RLC_Project_Summary.md`: the club-facing letter listed the three
+  communication-security layers without qualification. Added an honest caveat —
+  overstating the security to club members would be worse than the bug.
+
 ## 2026-08-19 (bench) — Strip bring-up: orientation is per unit, and bug #19
 
 Bringing the new strip rendering up on real hardware turned up two separate

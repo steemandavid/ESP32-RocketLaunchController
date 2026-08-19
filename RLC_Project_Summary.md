@@ -74,6 +74,15 @@ The wireless link between the two units is protected by three independent layers
 2. **Application-layer CRC32-C integrity check** with a compile-time key — detects corrupted or forged messages.
 3. **Replay protection** using monotonically increasing sequence numbers and a random session token generated at each link-up — prevents replaying a previously captured "fire" command.
 
+**One honest caveat on the above.** The project is developed in the open, and
+the keys for layers 1 and 2 are currently in the public source repository. Until
+they are rotated and kept out of the repo, those two layers protect against
+accidental interference and casual radio traffic, but not against someone who
+has read the source. Layer 3 is unaffected — its session token is generated
+randomly at each link-up, so a captured command cannot be replayed later. This
+is tracked and will be fixed before the system is used in the field; I mention
+it because overstating the security would be worse than fixing it quietly.
+
 Firmware version mismatch between the two units also prevents operation — both must run the same version.
 
 ---
