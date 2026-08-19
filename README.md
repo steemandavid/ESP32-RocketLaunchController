@@ -66,6 +66,7 @@ link is refused.
 | `components/rlc_base/` | Base FSM, relays, continuity, key/arm sense, siren |
 | `components/rlc_remote/` | Remote FSM, encoder, fire button, arm switch, buzzer, ILI9488 display |
 | `rlc-hw-test-base/`, `rlc-hw-test-remote/` | Standalone hardware bring-up firmware with a serial CLI |
+| `tests/host/` | Host-compiled unit tests — `./tests/host/run.sh`, no hardware needed |
 | `tools/` | Small bench utilities (GPIO blink, LED finder, test scripts) |
 | `archive/` | Superseded specification revisions |
 
@@ -106,14 +107,19 @@ distinct shapes as well as colours, so the grid stays readable regardless of
 colour vision. No text is drawn smaller than 12×16 px per character — anything
 smaller proved unreadable at arm's length in the field.
 
-The base carries an 8-pixel NeoPixel strip, one pixel per igniter channel,
-showing the same continuity colours as the remote's grid: both resolve them
-from the `RLC_COLOR_CONT_*` constants in `rlc_config.h`, written as HTML
-`0xRRGGBB` values, so restyling both units is a one-line change. The strip
-doubles as a link-quality bar while booting and keeps igniter status visible
-(dimmed) between flashes of the error pattern. The armed and firing patterns
-are deliberately left as whole-strip red, so the "pad is live" signal is never
-diluted into a data display.
+Both units carry an 8-pixel NeoPixel strip, one pixel per igniter channel,
+showing the same continuity colours as the remote's grid: all three resolve
+them from the `RLC_COLOR_CONT_*` constants in `rlc_config.h`, written as HTML
+`0xRRGGBB` values, so restyling everything is a one-line change.
+
+The strip is an igniter display first: system status *modulates* the channel
+map rather than replacing it. Alarms — link lost, battery low, arm-sense fault
+— appear as a brief full-strip colour wink every few seconds, so the map stays
+readable while the warning stays unmissable, and concurrent alarms alternate
+colours. On the remote, whose map arrives over the air rather than from local
+sensing, the whole map dims when the cached data goes stale: last known, not
+live. The armed and firing patterns are deliberately left as whole-strip red,
+so the "pad is live" signal is never diluted into a data display.
 
 ## Status
 
@@ -154,8 +160,8 @@ Known open items before any field use:
 
 ESP32-S3-DevKitC-1 (ESP32-S3-WROOM-1 N16R8) on both units. Base: 3S 5000 mAh
 LiPo, 8 relay channels, key switch, arm relay with feedback sense, siren, 8-pixel
-status LED. Remote: 2S 2200 mAh LiPo, rotary encoder, arm switch, fire button,
-buzzer, ILI9488 480×320 SPI display, single status LED. Pin assignments are in
+status strip. Remote: 2S 2200 mAh LiPo, rotary encoder, arm switch, fire button,
+buzzer, ILI9488 480×320 SPI display, 8-pixel status strip. Pin assignments are in
 `components/rlc_common/include/pin_config.h` and FSD §5.
 
 ## License

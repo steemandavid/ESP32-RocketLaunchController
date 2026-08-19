@@ -135,25 +135,12 @@ static void set_state(rlc_link_state_t st)
     rlc_link_state_t prev = s_state;
     s_state = st;
 
-    switch (st) {
-        case RLC_LINK_STATE_BOOT:
-            rlc_rgb_led_set_pattern(LED_PATTERN_BOOT);
-            break;
-        case RLC_LINK_STATE_WAITING:
-            rlc_rgb_led_set_pattern(LED_PATTERN_BOOT);  /* base: still in BOOT pulse */
-            break;
-        case RLC_LINK_STATE_LINKING:
-            rlc_rgb_led_set_pattern(LED_PATTERN_BOOT);  /* remote: boot-like pulse */
-            break;
-        case RLC_LINK_STATE_LINKED:
-            rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
-            break;
-        case RLC_LINK_STATE_LOST:
-            rlc_rgb_led_set_pattern(LED_PATTERN_LINK_LOST);
-            break;
-        case RLC_LINK_STATE_VERSION_MISMATCH:
-            rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-            break;
+    /* The strip is an igniter display: link state is signalled by the amber
+     * alarm wink over the channel map (fed from the housekeeping loops), not
+     * by taking the whole strip. Only a version mismatch — which halts the
+     * unit — claims it outright. */
+    if (st == RLC_LINK_STATE_VERSION_MISMATCH) {
+        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
     }
 
     /* Phase 3: Notify FSM of link state transitions. */
@@ -663,8 +650,10 @@ static void tick_remote(void)
         s_missed_pings++;
         ESP_LOGW(TAG, "PING miss %u", s_missed_pings);
 
-        /* FSD §11.2 / §6.4.2: brief orange overlay (250 ms). Colour (255,100,0). */
-        rlc_rgb_led_flash_overlay(255, 100, 0, 250);
+        /* FSD §6.4.2: the buzzer beep remains the per-miss indicator. The
+         * former 250 ms whole-strip orange flash is gone — it wiped the
+         * continuity map and blocked the LED task. RSSI and ping RTT are on
+         * the remote display; sustained failures raise the link alarm wink. */
 
         /* Phase 3: Track ping failure in health window. */
         s_ping_window[s_ping_window_idx] = false;

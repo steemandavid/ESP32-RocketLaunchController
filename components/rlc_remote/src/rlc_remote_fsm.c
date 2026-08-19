@@ -302,7 +302,7 @@ static void do_enter_idle(void)
     s_armed_channel = 0;
     s_fire_repeat_active = false;
     s_prefire_start_ms = 0;
-    rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+    rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
     ESP_LOGI(TAG, "-> IDLE");
     s_state = STATE_IDLE;
 }
@@ -315,7 +315,7 @@ static void do_disarm_and_idle(void)
     }
     s_armed_channel = 0;
     s_prefire_start_ms = 0;
-    rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+    rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
     buzzer_play(BUZZER_BEEP_LONG);
     ESP_LOGI(TAG, "DISARMED -> IDLE");
     s_state = STATE_IDLE;
@@ -327,7 +327,7 @@ static void do_enter_link_lost(void)
     s_armed_channel = 0;
     s_prefire_start_ms = 0;
     buzzer_play(BUZZER_ALARM_LINK_LOST);
-    rlc_rgb_led_set_pattern(LED_PATTERN_LINK_LOST);
+    rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
     ESP_LOGI(TAG, "-> LINK_LOST");
     s_state = STATE_LINK_LOST;
 }
@@ -627,7 +627,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 !(armed_mask & (1U << (s_armed_channel - 1)))) {
                 ESP_LOGW(TAG, "STATUS_UPDATE shows base disarmed");
                 s_armed_channel = 0;
-                rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+                rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
                 buzzer_play(BUZZER_BEEP_LONG);
                 s_state = STATE_IDLE;
             }
@@ -719,7 +719,7 @@ static void process_event(const rlc_fsm_event_t *evt)
     case STATE_LINK_LOST:
         if (evt->type == EVT_LINK_RECOVERED) {
             buzzer_stop();
-            rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
             ESP_LOGI(TAG, "LINK_LOST -> IDLE (recovered)");
             s_state = STATE_IDLE;
         }

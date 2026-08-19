@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.17 (2026-08-17)
+**Spec:** RLC-FSPEC-001 v1.18 (2026-08-19)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -825,11 +825,14 @@ Supporting changes:
 - FSM display hooks: NACK overlays, "TURN ARM KEY FIRST" and other local
   rejection toasts, multi-arm error screen, fire-complete screen.
 
-### Base 8-Pixel Status Strip (2026-08-19)
+### 8-Pixel Igniter Status Strip — Both Units (2026-08-19, revised)
 
-An 8-way NeoPixel strip is wired to the base's `PIN_RGB_LED` (GPIO 48), sharing
-the data line with the DevKit's built-in NeoPixel — so the built-in LED mirrors
-pixel 0 (channel 1). One pixel per igniter channel.
+An 8-way NeoPixel strip is wired to `PIN_RGB_LED` (GPIO 48) on **both** units,
+one pixel per igniter channel. Each DevKit's built-in NeoPixel sits in parallel
+on the same data line (confirmed on the bench) and so mirrors pixel 0. Data-in
+is at the **channel-8 end** on both strips, so channel N is pixel `7-(N-1)` and
+the built-in LED shows **channel 8**. The built-in LEDs no longer carry any
+independent meaning — the old link/boot indication is gone.
 
 | Continuity | Colour | Constant |
 |---|---|---|
@@ -838,30 +841,69 @@ pixel 0 (channel 1). One pixel per igniter channel.
 | OPEN | yellow `#FFFF00` | `RLC_COLOR_CONT_OPEN` |
 | SHORT | red `#FF0000` | `RLC_COLOR_CONT_SHORT` |
 
-The constants live in `rlc_config.h` as HTML `0xRRGGBB` values and are the
-**single source of truth for both units** — the remote display's channel grid
-resolves its colours from the same macros, so pad and handheld always agree.
+The constants live in `rlc_config.h` and are the **single source of truth for
+both units** — the remote display's channel grid resolves its colours from the
+same macros, so pad, handheld strip and handheld screen always agree.
 
 **Deviation from FSD §10.2.0**, which specifies blue for GOOD, red for OPEN and
 orange for SHORT, with blue chosen deliberately to avoid red-green ambiguity for
 colour-blind operators. The requested palette pairs green (good) with red
 (short) and moves red off OPEN. The display's shape coding (filled circle /
 triangle / ring / diamond) still carries the meaning without colour, and the
-palette is now a one-line config change. FSD §10.2.0 should be updated to match.
+palette is a one-line config change. FSD §10.2.0 should be updated to match.
 
-Strip behaviour by pattern:
+#### Rendering layers (FSD §11.1)
 
-| Pattern | Strip |
-|---|---|
-| `IDLE` | Channel map (base only; remote's single pixel stays solid green) |
-| `IDLE_ARM_ON` | Channel map breathing 100 %/25 % — status stays readable while the key-ON warning is obvious |
-| `BOOT`/`LINKING` | RSSI bar once the peer is heard (green ≥ −60, amber ≥ −80, red below); blue pulse until then |
-| `ERROR` | Red triple flash unchanged, with the channel map dimmed to 20 % during the 700 ms gap |
-| `ARMED`, `PRE_FIRE`, `FIRING` | **Unchanged** — whole-strip red patterns per FSD §11; the firing-path signal stays unmistakable |
+The strip is an **igniter continuity display**; system status modulates the map
+rather than replacing it. Highest active layer wins:
 
-Data is fed from the base housekeeping loop (100 ms) via
-`rlc_rgb_led_set_channel_bands()` / `set_active_channel()` / `set_rssi()`,
-deliberately not from the FSM, so the fire path is untouched.
+| # | Layer | Rendering |
+|---|---|---|
+| 1 | `ARMED` / `PRE_FIRE` / `FIRING` | Whole strip red — **unchanged**, the firing signal stays unmistakable |
+| 2 | `ERROR` | Red triple flash; map dimmed to 20 % in the 700 ms gap |
+| 3 | Alarm wink | 300 ms full-strip flash every 3 s; concurrent alarms alternate colours |
+| 4 | Stale (remote only) | Whole map dimmed to 10 % — cached STATUS_UPDATE has aged out |
+| 5 | Breathing | Base: whole map, key switch ON. Remote: selected channel, arm switch ON |
+| 6 | Channel map | Continuity; channel of interest pulses (base: armed/firing, remote: cursor) |
+
+`BOOT`, `LINKING`, `IDLE`, `LINK_LOST` and `POST_FIRE` all render as layer 6.
+Before the first continuity data arrives, a cyan chase runs instead. Alarm
+colours: link lost = amber, battery = magenta, arm-sense fault = white — none of
+which can be confused with a continuity colour.
+
+#### What was removed
+
+- The boot-time **RSSI bar** and blue boot pulse (`set_rssi()`, `led_show_rssi_bar()`).
+- Whole-strip `IDLE` green, `LINK_LOST` amber and `POST_FIRE` amber.
+- The 250 ms whole-strip **orange ping-miss flash** (`flash_overlay()`), which
+  wiped the map and blocked the LED task; the 80 ms buzzer beep remains.
+- Dead code: `LED_PATTERN_CHANNEL_STATUS`, `LED_PATTERN_PING_FAIL`,
+  `rlc_rgb_led_set_state()` — none were ever called.
+- `LED_PATTERN_IDLE_ARM_ON` was documented but never set by the FSM; the key-ON
+  warning is now a feed (`set_key_warning()`) rather than a pattern.
+
+#### Architecture
+
+`rlc_rgb_led.c` is now **unit-agnostic**: one layer resolver, both units, only
+the feeds differ. All feeds (`set_channel_bands`, `set_active_channel`,
+`set_alarms`, `set_stale`, `set_key_warning`) are published from each unit's
+**housekeeping loop** at 10 Hz — deliberately not from the FSM, so the fire path
+is untouched. The FSMs set only the firing-path and ERROR patterns. Animation
+phase derives from `esp_timer_get_time()`, so patterns are stable across frame
+jitter.
+
+The remote's map comes from the cached STATUS_UPDATE (`remote_fsm_get_status()`,
+which returns a freshness flag) rather than local sensing — the one genuine
+asymmetry between the units, and the reason layer 4 exists. Dim means "the data
+is old"; a wink means "something is wrong". The two compose.
+
+#### Host tests
+
+`./tests/host/run.sh` compiles `tests/host/test_strip.c`, which includes
+`rlc_rgb_led.c` directly and links it against mock `led_strip` / FreeRTOS /
+`esp_timer` headers, capturing every emitted pixel. **30 checks, 0 failures**
+covering T-L01…T-L09 (FSD §15.5). This is the project's first host-compiled
+test suite.
 
 ### Display Legibility — Minimum Font Size (2026-08-19)
 
@@ -917,6 +959,42 @@ cycle required. A reading of **0 mV means the divider is unfed**, not a flat
 pack: USB power alone does not energise the VBAT sense. Note the divider is
 sized for 8.4 V full scale; feeding the battery input from a 12 V+ supply puts
 >4.5 V on GPIO 1, above the 3.3 V absolute maximum (bug #18 failure class).
+
+### LED Strip Tests (2026-08-19)
+
+Host renderer tests — `./tests/host/run.sh`, 30 checks, all passing:
+
+| ID | Test | Status |
+|----|------|--------|
+| T-L01 | Channel → pixel mapping (reversed: ch1=pixel7, ch8=pixel0) | PASS |
+| T-L02 | Continuity map colours on the correct pixels | PASS |
+| T-L03 | Cyan boot chase before any continuity data | PASS |
+| T-L04 | Alarm wink timing; map restored between winks | PASS |
+| T-L05 | Concurrent alarms alternate colours across winks | PASS |
+| T-L06 | Stale flag dims map to 10 %, clears cleanly | PASS |
+| T-L07 | Cursor pulse on the channel of interest only | PASS |
+| T-L08 | Key warning: whole map (base) vs cursor only (remote) | PASS |
+| T-L09 | Stale dim and cursor pulse compose | PASS |
+
+On-target, both units flashed and running:
+
+| ID | Test | Status | Notes |
+|----|------|--------|-------|
+| T-L10 | Both units build with no warnings | PASS | |
+| T-L11 | Base boots, links, no watchdog trips | PASS | rssi −34 dBm, vbat 11618 mV, key ON, cont=0x0000 |
+| T-L12 | Remote boots, links, no watchdog trips | PASS | rssi −42 dBm, vbat 5740 mV, arm switch ON, sel=1 |
+| T-L13 | Link-loss alarm path: remote held in reset | PASS | Base detected loss in 1.5 s, held LINK_LOST 25 s, recovered to IDLE cleanly |
+| T-L14 | Strip colours match the map **by eye** | TODO | Needs the operator to look at the strip |
+| T-L15 | Continuity change moves the right pixel | TODO | Needs a resistor on a known channel |
+| T-L16 | Alarm wink legible at arm's length in daylight | TODO | May drive a brightness change |
+| T-L17 | Remote cursor pulse follows the encoder | TODO | |
+
+**Expected strip state at the end of this session** (from the logs, unverified
+by eye): both units show **all 8 pixels yellow** (cont=0x0000, every channel
+OPEN — nothing connected). The base map **breathes** at 250 ms because the key
+switch is ON with nothing armed; the remote breathes **channel 1 only** because
+its arm switch is ON and channel 1 is selected. No alarm winks — both linked,
+both packs above their arming floors, no relay fault.
 
 ### Phase 4 On-Target Tests (pending)
 

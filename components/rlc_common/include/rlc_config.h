@@ -89,9 +89,9 @@
 
 /* ── Status Colours (HTML #RRGGBB) ────────────────────────────── */
 
-/* Igniter continuity status. These drive BOTH the base unit's 8-pixel
- * NeoPixel strip (one pixel per channel) and the remote display's channel
- * grid, so the two always agree. Edit here to restyle both.
+/* Igniter continuity status. These drive the 8-pixel NeoPixel strip on BOTH
+ * units (one pixel per channel) and the remote display's channel grid, so
+ * pad and handheld always agree. Edit here to restyle all three.
  *
  * NOTE: this palette (green/red) deviates from FSD §10.2.0, which specifies
  * blue for GOOD to avoid red-green ambiguity for colour-blind operators.
@@ -102,10 +102,14 @@
 #define RLC_COLOR_CONT_OPEN        0xFFFF00   /* yellow     — >500 Ω or no igniter */
 #define RLC_COLOR_CONT_SHORT       0xFF0000   /* red        — <0.5 Ω, wiring fault */
 
-/* Link-quality bar shown on the strip while the base is booting/linking */
-#define RLC_COLOR_RSSI_STRONG      0x00FF00   /* >= -60 dBm */
-#define RLC_COLOR_RSSI_FAIR        0xFFA000   /* -60..-80 dBm */
-#define RLC_COLOR_RSSI_WEAK        0xFF0000   /* < -80 dBm */
+/* Alarm-wink colours. Deliberately chosen to be unmistakable for any
+ * continuity colour above, so a wink can never be read as a channel state. */
+#define RLC_COLOR_ALARM_LINK       0xFFB400   /* amber   — link lost */
+#define RLC_COLOR_ALARM_BATT       0xFF00FF   /* magenta — battery low/critical */
+#define RLC_COLOR_ALARM_FAULT      0xFFFFFF   /* white   — arm-sense fault */
+
+/* Shown as a left-to-right chase before the first continuity sweep is valid */
+#define RLC_COLOR_STRIP_BOOT       0x00FFFF   /* cyan */
 
 /* Unpack an 0xRRGGBB constant */
 #define RLC_COLOR_R(c)  ((uint8_t)(((c) >> 16) & 0xFF))
@@ -158,7 +162,35 @@
 /* ── RGB LED ──────────────────────────────────────────────────── */
 
 #define RGB_LED_GPIO               48
-#define RGB_LED_BRIGHTNESS         30   /* 0–255 */
+
+/* Master brightness, 0–255. Split per unit: the pad strip may need to be
+ * brighter for daylight visibility, while the handheld runs off a smaller
+ * 2S pack. 8 pixels draw roughly 55 mA at 30/255, scaling linearly. */
+#define RGB_LED_BRIGHTNESS_BASE    30
+#define RGB_LED_BRIGHTNESS_REMOTE  30
+
+/* Strip data-in is at the channel-8 end on BOTH units, so channel N lives at
+ * pixel index 7-(N-1). Pixel 0 is therefore channel 8 — and since the DevKit's
+ * on-board LED sits in parallel on the same data line, the on-board LED
+ * mirrors channel 8. Set to 0 if a strip is ever rewired DIN-at-channel-1. */
+#define RLC_STRIP_REVERSED         1
+
+/* Alarm wink: a brief full-strip flash over the continuity map, so igniter
+ * status stays readable while the alarm stays unmissable. */
+#define RLC_STRIP_ALARM_WINK_MS    300
+#define RLC_STRIP_ALARM_PERIOD_MS  3000
+
+/* Dim/pulse depths, percent of RGB_LED_BRIGHTNESS_* */
+#define RLC_STRIP_STALE_DIM_PCT    10   /* remote: cached STATUS_UPDATE is stale */
+#define RLC_STRIP_ERROR_DIM_PCT    20   /* map during the ERROR flash gap */
+#define RLC_STRIP_BREATHE_LOW_PCT  25   /* key-ON / arm-ready breathing trough */
+#define RLC_STRIP_CURSOR_LOW_PCT   40   /* remote channel-cursor pulse trough */
+
+/* Animation periods */
+#define RLC_STRIP_BREATHE_MS       250
+#define RLC_STRIP_CURSOR_MS        500
+#define RLC_STRIP_CHASE_MS         120  /* boot chase step */
+#define RLC_STRIP_FRAME_MS         50   /* led_task tick */
 
 /* ── Display Configuration (Remote only) ──────────────────────── */
 

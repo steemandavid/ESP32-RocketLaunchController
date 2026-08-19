@@ -1,0 +1,27 @@
+#!/bin/bash
+# Host-compiled unit tests (FSD §15.5). No hardware required.
+#
+#   ./tests/host/run.sh
+#
+# test_strip.c includes components/rlc_common/src/rlc_rgb_led.c directly and
+# links it against mock led_strip / FreeRTOS / esp_timer headers in stubs/,
+# so the real rendering functions are exercised and every emitted pixel is
+# captured and asserted.
+
+set -euo pipefail
+cd "$(dirname "$0")"
+ROOT="$(cd ../.. && pwd)"
+OUT="$(mktemp -d)"
+trap 'rm -rf "$OUT"' EXIT
+
+fail=0
+for t in test_*.c; do
+    bin="$OUT/${t%.c}"
+    gcc -std=c11 -Wall -Wextra -Wno-unused-variable \
+        -I stubs \
+        -I "$ROOT/components/rlc_common/include" \
+        -I "$ROOT/components/rlc_common/src" \
+        "$t" -o "$bin"
+    "$bin" || fail=1
+done
+exit $fail

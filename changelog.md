@@ -1,5 +1,105 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-19 (later) — LED strip becomes an igniter status display, both units
+
+The 8-way NeoPixel strip did not reflect igniter status: only one pixel lit,
+and the built-in LED still carried its old link-status job. Root cause of the
+symptom was simply that the base was running a pre-`8ad4a6f` binary, where
+`s_pixel_count` stays 1 and pixels 1–7 never receive data. The design problem
+underneath was real, though: continuity was only ever visible in `IDLE`, and
+every other state painted all 8 pixels a single colour.
+
+### Design
+
+The strip is now an **igniter continuity display on both units**. System status
+*modulates* the channel map rather than replacing it. Six rendering layers,
+highest first:
+
+| # | Layer | Rendering |
+|---|---|---|
+| 1 | `ARMED`/`PRE_FIRE`/`FIRING` | Whole strip red — unchanged |
+| 2 | `ERROR` | Red triple flash, map dimmed 20 % in the gap |
+| 3 | Alarm wink | 300 ms full-strip flash every 3 s; concurrent alarms alternate |
+| 4 | Stale (remote) | Whole map dimmed to 10 % |
+| 5 | Breathing | Base: whole map on key ON. Remote: cursor channel on arm switch ON |
+| 6 | Channel map | Continuity; channel of interest pulses |
+
+`BOOT`, `LINKING`, `IDLE`, `LINK_LOST` and `POST_FIRE` all fall through to
+layer 6. Cyan chase before the first continuity data. Alarm colours — amber
+(link), magenta (battery), white (arm fault) — cannot be confused with any
+continuity colour.
+
+Layers 3 and 4 compose deliberately: STATUS_UPDATE can be late while the link
+is healthy, so dim means "old data" and a wink means "something is wrong".
+
+### Hardware facts pinned down
+
+Data-in is at the **channel-8 end on both strips**, so channel N is pixel
+`7-(N-1)` (`RLC_STRIP_REVERSED`). The built-in NeoPixel is in **parallel**
+(confirmed on the bench — built-in and channel-8 pixel lit together on the
+remote), so it mirrors pixel 0 = channel 8 and now carries no meaning of its own.
+
+### Removed
+
+- Boot-time RSSI bar and blue boot pulse (`set_rssi()`, `led_show_rssi_bar()`).
+- Whole-strip `IDLE` green, `LINK_LOST` amber, `POST_FIRE` amber.
+- The 250 ms whole-strip orange ping-miss flash (`flash_overlay()`) — it wiped
+  the map and blocked the LED task 250 ms per miss. The 80 ms buzzer beep stays.
+- Dead code never called by anything: `LED_PATTERN_CHANNEL_STATUS`,
+  `LED_PATTERN_PING_FAIL`, `rlc_rgb_led_set_state()`.
+- `LED_PATTERN_IDLE_ARM_ON` was documented but never set; the key-ON warning is
+  now a feed rather than a pattern.
+
+### Architecture
+
+`rlc_rgb_led.c` is unit-agnostic — one layer resolver, both units, only the
+feeds differ. All feeds are published from each unit's housekeeping loop at
+10 Hz, never from an FSM, so the fire path is untouched; the FSMs set only the
+firing-path and ERROR patterns. Animation phase derives from
+`esp_timer_get_time()` rather than a frame counter, so patterns are stable
+across scheduling jitter. Feed globals are now `volatile`.
+
+The remote's map comes from the cached STATUS_UPDATE via
+`remote_fsm_get_status()`, which already returned a freshness flag — the one
+genuine asymmetry between the units, and the reason layer 4 exists.
+
+### Tests
+
+**First host-compiled test suite in this project.** `./tests/host/run.sh`
+compiles `tests/host/test_strip.c`, which includes `rlc_rgb_led.c` directly and
+links it against mock `led_strip` / FreeRTOS / `esp_timer` headers, capturing
+and asserting every emitted pixel. **30 checks, 0 failures** — T-L01…T-L09
+(FSD §15.5).
+
+On target, both units flashed:
+
+- Base boots and links, no watchdog trips — rssi −34 dBm, vbat 11618 mV.
+- Remote boots and links, no watchdog trips — rssi −42 dBm, vbat 5740 mV.
+- Link-loss alarm path exercised by holding the remote in reset: base detected
+  loss in 1.5 s, held LINK_LOST for 25 s, recovered to IDLE cleanly.
+
+### Docs
+
+FSD bumped to **v1.18**: §11 fully rewritten, §5.5.8 changed materially (the
+remote now has an external strip, not just the on-board LED), §5.4.11 pixel
+order, §7.1/§8.1 state tables, §6.4.2 missed-ping action, §14.1 constants,
+§15.5 T-L01…T-L09. README and Development_Progress updated.
+
+### Not done / follow-ups
+
+- **T-L14…T-L17 need eyes on the strip**: colours by eye, a continuity change
+  moving the right pixel, daylight legibility of the wink, and the remote cursor
+  following the encoder. Everything testable without the operator is green.
+- Expected state right now, from the logs: **all 8 pixels yellow** on both units
+  (cont=0x0000, nothing connected); base map breathing (key ON), remote breathing
+  channel 1 only. No winks — both linked, both packs above their arming floors.
+- The FSD §7 **remote-battery arming guard / NACK 0x0C** was deliberately left
+  out of scope; it is an arming-guard fix, not an LED fix. Still open.
+- Remote pack read **5740 mV**. That is above the *bench* `REMOTE_VBAT_MIN_ARM_MV`
+  of 3200 so no alarm fires, but it is well under the FSD §5.6.2 production value
+  of 7000 — with production thresholds restored this would alarm and block arming.
+  Worth checking whether that pack is over-discharged.
+
 ## 2026-08-19 — Phase 4: remote display implementation (FSD §10)
 
 Built the remote unit's display functionality end to end, deliberately kept

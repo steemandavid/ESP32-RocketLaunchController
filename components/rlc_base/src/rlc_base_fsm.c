@@ -177,7 +177,7 @@ static void do_disarm(void)
     s_prefire_start_ms = 0;
     s_last_fire_cmd_ms = 0;     /* J2: clear dead-man timestamp on disarm */
     s_link_lost_pending = false;
-    rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+    rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
     status_update_trigger();
     ESP_LOGI(TAG, "DISARMED -> IDLE");
     s_state = STATE_IDLE;
@@ -193,7 +193,7 @@ static void do_enter_link_lost(void)
     s_prefire_start_ms = 0;
     s_last_fire_cmd_ms = 0;     /* J2 */
     s_link_lost_pending = false;
-    rlc_rgb_led_set_pattern(LED_PATTERN_LINK_LOST);
+    rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
     status_update_trigger();
     ESP_LOGI(TAG, "-> LINK_LOST");
     s_state = STATE_LINK_LOST;
@@ -297,7 +297,7 @@ static void process_event(const rlc_fsm_event_t *evt)
         if (evt->type == EVT_LINK_ESTABLISHED) {
             ESP_LOGI(TAG, "BOOT -> IDLE (link established)");
             s_state = STATE_IDLE;
-            rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
             status_update_trigger();
         }
         break;
@@ -485,13 +485,13 @@ static void process_event(const rlc_fsm_event_t *evt)
             if (s_link_lost_pending) {
                 s_link_lost_pending = false;
                 siren_start_link_lost();
-                rlc_rgb_led_set_pattern(LED_PATTERN_LINK_LOST);
+                rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
                 status_update_trigger();
                 ESP_LOGI(TAG, "FIRING -> LINK_LOST (pulse completed, link was lost)");
                 s_state = STATE_LINK_LOST;
             } else {
                 s_postfire_start_ms = now_ms();
-                rlc_rgb_led_set_pattern(LED_PATTERN_POST_FIRE);
+                rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
                 status_update_trigger();
                 ESP_LOGI(TAG, "FIRING -> POST_FIRE");
                 s_state = STATE_POST_FIRE;
@@ -505,7 +505,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             s_armed_channel = 0;
             s_link_lost_pending = false;
             send_ack(MSG_CMD_CEASE_FIRE, evt->data.cmd.seq_number, 0);
-            rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
             status_update_trigger();
             ESP_LOGI(TAG, "FIRING -> IDLE (CEASE_FIRE)");
             s_state = STATE_IDLE;
@@ -518,7 +518,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             s_firing_channel = 0;
             s_armed_channel = 0;
             s_link_lost_pending = false;
-            rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
             status_update_trigger();
             ESP_LOGW(TAG, "FIRING -> IDLE (arm sense lost)");
             s_state = STATE_IDLE;
@@ -531,7 +531,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             s_firing_channel = 0;
             s_armed_channel = 0;
             s_link_lost_pending = false;
-            rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
             status_update_trigger();
             ESP_LOGW(TAG, "FIRING -> IDLE (key switch OFF)");
             s_state = STATE_IDLE;
@@ -548,7 +548,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             s_armed_channel = 0;
             s_link_lost_pending = false;
             send_ack(MSG_CMD_DISARM, evt->data.cmd.seq_number, 0);
-            rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
             status_update_trigger();
             ESP_LOGI(TAG, "FIRING -> IDLE (DISARM)");
             s_state = STATE_IDLE;
@@ -574,7 +574,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 s_firing_channel = 0;
                 s_armed_channel = 0;
                 siren_start_link_lost();
-                rlc_rgb_led_set_pattern(LED_PATTERN_LINK_LOST);
+                rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
                 status_update_trigger();
                 ESP_LOGW(TAG, "FIRING -> LINK_LOST (immediate abort, link lost)");
                 s_state = STATE_LINK_LOST;
@@ -609,7 +609,7 @@ static void process_event(const rlc_fsm_event_t *evt)
     case STATE_LINK_LOST:
         if (evt->type == EVT_LINK_RECOVERED) {
             siren_off();  /* Silence siren immediately (FSD §7.2.8) */
-            rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
             ESP_LOGI(TAG, "LINK_LOST -> IDLE (recovered)");
             s_state = STATE_IDLE;
         }
@@ -707,7 +707,7 @@ static void check_timers(void)
         /* Post-fire cooldown (FSD §7.2.7) */
         if ((t - s_postfire_start_ms) >= POST_FIRE_COOLDOWN_MS) {
             s_postfire_start_ms = 0;
-            rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
+            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
             ESP_LOGI(TAG, "POST_FIRE -> IDLE");
             s_state = STATE_IDLE;
         }

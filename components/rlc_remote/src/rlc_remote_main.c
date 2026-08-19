@@ -120,8 +120,9 @@ void remote_app_main(void)
 
     /* Visual feedback first (remote has no relays/safety GPIOs). */
     rlc_rgb_led_init();
-    rlc_rgb_led_set_pattern(LED_PATTERN_BOOT);
-    rlc_rgb_led_set_pixel_count(1);  /* Remote has single pixel */
+    rlc_rgb_led_set_pixel_count(NUM_CHANNELS);  /* 8-pixel igniter strip */
+    rlc_rgb_led_set_brightness(RGB_LED_BRIGHTNESS_REMOTE);
+    rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
 
     /* §9.13: Boot self-tests (CRC32-C, struct offsets) */
     if (rlc_selftest_run() != 0) {
@@ -218,12 +219,48 @@ void remote_app_main(void)
 
     ESP_LOGI(TAG, "remote ready — Phase 3 FSM active, waiting for link");
 
-    /* Housekeeping loop — watchdog + status log */
+    /* Housekeeping loop — watchdog + LED status feeds + status log */
     int64_t last_log_ms = 0;
+    int64_t last_led_ms = 0;
     while (1) {
         rlc_watchdog_feed();
 
         int64_t now = esp_timer_get_time() / 1000;
+
+        /* Feed the 8-pixel igniter strip at 10 Hz. The continuity map comes
+         * from the cached STATUS_UPDATE, so unlike the base it can go stale —
+         * dim it rather than let old data read as live. Fed from here, never
+         * from the FSM, to keep the fire path untouched. */
+        if (now - last_led_ms >= 100) {
+            rlc_payload_status_update_t st;
+            bool fresh = remote_fsm_get_status(&st);
+            if (fresh || st.update_sequence) {
+                rlc_rgb_led_set_channel_bands(st.continuity_bands);
+            }
+            rlc_rgb_led_set_stale(!fresh);
+            rlc_rgb_led_set_active_channel(remote_fsm_get_selected_channel());
+
+            rlc_link_status_t led_ls;
+            rlc_link_get_status(&led_ls);
+            uint16_t vbat_mv = rlc_battery_get_voltage_mv();
+
+            uint32_t alarms = 0;
+            if (led_ls.state != RLC_LINK_STATE_LINKED)   alarms |= RLC_ALARM_LINK_LOST;
+            if (vbat_mv > 0 && vbat_mv < REMOTE_VBAT_MIN_ARM_MV)
+                                                        alarms |= RLC_ALARM_BATTERY;
+            if (fresh && st.battery_voltage_mv > 0 &&
+                st.battery_voltage_mv < BASE_VBAT_MIN_ARM_MV)
+                                                        alarms |= RLC_ALARM_BATTERY;
+            if (fresh && (st.error_flags & ERR_RELAY_FAULT))
+                                                        alarms |= RLC_ALARM_ARM_FAULT;
+            rlc_rgb_led_set_alarms(alarms);
+
+            /* Arm switch on: the selected channel breathes, so the operator
+             * sees exactly which igniter the next long-press would arm. */
+            rlc_rgb_led_set_key_warning(arm_switch_is_armed());
+
+            last_led_ms = now;
+        }
         if (now - last_log_ms >= 5000) {
             rlc_link_status_t ls;
             rlc_link_get_status(&ls);
