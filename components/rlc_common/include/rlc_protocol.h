@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
 
 /* ── Protocol Version ─────────────────────────────────────────── */
 
@@ -175,6 +176,78 @@ _Static_assert(sizeof(rlc_payload_cmd_nack_t) == 6, "CMD_NACK size mismatch");
 /* ── Max message size (header + largest payload) ──────────────── */
 
 #define RLC_MSG_MAX_SIZE  (sizeof(rlc_msg_header_t) + sizeof(rlc_payload_status_update_t))
+
+/* ── Helper: human-readable error flag names ──────────────────── */
+
+/**
+ * Name of a SINGLE error flag bit. Pass one bit, not a mask.
+ * Every bit 0-7 resolves to something, so an unexpected flag is still
+ * reported rather than silently ignored.
+ */
+static inline const char *rlc_error_flag_str(uint8_t flag)
+{
+    switch (flag) {
+        case ERR_VBAT_LOW:       return "VBAT LOW";
+        case ERR_VBAT_CRITICAL:  return "VBAT CRITICAL";
+        case ERR_RELAY_FAULT:    return "RELAY FAULT";
+        case (1 << 3):           return "RESERVED BIT3";   /* freed in v1.8 */
+        case ERR_COMM_DEGRADED:  return "COMM DEGRADED";
+        case ERR_WATCHDOG_RESET: return "WATCHDOG RESET";
+        case ERR_INTERNAL:       return "INTERNAL FAULT";
+        case (1 << 7):           return "UNDEFINED BIT7";
+        default:                 return "UNKNOWN";
+    }
+}
+
+/** Number of flags set in the mask. */
+static inline int rlc_error_flags_count(uint8_t flags)
+{
+    int n = 0;
+    for (int b = 0; b < 8; b++) if (flags & (1u << b)) n++;
+    return n;
+}
+
+/**
+ * Name of the n-th set flag (0-based), or NULL when n is out of range.
+ * Lets a caller with one line of screen cycle through several flags.
+ */
+static inline const char *rlc_error_flag_nth(uint8_t flags, int n)
+{
+    for (int b = 0; b < 8; b++) {
+        if (!(flags & (1u << b))) continue;
+        if (n-- == 0) return rlc_error_flag_str((uint8_t)(1u << b));
+    }
+    return NULL;
+}
+
+/**
+ * Format every set flag into `buf` as a comma-separated list, e.g.
+ * "VBAT CRITICAL, RELAY FAULT". Writes "NONE" for an empty mask.
+ * Always NUL-terminates. Deliberately avoids stdio so this header stays
+ * dependency-light for the shared protocol layer.
+ *
+ * @return buf, for convenient use inside a log call
+ */
+static inline const char *rlc_error_flags_str(uint8_t flags, char *buf, size_t len)
+{
+    if (!buf || len == 0) return "";
+    size_t w = 0;
+    for (int b = 0; b < 8 && w + 1 < len; b++) {
+        if (!(flags & (1u << b))) continue;
+        if (w > 0) {
+            const char *sep = ", ";
+            while (*sep && w + 1 < len) buf[w++] = *sep++;
+        }
+        const char *name = rlc_error_flag_str((uint8_t)(1u << b));
+        while (*name && w + 1 < len) buf[w++] = *name++;
+    }
+    if (w == 0) {
+        const char *none = "NONE";
+        while (*none && w + 1 < len) buf[w++] = *none++;
+    }
+    buf[w] = '\0';
+    return buf;
+}
 
 /* ── Helper: human-readable NACK reason strings ───────────────── */
 

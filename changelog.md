@@ -1,5 +1,88 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-19 (evening) — Named error flags; battery calibration rig
+
+### Error flags are shown by name
+
+Prompted by a real "BASE ERROR 0x02" on the remote, which required looking up
+a bitmask in a header to learn it meant a critically low base battery.
+
+Every bit 0-7 now has a canonical name, defined once in `rlc_protocol.h`:
+
+| Bit | Flag | Name |
+|---|---|---|
+| 0 | `ERR_VBAT_LOW` | `VBAT LOW` |
+| 1 | `ERR_VBAT_CRITICAL` | `VBAT CRITICAL` |
+| 2 | `ERR_RELAY_FAULT` | `RELAY FAULT` |
+| 3 | *(reserved)* | `RESERVED BIT3` |
+| 4 | `ERR_COMM_DEGRADED` | `COMM DEGRADED` |
+| 5 | `ERR_WATCHDOG_RESET` | `WATCHDOG RESET` |
+| 6 | `ERR_INTERNAL` | `INTERNAL FAULT` |
+| 7 | *(undefined)* | `UNDEFINED BIT7` |
+
+The two meaningless bits get names too, so an unexpected flag is reported
+rather than silently dropped.
+
+The remote now shows `BASE ERROR 0x02: VBAT CRITICAL`. **Multiple flags cycle
+rather than truncate:** the line holds 40 characters at the scale-2 font floor,
+which fits one named flag, so when several are set they rotate at 2 s with an
+`(n/total)` counter — `BASE ERROR 0x06: VBAT CRITICAL (1/2)`. That is a
+documented deviation from FSD §13.2's "stacked if needed" wording; stacking
+would either truncate or breach the legibility floor. The base's UART log gains
+the full comma-separated list next to the hex.
+
+New helpers `rlc_error_flag_str()`, `rlc_error_flags_count()`,
+`rlc_error_flag_nth()` and `rlc_error_flags_str()` follow the existing
+`rlc_nack_reason_str()` convention. `rlc_error_flags_str()` avoids stdio so the
+shared protocol header stays dependency-light. Covered by a new host test file,
+T-E01…T-E07, 31 checks — including buffer-truncation safety and the 0x02 case
+that started this.
+
+### Battery divider calibration rig
+
+The measurement chain is `vbat = adc_cali_raw_to_voltage(raw) x divider_ratio`
+— **gain-only, no offset term** — with ESP-IDF curve fitting handling ADC
+non-linearity from eFuse data. Both units read GPIO 1, ADC1, 12-bit, 12 dB. The
+suspect quantities are therefore the divider ratios themselves (`4.3` base,
+`2.8` remote), which are nominal values subject to resistor tolerance.
+
+Two new pieces:
+
+- **`tools/vbat-cal/`** — capture firmware. Streams CSV at 2 Hz, averaging 64
+  samples per record, reporting **raw counts as well as calibrated mV**. That
+  separation is the point: a wrong ratio shows up as constant proportional
+  error, poor ADC calibration as curvature in the residuals; with only mV the
+  two are indistinguishable. Prints per-unit input limits in its banner.
+- **`tools/vbat_fit.py`** — host-side fitter. Detects the plateaus where a
+  supply was held at a setpoint (rejecting transition records), pairs them in
+  order with reference voltages, and fits both a gain-only and a gain+offset
+  model, reporting per-point residuals and a recommendation.
+
+**The fitter was validated against synthetic data before use**: injected a true
+ratio of 4.17 with transition noise, and it recovered 4.1704, found exactly the
+7 expected plateaus, and correctly recommended the gain-only model.
+
+Method notes agreed for the session:
+
+- Reference should be a **DMM at the board terminals**, not the PSU display —
+  supply readouts are commonly 1-2 % out, and that error would be calibrated
+  straight into the firmware.
+- Input limits, exceeding which destroys the chip: base 8.0-12.6 V sweep, never
+  above 13.0 V; remote 5.5-8.4 V sweep, never above 8.6 V. **Feeding base
+  voltages into the remote puts >4 V on a 3.3 V pin** — the bug #18 failure
+  class.
+- More points than a line strictly needs, so residuals can confirm linearity
+  and catch ADC compression near the top of the 12 dB range.
+
+### Follow-up
+
+Once calibrated, the remote's bench battery thresholds (3200/3100/3000 and
+`REMOTE_VBAT_FULL_MV` 4200) should be replaced with the FSD §5.6.2 production
+values for the 2S pack (7000/6600/6400, full 8400). That open item is listed in
+the README and Phase 4 findings.
+
+FSD bumped to **v1.21** (new §13.2a, T-E rows in §15.5).
+
 ## 2026-08-19 (merge) — Branch merged to main; bug #20 raised
 
 ### Merged to main

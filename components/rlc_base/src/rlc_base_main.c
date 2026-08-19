@@ -224,13 +224,16 @@ void base_app_main(void)
             rlc_link_status_t ls;
             rlc_link_get_status(&ls);
             uint16_t bands = continuity_get_bands();
-            ESP_LOGI(TAG, "state=%d armed=%u firing=%u rssi=%d vbat=%u mv cont=0x%04x arm=%d key=%d err=0x%02x",
+            char errbuf[80];
+            ESP_LOGI(TAG, "state=%d armed=%u firing=%u rssi=%d vbat=%u mv cont=0x%04x arm=%d key=%d err=0x%02x (%s)",
                      base_fsm_get_state(), base_fsm_get_armed_channel(),
                      base_fsm_get_firing_channel(),
                      ls.rssi_avg_dbm, rlc_battery_get_voltage_mv(),
                      bands, arm_sense_get_debounced(),
                      key_sense_get_debounced(),
-                     base_fsm_get_error_flags());
+                     base_fsm_get_error_flags(),
+                     rlc_error_flags_str(base_fsm_get_error_flags(),
+                                         errbuf, sizeof(errbuf)));
             last_status_log_ms = now;
         }
 

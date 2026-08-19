@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.20
+**Version:** 1.21
 **Date:** 2026-08-19
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -34,6 +34,7 @@
 | 1.18 | 2026-08-19 | RGB LED strip repurposed as an igniter continuity display on **both** units. §11 rewritten around a six-layer rendering model: the 8-pixel strip shows one pixel per igniter channel at all times, and system status *modulates* the map (alarm wink, stale dim, breathing) rather than replacing it — only the firing path (ARMED/PRE_FIRE/FIRING) and ERROR still take the whole strip. Removed the per-state whole-strip colours for IDLE, LINK_LOST and POST_FIRE, the boot-time RSSI bar, and the 250 ms whole-strip orange ping-miss flash (§11.2 — the 80 ms buzzer beep remains the per-miss indicator). §5.5.8: the **remote now carries an 8-pixel external strip**, not just the on-board LED. §5.4.11/§5.5.8: strip data-in is at the channel-8 end on both units, so pixel 0 — which the on-board LED mirrors in parallel — is channel 8; the on-board LEDs no longer carry independent meaning. Added alarm-wink palette and strip tuning constants to §14.1. Added host-compiled renderer tests (§15.5, T-L01…T-L09).
 | 1.19 | 2026-08-19 | Strip orientation corrected to a **per-unit** setting after bench characterisation with the new `tools/strip-diag` firmware. The two strips are wired data-in at opposite ends: base at the channel-1 end (`RLC_STRIP_REVERSED = 0`, on-board LED mirrors channel 1), remote at the channel-8 end (`RLC_STRIP_REVERSED = 1`, on-board LED mirrors channel 8). v1.18 wrongly assumed both were reversed. Updated §11.0, §5.4.11, §5.5.8, §14.1. Host renderer tests (§15.5) now run once per unit so both orientations are asserted.
 | 1.20 | 2026-08-19 | Recorded bug #20 in §6.2.1: the PMK, LMK and `CMD_INTEGRITY_KEY` are committed to a public repository, so the AES-128-CCM security boundary and the keyed CRC32 integrity check are ineffective against an adversary who has read the source; only the §6.2.2 replay protection (random per-link-up session token) still holds. Keys must be rotated **and** moved out of tracked files, since git history preserves superseded values. Also corrected §6.2.1's key location: `rlc_config.h`, not the non-existent `protocol_config.h`.
+| 1.21 | 2026-08-19 | Error flags are now presented by name, not as a raw bitmask. Added §13.2a with the canonical display name for every bit 0-7 (including the reserved and undefined ones) and the documented deviation from §13.2's "stacked" wording: the single 40-character line at the §10.3 font floor holds one named flag, so multiple flags cycle at 2 s with an (n/total) counter rather than being truncated. Names live in `rlc_protocol.h` and are covered by host tests T-E01…T-E07 (§15.5).
 
 ---
 
@@ -2376,7 +2377,28 @@ The `error_flags` field in `STATUS_UPDATE` is a bitmask:
 | `ERR_WATCHDOG_RESET` | Info | Set flag in first STATUS_UPDATE so remote can display "Base rebooted". |
 | `ERR_INTERNAL` | Critical | Immediate disarm. Transition to ERROR. |
 
-**Multiple simultaneous errors:** When multiple error flags are active simultaneously, the most severe error determines the system state transition (Critical > Warning > Info). All active error flags SHALL be displayed on the remote (stacked if needed) and logged to UART.
+**Multiple simultaneous errors:** When multiple error flags are active simultaneously, the most severe error determines the system state transition (Critical > Warning > Info). All active error flags SHALL be displayed on the remote and logged to UART.
+
+### 13.2a Error Flag Presentation
+
+A raw bitmask is not actionable in the field, so every flag has a canonical short name. The remote shows `BASE ERROR 0x<hex>: <NAME>`, and the base logs the same names alongside the hex value.
+
+| Bit | Flag | Displayed name |
+|---|---|---|
+| 0 | `ERR_VBAT_LOW` | `VBAT LOW` |
+| 1 | `ERR_VBAT_CRITICAL` | `VBAT CRITICAL` |
+| 2 | `ERR_RELAY_FAULT` | `RELAY FAULT` |
+| 3 | *(reserved)* | `RESERVED BIT3` |
+| 4 | `ERR_COMM_DEGRADED` | `COMM DEGRADED` |
+| 5 | `ERR_WATCHDOG_RESET` | `WATCHDOG RESET` |
+| 6 | `ERR_INTERNAL` | `INTERNAL FAULT` |
+| 7 | *(undefined)* | `UNDEFINED BIT7` |
+
+Every bit 0–7 resolves to a name, including the two that carry no meaning today, so an unexpected flag is reported rather than silently dropped.
+
+**Deviation from §13.2's "stacked" wording.** The main status screen has one line for this, and §10.3's scale-2 minimum font allows 40 characters — enough for one named flag, not several. When more than one flag is set the remote **cycles** them at 2 s intervals with an `(n/total)` counter, e.g. `BASE ERROR 0x06: VBAT CRITICAL (1/2)`. Every active flag is therefore shown, in full, without truncation and without dropping below the legibility floor. The complete comma-separated list is available in the UART log.
+
+The names are defined once in `rlc_protocol.h` (`rlc_error_flag_str()`, `rlc_error_flag_nth()`, `rlc_error_flags_str()`) and covered by host tests T-E01…T-E07 (§15.5).
 
 ### 13.3 Assertions
 
@@ -2581,6 +2603,14 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-L07 | LED strip renderer | Channel-of-interest cursor pulses to `RLC_STRIP_CURSOR_LOW_PCT` while other channels stay steady. |
 | T-L08 | LED strip renderer | Key warning breathes the whole map with no active channel (base) and only the cursor with one (remote). |
 | T-L09 | LED strip renderer | Stale dim and cursor pulse compose without either overriding the other. |
+
+| T-E01 | Error flag naming | Every defined flag maps to its documented display name. |
+| T-E02 | Error flag naming | Every bit 0-7 resolves to a usable name, including the reserved and undefined bits. |
+| T-E03 | Error flag naming | Flag counting for empty, single, multiple and full masks. |
+| T-E04 | Error flag naming | N-th set flag lookup (drives the remote's multi-flag cycling); NULL past the end. |
+| T-E05 | Error flag naming | Comma-separated list formatting, including the empty mask. |
+| T-E06 | Error flag naming | Truncation into an undersized buffer stays in bounds and NUL-terminated. |
+| T-E07 | Error flag naming | The reported field case: 0x02 names the critical battery flag. |
 
 **Runner:** `./tests/host/run.sh` — compiles each `tests/host/test_*.c` against the mock headers in `tests/host/stubs/` and runs it. T-L01…T-L09 include `rlc_rgb_led.c` directly so the real rendering functions are exercised, capturing and asserting every emitted pixel.
 | T-U10 | Continuity band classification | Feed known microvolt values: 0, 300, 500, 1000, 30000, 66000, 100000, 500000, 1500000, 2000000, 3190000. Verify correct band assignment (SHORT, GOOD, MARGINAL, OPEN) at each threshold. |

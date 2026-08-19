@@ -214,7 +214,9 @@ static void do_enter_error(uint8_t err_flag)
     s_link_lost_pending = false;
     rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
     status_update_trigger();
-    ESP_LOGE(TAG, "-> ERROR (flags=0x%02x)", s_error_flags);
+    char errbuf[80];
+    ESP_LOGE(TAG, "-> ERROR (flags=0x%02x: %s)", s_error_flags,
+             rlc_error_flags_str(s_error_flags, errbuf, sizeof(errbuf)));
     s_state = STATE_ERROR;
 }
 

@@ -11,3 +11,6 @@ sdkconfig.*.resolved
 tools/strip-diag/build/
 tools/strip-diag/sdkconfig
 tools/strip-diag/sdkconfig.old
+tools/vbat-cal/build/
+tools/vbat-cal/sdkconfig
+tools/vbat-cal/sdkconfig.old

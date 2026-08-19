@@ -663,7 +663,20 @@ static void draw_main_dynamic(const disp_data_t *d)
     draw_field(120, y, DW - 126, buf, 2, C_WHITE, C_BLACK);
 
     if (d->status_fresh && d->status.error_flags) {
-        snprintf(buf, sizeof(buf), "BASE ERROR 0x%02X", d->status.error_flags);
+        /* Name the fault rather than making the operator decode a bitmask.
+         * The line holds 40 characters at scale 2, so when several flags are
+         * set at once they are cycled one per 2 s with an n/total counter
+         * instead of being truncated. */
+        uint8_t ef = d->status.error_flags;
+        int nflags = rlc_error_flags_count(ef);
+        if (nflags > 1) {
+            int idx = (int)((now_ms() / 2000) % nflags);
+            snprintf(buf, sizeof(buf), "BASE ERROR 0x%02X: %s (%d/%d)",
+                     ef, rlc_error_flag_nth(ef, idx), idx + 1, nflags);
+        } else {
+            snprintf(buf, sizeof(buf), "BASE ERROR 0x%02X: %s",
+                     ef, rlc_error_flag_str(ef));
+        }
         draw_text_centred_bg(DH - 30, buf, 2, C_FAULT, C_BLACK);
     } else if (!d->remote_key_armed) {
         snprintf(buf, sizeof(buf), "TURN ARM KEY TO ARM CH %u", d->selected);

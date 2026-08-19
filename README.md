@@ -67,7 +67,7 @@ link is refused.
 | `components/rlc_remote/` | Remote FSM, encoder, fire button, arm switch, buzzer, ILI9488 display |
 | `rlc-hw-test-base/`, `rlc-hw-test-remote/` | Standalone hardware bring-up firmware with a serial CLI |
 | `tests/host/` | Host-compiled unit tests — `./tests/host/run.sh`, no hardware needed |
-| `tools/` | Small bench utilities (GPIO blink, LED finder, WS2812 strip diagnostic, test scripts) |
+| `tools/` | Bench utilities — GPIO blink, LED finder, WS2812 strip diagnostic, battery-divider calibration, test scripts |
 | `archive/` | Superseded specification revisions |
 
 Both units build from **one codebase**; the unit is selected by sdkconfig
