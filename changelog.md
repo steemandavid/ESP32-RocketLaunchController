@@ -65,6 +65,38 @@ USB-Serial/JTAG (native USB port).
 - Both units rebuilt and reflashed; link healthy (rssi −35, no missed pings).
 - Host suite: 30 checks × 2 orientations, 0 failures.
 
+### Docs
+
+FSD bumped to **v1.19** (§11.0 pixel-order table, §5.4.11, §5.5.8, §14.1).
+`Development_Progress.md` gained the per-unit orientation table and the full
+bug #19 record, and its LED test table now reflects what was verified by eye.
+README updated: per-unit strip orientation noted, bug #19 added to the
+known-open-items list, `tools/strip-diag` and `tests/host/` added to the
+repository layout, and `./tests/host/run.sh` documented under building and
+flashing.
+
+### Session commits (branch `docs/fsd-v1.16-accuracy-corrections`)
+
+| Commit | Subject |
+|---|---|
+| `e1dbe9d` | LED strip is now an igniter status display on both units |
+| `96bd306` | Strip orientation is per unit; add strip-diag; record bug #19 |
+
+### Open items carried forward
+
+- **Bug #19** — dead 4th pixel on the base strip. Hardware fix required
+  (reflow/replace that LED, or cut after pixel 3 and splice). Channels 4-8 are
+  unusable on the base until then.
+- **T-L15/T-L16** — a continuity change moving the right pixel, and daylight
+  legibility of the alarm wink, both still need the operator. T-L15 is blocked
+  on bug #19 for channels 4-8.
+- **FSD §7 remote-battery arming guard (NACK `0x0C`)** — deliberately kept out
+  of scope; still unimplemented.
+- **Production battery thresholds** — `rlc_config.h` still carries the bench
+  values sized for a USB rail, not the 2S remote pack.
+- **FSD §10.2.0 palette** — still specifies blue for GOOD; the as-built palette
+  is green/light-green/yellow/red.
+
 ### Note
 
 The remote's LiPo came disconnected during the base work, so it reads

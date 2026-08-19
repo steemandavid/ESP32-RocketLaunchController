@@ -67,7 +67,7 @@ link is refused.
 | `components/rlc_remote/` | Remote FSM, encoder, fire button, arm switch, buzzer, ILI9488 display |
 | `rlc-hw-test-base/`, `rlc-hw-test-remote/` | Standalone hardware bring-up firmware with a serial CLI |
 | `tests/host/` | Host-compiled unit tests — `./tests/host/run.sh`, no hardware needed |
-| `tools/` | Small bench utilities (GPIO blink, LED finder, test scripts) |
+| `tools/` | Small bench utilities (GPIO blink, LED finder, WS2812 strip diagnostic, test scripts) |
 | `archive/` | Superseded specification revisions |
 
 Both units build from **one codebase**; the unit is selected by sdkconfig
@@ -83,7 +83,13 @@ Requires **ESP-IDF v5.4.1** and an ESP32-S3 (16 MB flash, 8 MB OCT PSRAM).
 ./build_base.sh flash           # build + flash base to its default by-id port
 ./build_remote.sh flash         # build + flash remote
 ./build_remote.sh flash -p PORT # override the serial port
+
+./tests/host/run.sh             # host-compiled unit tests, no hardware needed
 ```
+
+The host tests compile the real rendering code against mock ESP-IDF headers and
+assert its output directly. They run once per unit, because the two units are
+not configured identically.
 
 Serial ports are referenced by stable `/dev/serial/by-id/` paths rather than
 `/dev/ttyACMx`, which reorders between plug-ins. Current port and MAC
@@ -110,7 +116,9 @@ smaller proved unreadable at arm's length in the field.
 Both units carry an 8-pixel NeoPixel strip, one pixel per igniter channel,
 showing the same continuity colours as the remote's grid: all three resolve
 them from the `RLC_COLOR_CONT_*` constants in `rlc_config.h`, written as HTML
-`0xRRGGBB` values, so restyling everything is a one-line change.
+`0xRRGGBB` values, so restyling everything is a one-line change. The two strips
+are wired data-in at opposite ends, so the channel-to-pixel mapping is a
+per-unit setting (`RLC_STRIP_REVERSED`).
 
 The strip is an igniter display first: system status *modulates* the channel
 map rather than replacing it. Alarms — link lost, battery low, arm-sense fault
@@ -145,6 +153,11 @@ Known open items before any field use:
 - The continuity palette (`RLC_COLOR_CONT_*`) deviates from FSD §10.2.0, which
   specifies blue for GOOD to avoid a red-green pair; the specification needs
   updating to match, or the palette reverting.
+- The base's NeoPixel strip has a **dead pixel at channel 4** (bug #19): the
+  fourth LED in the data chain no longer forwards data, so channels 4–8 are
+  unusable on that unit. Channels 1–3 and the whole remote strip are fine. The
+  fix is to reflow or replace that LED. `tools/strip-diag/` is a standalone
+  bring-up firmware for diagnosing this class of fault.
 
 ## Documentation
 
