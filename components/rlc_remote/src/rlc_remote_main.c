@@ -264,10 +264,12 @@ void remote_app_main(void)
         if (now - last_log_ms >= 5000) {
             rlc_link_status_t ls;
             rlc_link_get_status(&ls);
-            ESP_LOGI(TAG, "state=%d armed=%u sel=%u rssi=%d missed=%u vbat=%u mv arm=%d fire=%d",
+            ESP_LOGI(TAG, "state=%d armed=%u sel=%u rssi=%d missed=%u contact=%lums "
+                          "attempts=%u vbat=%u mv arm=%d fire=%d",
                      remote_fsm_get_state(), remote_fsm_get_armed_channel(),
                      remote_fsm_get_selected_channel(),
                      ls.rssi_avg_dbm, ls.missed_pings,
+                     (unsigned long)ls.ms_since_contact, ls.linkreq_attempts,
                      rlc_battery_get_voltage_mv(), arm_switch_is_armed(),
                      fire_button_is_pressed());
             last_log_ms = now;

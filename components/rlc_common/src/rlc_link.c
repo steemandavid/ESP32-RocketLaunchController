@@ -86,6 +86,10 @@ static uint16_t          s_ping_rtt_ms = 0;         /* remote: last round-trip t
 static uint32_t          s_last_ping_timestamp = 0; /* remote: stamp in last PING    */
 static bool              s_ping_outstanding = false;
 static int64_t           s_last_ping_rx_ms = 0;     /* base: when last PING received */
+/* Wire-receive time of the last well-formed frame from the peer, either role.
+ * Kept separate from the ping counters because those stop advancing once the
+ * link drops, which is exactly when "how long since contact" matters. */
+static int64_t           s_last_contact_ms = 0;
 static uint16_t          s_missed_pings = 0;
 
 /* LINK_REQUEST retry counter (remote). */
@@ -456,6 +460,17 @@ static void process_frame(const link_rx_item_t *it)
 
     update_rssi(it->rssi);
 
+    /* A well-formed frame from the configured peer is contact. Recorded here
+     * rather than in any per-message handler so it covers every message type,
+     * and using the wire-receive timestamp rather than now_ms() so queue
+     * latency is not counted as airtime.
+     *
+     * NO lock() here: link_task already holds the state mutex across this
+     * whole call. The mutex is non-recursive, so taking it again deadlocks the
+     * link task — which is precisely what happened when this was first written
+     * that way, and the TWDT caught it as a reboot loop. */
+    s_last_contact_ms = it->received_ms;
+
     switch (hdr.msg_type) {
         case MSG_LINK_REQUEST:
             if (s_role == RLC_LINK_ROLE_BASE) {
@@ -801,6 +816,8 @@ void rlc_link_get_status(rlc_link_status_t *out)
     out->missed_pings   = s_missed_pings;
     out->ping_rtt_ms    = s_ping_rtt_ms;
     out->linkreq_attempts = s_linkreq_attempts;
+    out->ms_since_contact = s_last_contact_ms
+                          ? (uint32_t)(now_ms() - s_last_contact_ms) : 0;
     memcpy(out->peer_fw, s_peer_fw, 3);
     out->peer_fw_known  = s_peer_fw_known;
     unlock();

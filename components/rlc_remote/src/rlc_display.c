@@ -807,15 +807,24 @@ static void draw_link_lost_static(void)
 static void draw_link_lost_dynamic(const disp_data_t *d)
 {
     char buf[48];
-    uint32_t secs = 0;
-    /* missed_pings counts consecutive misses at HEARTBEAT_INTERVAL_MS */
-    secs = ((uint32_t)d->link.missed_pings * HEARTBEAT_INTERVAL_MS) / 1000;
 
-    snprintf(buf, sizeof(buf), "Last contact: %lu s ago", (unsigned long)secs);
+    /* Real elapsed time since the last frame from the base. This used to be
+     * derived from missed_pings, which stops incrementing the moment the link
+     * is declared LOST — so it froze at the failure threshold (3 misses x
+     * 500 ms = "1 s ago") and never advanced again. */
+    uint32_t secs = d->link.ms_since_contact / 1000;
+    if (secs < 600) {
+        snprintf(buf, sizeof(buf), "Last contact: %lu s ago", (unsigned long)secs);
+    } else {
+        snprintf(buf, sizeof(buf), "Last contact: %lu min ago",
+                 (unsigned long)(secs / 60));
+    }
     draw_text_centred_bg(185, buf, 2, C_WHITE, C_BLACK);
 
+    /* Reconnect attempts, not ping misses — linkreq_attempts is the count that
+     * actually advances while the remote is retrying LINK_REQUEST. */
     snprintf(buf, sizeof(buf), "Attempts %u   RSSI %d dBm",
-             d->link.missed_pings, d->link.rssi_avg_dbm);
+             d->link.linkreq_attempts, d->link.rssi_avg_dbm);
     draw_text_centred_bg(288, buf, 2, C_GREY, C_BLACK);
 }
 

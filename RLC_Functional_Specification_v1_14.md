@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.23
+**Version:** 1.24
 **Date:** 2026-08-19
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -37,6 +37,7 @@
 | 1.21 | 2026-08-19 | Error flags are now presented by name, not as a raw bitmask. Added §13.2a with the canonical display name for every bit 0-7 (including the reserved and undefined ones) and the documented deviation from §13.2's "stacked" wording: the single 40-character line at the §10.3 font floor holds one named flag, so multiple flags cycle at 2 s with an (n/total) counter rather than being truncated. Names live in `rlc_protocol.h` and are covered by host tests T-E01…T-E07 (§15.5).
 | 1.22 | 2026-08-19 | Recorded bug #21 as an as-built deviation in §5.5: an undocumented 3.3 V zener on the remote's VBAT ADC node leaks 27-144 µA into the 6429 Ω divider, making the sense non-linear and under-reading by up to 30 %. Noted that the specified 0-3.0 V range already puts a full 2S pack at 95 % of the ADC's usable ceiling. Base divider calibrated (4.3 → 4.3148); remote calibration blocked.
 | 1.23 | 2026-08-19 | Battery ADC sampling hardened. Added §5.6.3: each reading is now the **median of a 33-sample burst** before the existing 8-deep moving average, because a sample clipped at ADC full scale can only bias a mean upward and so make a flat pack read as healthy. Measured on the bench: in a burst with 9 of 33 samples clipped the mean read 571 counts high, about +2 V through the base's divider ratio, while the median was exact. Added the burst constants to §14.1 and host tests T-B01…T-B07 to §15.5. Updated the stale "8-sample moving average" wording in §4, §5.4.7 and §7.3.3.
+| 1.24 | 2026-08-19 | Fixed the LINK LOST screen's two dynamic fields, both of which were driven from `missed_pings` — a counter gated behind the LINKED state that stops advancing the moment the link drops, freezing the display at "Last contact: 1 s ago" and "Attempts 3". Added `rlc_link_status_t.ms_since_contact`, a real elapsed time from the last well-formed frame from the peer, and pointed the attempt count at `linkreq_attempts`. Documented the correct field sources in §10.2.5.
 
 ---
 
@@ -2244,6 +2245,23 @@ Green/yellow border. Displayed for `POST_FIRE_COOLDOWN_MS` (2000 ms) after STATU
 ```
 
 Yellow/amber background.
+
+**Field sources (corrected 2026-08-19).** Both dynamic fields must come from
+counters that keep advancing *after* the link has dropped:
+
+| Field | Source | Note |
+|---|---|---|
+| "Last contact: N s ago" | `rlc_link_status_t.ms_since_contact` | Real elapsed time since the last well-formed frame from the peer. Switches to minutes past 600 s. |
+| "Attempts N" | `rlc_link_status_t.linkreq_attempts` | LINK_REQUEST retries, which advance while reconnecting. |
+
+`missed_pings` must **not** be used for either. It is a consecutive-miss
+counter whose update path is gated behind `s_state == RLC_LINK_STATE_LINKED`,
+so it stops the instant the link is declared lost and freezes at
+`HEARTBEAT_FAIL_THRESHOLD`. Deriving elapsed time from it produced a display
+permanently stuck at "1 s ago" (3 misses x 500 ms), and an attempt count stuck
+at 3. Verified on target: across a 50 s induced outage `missed_pings` held at 3
+while `ms_since_contact` advanced 2354 → 47354 ms and `linkreq_attempts` went
+1 → 23.
 
 #### 10.2.6 Error Screen
 

@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.23 (2026-08-19)
+**Spec:** RLC-FSPEC-001 v1.24 (2026-08-19)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -1078,6 +1078,45 @@ channels 4-8 are blocked by bug #19 (dead pixel at channel 4).
 | T-D07 | NACK overlay text + 3 s timeout, screen restored cleanly | TODO |
 | T-D08 | Link-lost screen and recovery back to main status | TODO |
 | T-D09 | Full-screen redraw time and steady-state frame rate | TODO |
+
+---
+
+### LINK LOST Screen Counters Fixed (2026-08-19)
+
+**Symptom.** The link-lost screen's "Last contact: 1 s ago" never advanced.
+
+**Root cause.** Both dynamic fields were derived from `missed_pings`. Its update
+path in `rlc_link.c` sits behind `if (s_state != RLC_LINK_STATE_LINKED) return;`,
+so the counter stops the instant the link is declared lost and freezes at
+`HEARTBEAT_FAIL_THRESHOLD` (3). The display computed
+`3 x HEARTBEAT_INTERVAL_MS / 1000` = **1 s, forever** — the arithmetic matches
+the reported symptom exactly. The "Attempts" line was frozen at 3 for the same
+reason, and was mislabelled: it was showing ping misses, not reconnect attempts.
+
+**Fix.** Added `rlc_link_status_t.ms_since_contact`, computed from a new
+`s_last_contact_ms` that records the wire-receive timestamp of every well-formed
+frame from the peer — set in `process_frame()` after the MAC filter and parse,
+so it covers all message types and both roles. The attempts line now uses
+`linkreq_attempts`, which was already maintained and exported but unused.
+
+**Trap hit while fixing it (worth remembering).** The first version took the
+state mutex around the timestamp write. `link_task` **already holds that mutex**
+across the whole `process_frame()` call, and it is a non-recursive FreeRTOS
+mutex — so the link task deadlocked, the TWDT fired, and the remote went into a
+reboot loop. Caught immediately on target by the watchdog (`rlc_link` listed as
+the task that failed to check in, with both CPUs idle — a block, not a spin).
+A comment at the write site now records this.
+
+**Verified on target** across a 50 s induced outage (base held in reset):
+
+| | During outage | On recovery |
+|---|---|---|
+| `missed_pings` (old source) | **frozen at 3 throughout** | 0 |
+| `ms_since_contact` (new) | 2354 → 47354 ms, advancing | 153 ms |
+| `linkreq_attempts` | 1 → 23, advancing | 0 |
+
+The remote's periodic status log now carries `contact=` and `attempts=` too,
+which is how the above was measured and is useful diagnostics in its own right.
 
 ---
 

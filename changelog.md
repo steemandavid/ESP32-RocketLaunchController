@@ -1,5 +1,54 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-19 (late) — LINK LOST screen counter stuck at 1 s
+
+**Symptom.** The link-lost screen showed "Last contact: 1 s ago" and never
+advanced.
+
+**Root cause.** Both dynamic fields on that screen came from `missed_pings`,
+whose update path in `rlc_link.c` sits behind
+`if (s_state != RLC_LINK_STATE_LINKED) return;`. The counter therefore stops the
+moment the link is declared lost, frozen at `HEARTBEAT_FAIL_THRESHOLD` = 3. The
+display computed `3 x 500 ms / 1000` = **1 s, forever** — the arithmetic matches
+the reported symptom exactly, which is what confirmed the diagnosis rather than
+just inspection. The counter was never measuring elapsed time; it was a miss
+counter that stops precisely when it is needed.
+
+A second bug on the same screen: "Attempts N" also used `missed_pings`, so it
+was both frozen and mislabelled — `linkreq_attempts` was already maintained and
+exported but unused.
+
+**Fix.** Added `rlc_link_status_t.ms_since_contact`, from a new
+`s_last_contact_ms` recording the wire-receive timestamp of every well-formed
+frame from the peer. Set in `process_frame()` right after the MAC filter and
+parse, so it covers every message type and both roles, and uses the receive
+timestamp rather than `now_ms()` so queue latency is not counted as airtime.
+The attempts line now uses `linkreq_attempts`. Display switches to minutes past
+600 s.
+
+**A trap worth recording.** The first attempt took the state mutex around the
+timestamp write. `link_task` already holds that mutex across the whole
+`process_frame()` call and it is a **non-recursive** FreeRTOS mutex, so the link
+task deadlocked instantly — TWDT fired and the remote went into a reboot loop.
+The watchdog report named `rlc_link` with both CPUs idle, which distinguishes a
+block from a spin. Fixed by removing the lock (the caller holds it) with a
+comment at the site so nobody re-adds it.
+
+**Verified on target**, 50 s induced outage with the base held in reset:
+
+| | During outage | On recovery |
+|---|---|---|
+| `missed_pings` (old source) | **frozen at 3 throughout** | 0 |
+| `ms_since_contact` (new) | 2354 → 47354 ms | 153 ms |
+| `linkreq_attempts` | 1 → 23 | 0 |
+
+The remote's periodic status log gained `contact=` and `attempts=` fields —
+that is how the above was measured, and it makes this class of freeze visible in
+logs as well as on screen.
+
+FSD **v1.24**: §10.2.5 now documents which counter each field must come from and
+why `missed_pings` is unsuitable for either.
+
 ## 2026-08-19 (late) — Battery sampling hardened against clipping
 
 `rlc_battery.c` took a **single** raw ADC read per call and fed an 8-deep mean.
