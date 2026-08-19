@@ -38,7 +38,31 @@ locked the unit in STATE_ERROR.
 
 Bug #21 downgraded to PARTIAL — sense correct, protection still missing.
 
-Both units reflashed with current RLC firmware and verified linked.
+Both units reflashed with current RLC firmware and verified linked on target:
+
+| Unit | Port | State | Battery | Link |
+|---|---|---|---|---|
+| Base | `…5B5E044219` (COM) | IDLE, `err=0x00 (NONE)` | 12210 mV | −31 dBm |
+| Remote | `…5B5E043219` (COM) | IDLE | 7267 mV | −40 dBm |
+
+The base's USB was moved back to its CH340 COM port, so **both units are now on
+stable board-serial by-ids** that survive chip swaps — the documented
+configuration. The base produces no console output over its native USB port,
+since the RLC firmware's console is UART0; only `tools/vbat-cal` and the hw-test
+firmware use USB-Serial/JTAG.
+
+`err=0x00 (NONE)` in the base log is the named-error-flag work from earlier in
+the session confirmed on target.
+
+### Documentation reconciled
+
+- README's "bench-test battery thresholds" open item is **resolved** and was
+  replaced with bugs #22 and #23.
+- The Phase 4 finding that flagged the bench thresholds is struck through and
+  marked resolved, recording *why* the ordering mattered: restoring them before
+  calibrating would have been actively harmful, since with the zener fitted a
+  fully charged pack read 5979 mV and would have locked the remote in
+  STATE_ERROR with nothing pointing at the divider.
 
 ## 2026-08-19 (bench) — Battery divider calibration: base done, remote reveals bug #21
 

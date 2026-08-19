@@ -146,8 +146,14 @@ Known open items before any field use:
   Schottky clamps and contact snubber added after two base ESP32s were destroyed
   by relay-arc coupling (tracked as bug #18). The restriction is enforced in
   firmware by `FIRE_PROTECTED_CHANNEL_MASK`, not just by procedure.
-- `rlc_config.h` still carries bench-test battery thresholds sized for a USB
-  rail rather than the specified 2S remote pack.
+- The remote's VBAT sense pin has **no overvoltage clamp** (bug #22). The 3.3 V
+  zener that caused bug #21 was removed to restore linearity and not yet
+  replaced; a BAT54-class low-leakage Schottky to the 3.3 V rail is required.
+  Until then the divider's series impedance is the only protection on GPIO 1.
+- Both units' battery dividers leave **almost no ADC headroom** at full charge
+  — the remote sits at 97 % of the ADC's usable ceiling, the base at 92 %
+  (bug #23). Accuracy only, roughly 0.7 % at full charge; the arming thresholds
+  sit lower in the range and are unaffected.
 - The base does not yet act on the remote battery voltage it receives in PING
   (FSD §7 requires NACK `0x0C`).
 - The continuity palette (`RLC_COLOR_CONT_*`) deviates from FSD §10.2.0, which

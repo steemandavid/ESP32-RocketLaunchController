@@ -973,17 +973,21 @@ display bug; both are open items.
    every PING but nothing in `components/rlc_base/` reads it, and
    `check_arm_guards()` only tests the base's own pack. **Requirement not
    implemented.**
-2. **`rlc_config.h` still carries the bench-test threshold overrides**
+2. ~~**`rlc_config.h` still carries the bench-test threshold overrides**
    (`REMOTE_VBAT_MIN_ARM_MV` 3200 / `MIN_OPERATE` 3100 / `CRITICAL` 3000, sized
-   for the 3.3 V USB rail). FSD §5.6.2 production values for the specified 2S
-   pack are 7000 / 6600 / 6400. As shipped, the remote would arm on a 2S pack at
-   3.3 V per cell — well under the FSD floor. **Must be switched back before
-   field use**, together with `REMOTE_VBAT_FULL_MV` (bench 4200 → 2S 8400),
-   the new display gauge endpoint.
+   for the 3.3 V USB rail).~~ **RESOLVED 2026-08-19.** The FSD §5.6.2 production
+   values (7000 / 6600 / 6400, plus `REMOTE_VBAT_FULL_MV` 8400) were restored
+   once the sense path was trustworthy — the divider had to be calibrated first,
+   and doing so uncovered bug #21. Restoring them earlier would have been
+   actively harmful: with the zener fitted, a fully charged pack read 5979 mV
+   and would have locked the remote in STATE_ERROR at boot with no diagnostic
+   pointing at the battery divider. See
+   `docs/calibration/remote_vbat_2026-08-19.md`.
 
 Remote battery criteria, for reference: `rlc_remote_battery.c` samples GPIO 1
 (ADC1_CH0) once per second through the 18 kΩ/10 kΩ (2.8:1) divider, 8-sample
-average. Below `REMOTE_VBAT_CRITICAL_MV` it posts `EVT_BATTERY_CRITICAL`
+average (see bug #23 on the divider's lack of ADC headroom).
+Below `REMOTE_VBAT_CRITICAL_MV` it posts `EVT_BATTERY_CRITICAL`
 (edge-triggered) and the remote FSM enters STATE_ERROR — unrecoverable, power
 cycle required. A reading of **0 mV means the divider is unfed**, not a flat
 pack: USB power alone does not energise the VBAT sense. Note the divider is
