@@ -24,6 +24,26 @@
 
 ---
 
+## Open Bugs
+
+Blocking items, newest first. Each has a detailed entry further down this
+document; search for its heading. Numbering is continuous with the earlier
+on-target defect log in the Phase 3 section.
+
+| # | Title | Class | Status | Blocks |
+|---|-------|-------|--------|--------|
+| 20 | Shipped crypto keys are public — AES-128-CCM and the keyed CRC32 check are ineffective against anyone who has read the source | Security | OPEN — rotation deferred by decision | Field use where an adversary is in the threat model. No effect on bench work. |
+| 19 | Base LED strip: dead 4th pixel in the chain — channel 4 stuck, channels 5-8 dark | Hardware | OPEN — needs reflow or replacement | Channels 4-8 of the base strip; T-L15 for those channels |
+| 18 | Base ESP32 destroyed by relay-arc coupling on the continuity ADC inputs | Hardware + firmware | Software fix DONE and audited; hardware protection fitted on **channel 1 only** | All fire testing on channels 2-8, enforced in firmware by `FIRE_PROTECTED_CHANNEL_MASK` |
+
+Non-blocking items tracked elsewhere: the bench battery thresholds in
+`rlc_config.h` (FSD §5.6.2 production values not yet restored), the
+unimplemented FSD §7 remote-battery arming guard / NACK `0x0C` (both in "Phase 4
+Findings — Battery Thresholds"), and the FSD §10.2.0 continuity palette
+deviation.
+
+---
+
 ## Phase 0 — Hardware Validation
 
 **FSD ref:** §4.3 Phase 0

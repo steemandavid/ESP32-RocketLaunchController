@@ -59,6 +59,12 @@ file exists — the keys are in `components/rlc_common/include/rlc_config.h`.
 - `RLC_Project_Summary.md`: the club-facing letter listed the three
   communication-security layers without qualification. Added an honest caveat —
   overstating the security to club members would be worse than the bug.
+- `Development_Progress.md` gained an **Open Bugs index** near the top. With
+  three open bugs (#18, #19, #20) scattered across ~400 lines of a 1100-line
+  document, there was no way to see the blocking items at a glance. The table
+  gives each bug a class, a status and — most usefully — what it *blocks*, and
+  points at the non-blocking items tracked elsewhere (bench battery thresholds,
+  the §7 arming guard, the §10.2.0 palette deviation).
 
 ## 2026-08-19 (bench) — Strip bring-up: orientation is per unit, and bug #19
 
