@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.22
+**Version:** 1.23
 **Date:** 2026-08-19
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -36,6 +36,7 @@
 | 1.20 | 2026-08-19 | Recorded bug #20 in §6.2.1: the PMK, LMK and `CMD_INTEGRITY_KEY` are committed to a public repository, so the AES-128-CCM security boundary and the keyed CRC32 integrity check are ineffective against an adversary who has read the source; only the §6.2.2 replay protection (random per-link-up session token) still holds. Keys must be rotated **and** moved out of tracked files, since git history preserves superseded values. Also corrected §6.2.1's key location: `rlc_config.h`, not the non-existent `protocol_config.h`.
 | 1.21 | 2026-08-19 | Error flags are now presented by name, not as a raw bitmask. Added §13.2a with the canonical display name for every bit 0-7 (including the reserved and undefined ones) and the documented deviation from §13.2's "stacked" wording: the single 40-character line at the §10.3 font floor holds one named flag, so multiple flags cycle at 2 s with an (n/total) counter rather than being truncated. Names live in `rlc_protocol.h` and are covered by host tests T-E01…T-E07 (§15.5).
 | 1.22 | 2026-08-19 | Recorded bug #21 as an as-built deviation in §5.5: an undocumented 3.3 V zener on the remote's VBAT ADC node leaks 27-144 µA into the 6429 Ω divider, making the sense non-linear and under-reading by up to 30 %. Noted that the specified 0-3.0 V range already puts a full 2S pack at 95 % of the ADC's usable ceiling. Base divider calibrated (4.3 → 4.3148); remote calibration blocked.
+| 1.23 | 2026-08-19 | Battery ADC sampling hardened. Added §5.6.3: each reading is now the **median of a 33-sample burst** before the existing 8-deep moving average, because a sample clipped at ADC full scale can only bias a mean upward and so make a flat pack read as healthy. Measured on the bench: in a burst with 9 of 33 samples clipped the mean read 571 counts high, about +2 V through the base's divider ratio, while the median was exact. Added the burst constants to §14.1 and host tests T-B01…T-B07 to §15.5. Updated the stale "8-sample moving average" wording in §4, §5.4.7 and §7.3.3.
 
 ---
 
@@ -307,7 +308,7 @@ Deliverables:
 
 Deliverables:
 - `rlc_common`: Shift-register debounce engine (generic, configurable polling rate).
-- `rlc_common`: Battery voltage ADC driver (ADC1, 8-sample averaging, calibrated).
+- `rlc_common`: Battery voltage ADC driver (ADC1, median-of-burst plus 8-sample averaging, calibrated).
 - `rlc_base`: GPIO configuration for all 8 channel SPDT relays, arm relay feedback sense (GPIO 21), key switch sense (GPIO 42), arm switch, siren. All outputs with configurable polarity.
 - `rlc_base`: ADC1 configuration for battery voltage (GPIO 1) and 8 continuity inputs (GPIO 2–9).
 - `rlc_base`: `relay_fire_set()`, `relay_fire_all_off()`, `relay_all_safe()` functions.
@@ -836,7 +837,7 @@ This provides automatic post-fire status without any additional hardware — the
 | Input range | 0–3.3 V (via external voltage divider from battery) |
 | ADC resolution | 12-bit |
 | Sampling interval | 1000 ms |
-| Averaging | 8-sample moving average to reduce noise |
+| Averaging | Median of a 33-sample burst per reading, then an 8-deep moving average (see §5.6.3) |
 | Conversion | The firmware SHALL use the ESP-IDF v5.x ADC calibration API (`adc_cali_raw_to_voltage()`) for voltage conversion. This uses per-chip calibration data burned into eFuse at the factory. The calibrated millivolt reading is then multiplied by `DIVIDER_RATIO` to obtain the battery voltage. |
 
 The DIVIDER_RATIO constant must be defined in configuration to match the external resistor divider.
@@ -1090,6 +1091,21 @@ The remote's map is driven from the continuity bands in the cached STATUS_UPDATE
 | Discharge rating | 30C continuous (66 A) — far exceeds remote unit demand (~300 mA peak) |
 | Connector | T-plug (Deans) (on battery); PCB must mate with T-plug or use T-plug pigtail. |
 | Regulation | 3.3V DC-DC buck converter (e.g., MP1584EN module). LDO not recommended due to large voltage differential (7.4–8.4V → 3.3V) and associated thermal waste. |
+
+#### 5.6.3 Battery ADC Sampling
+
+Both units read their pack through a resistive divider into ADC1 (12-bit, 12 dB attenuation), then apply the per-unit `*_VBAT_DIVIDER_RATIO`. Each reading is produced as follows:
+
+1. Take a burst of `VBAT_BURST_SAMPLES` (33) raw samples, spaced `VBAT_BURST_GAP_MS` (1 ms) apart.
+2. Keep the **median** of the burst.
+3. Convert through the ESP-IDF calibration curve (`adc_cali_raw_to_voltage`).
+4. Feed an 8-deep moving average, which is the value reported to the FSM and protocol.
+
+**Why a median, not a mean.** A sample clipped at ADC full scale can only bias a mean **upward**, which makes a flat pack read as healthy — the single direction in which a battery guard must never fail. A median discards clipping and spikes outright. This is not hypothetical: during divider calibration (2026-08-19) a noisy bench supply produced 600–1500 counts of sample spread with individual samples clipping, and in a burst where 9 of 33 samples clipped, the mean read 571 counts high — roughly **+2 V of phantom battery voltage** through the base's divider ratio, while the median was exact.
+
+The burst count is odd so the median is a real sample rather than an interpolation between two. The 1 ms spacing spreads the burst over ~33 ms so samples decorrelate from supply ripple instead of landing in the same part of every cycle. Sampling runs at 1 Hz in dedicated tasks that feed the 5 s task watchdog, so the ~33 ms cost is immaterial.
+
+If more than a quarter of a burst clips, the driver logs a warning: the median has already discarded them, but persistent clipping indicates supply noise or an input above the divider's design range and must not pass silently.
 
 ---
 
@@ -1663,7 +1679,7 @@ A dedicated FreeRTOS task or timer callback (`arm_sense_task`) shall poll the ar
 
 #### 7.3.3 Battery Monitoring
 
-Sampled every 1000 ms with 8-sample moving average. Two thresholds:
+Sampled every 1000 ms: the median of a 33-sample burst, then an 8-deep moving average (§5.6.3). Two thresholds:
 - `VBAT_MIN_ARM_MV`: minimum voltage to allow arming. Below this, ARM commands are NACK'd with reason 0x09.
 - `VBAT_CRITICAL_MV`: critical low voltage. Below this, immediate disarm and transition to ERROR state (unless in FIRING — complete pulse first).
 
@@ -2470,6 +2486,9 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `CMD_INTEGRITY_KEY` | 16-byte pre-shared key for CRC32 integrity check |
 | `BASE_MAC_ADDR` | 6-byte MAC of the base unit |
 | `REMOTE_MAC_ADDR` | 6-byte MAC of the remote unit |
+| `VBAT_BURST_SAMPLES` | 33 — raw samples per reading, odd so the median is exact |
+| `VBAT_BURST_GAP_MS` | 1 — spacing, to decorrelate from supply ripple |
+| `VBAT_RAIL_COUNTS` | 4093 — at or above this a sample counts as clipped |
 | `RGB_LED_BRIGHTNESS_BASE` / `_REMOTE` | 0–255, default: 30 each |
 | `RLC_STRIP_REVERSED` | per unit — 0 (base, data-in at channel 1), 1 (remote, data-in at channel 8) |
 | `RLC_STRIP_ALARM_WINK_MS` / `_PERIOD_MS` | 300 / 3000 |
@@ -2608,6 +2627,13 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-L08 | LED strip renderer | Key warning breathes the whole map with no active channel (base) and only the cursor with one (remote). |
 | T-L09 | LED strip renderer | Stale dim and cursor pulse compose without either overriding the other. |
 
+| T-B01 | Battery sampling | Insertion-sort helper orders correctly. |
+| T-B02 | Battery sampling | Median of a constant burst returns that value. |
+| T-B03 | Battery sampling | Samples clipped at full scale do not move the median, and are counted. Contrasted against the mean, which is biased upward by the same data. |
+| T-B04 | Battery sampling | Zero-valued dropouts do not move the median. |
+| T-B05 | Battery sampling | Full sample path applies the divider ratio and caches the result, unaffected by clipping. |
+| T-B06 | Battery sampling | Total ADC read failure retains the previous good reading. |
+| T-B07 | Battery sampling | Burst size is odd. |
 | T-E01 | Error flag naming | Every defined flag maps to its documented display name. |
 | T-E02 | Error flag naming | Every bit 0-7 resolves to a usable name, including the reserved and undefined bits. |
 | T-E03 | Error flag naming | Flag counting for empty, single, multiple and full masks. |

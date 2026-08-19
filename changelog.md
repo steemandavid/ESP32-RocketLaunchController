@@ -1,5 +1,66 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-19 (late) — Battery sampling hardened against clipping
+
+`rlc_battery.c` took a **single** raw ADC read per call and fed an 8-deep mean.
+The divider calibration earlier today showed why that fails: a noisy bench
+supply produced 600-1500 counts of sample spread with individual samples
+clipping at ADC full scale, and **a clipped sample can only bias a mean
+upward** — making a flat pack read as healthy, the one direction a battery
+guard must never fail in.
+
+### Change
+
+Each reading is now the **median of a 33-sample burst** at 1 ms spacing,
+feeding the existing 8-deep moving average. Odd count so the median is a real
+sample rather than an interpolation; the spacing spreads the burst over ~33 ms
+so samples decorrelate from supply ripple instead of landing in the same part
+of every cycle. Bursts where more than a quarter of samples clip now log a
+warning — the median has already discarded them, but persistent clipping means
+supply noise or an input over range and must not pass silently.
+
+Cost is immaterial: sampling runs at 1 Hz in tasks that feed a 5 s watchdog.
+
+Constants live in `rlc_config.h` (`VBAT_BURST_SAMPLES`, `VBAT_BURST_GAP_MS`,
+`VBAT_RAIL_COUNTS`) with the rationale recorded beside them.
+
+### Measured
+
+Host test T-B03 quantifies it: in a burst where 9 of 33 samples clip, the mean
+reads **571 counts high** — about **+2 V** through the base's 4.3148 divider
+ratio — while the median is exact.
+
+On target after reflashing, 30 s per unit:
+
+| Unit | vbat spread | Clipping warnings |
+|---|---|---|
+| Base | 43 mV (0.35 %) | 0 |
+| Remote (on the noisy bench supply) | **20 mV (0.24 %)** | 0 |
+
+Both units linked throughout, IDLE, `err=0x00 (NONE)`.
+
+### Tests
+
+New host file, T-B01…T-B07, 13 checks: sort helper, constant burst, the
+clipped-burst case contrasted directly against the mean, zero dropouts, the
+full path with divider ratio applied, retention of the last good value on total
+ADC failure, and a guard that the burst size stays odd. Needed new ADC stubs
+(`tests/host/stubs/esp_adc/`) that script the raw values the driver reads.
+
+### Deliberately not changed
+
+The 8-deep moving average is still a mean. Each input is now already a robust
+median, so that is sufficient — and making it a median too would slow the
+response to a genuine voltage collapse, a behavioural change in a safety path
+that the evidence did not justify.
+
+### Docs
+
+FSD **v1.23**: new §5.6.3 on battery ADC sampling, burst constants in §14.1,
+T-B rows in §15.5, and the stale "8-sample moving average" wording corrected in
+§4, §5.4.7 and §7.3.3. Development_Progress gained a section with the on-target
+figures.
+
 ## 2026-08-19 (bench, cont.) — Remote calibrated, thresholds restored, bugs #22/#23
 
 Removing the bug #21 zener restored the remote's sense path: implied ratio now

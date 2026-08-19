@@ -102,6 +102,24 @@
 #define REMOTE_VBAT_MIN_OPERATE_MV     6600
 #define REMOTE_VBAT_CRITICAL_MV        6400
 
+/* Battery ADC sampling. Each rlc_battery_sample() call takes a burst and
+ * keeps its MEDIAN, rather than a single read.
+ *
+ * Rationale (2026-08-19): during divider calibration a noisy bench supply
+ * produced 600-1500 counts of sample spread with individual samples clipping
+ * at ADC full scale. A clipped sample can only bias a mean UPWARD — the
+ * dangerous direction for a battery threshold, because it makes a flat pack
+ * look healthy. A median discards spikes and clipping outright; measured
+ * side by side on that supply it was over twice as stable as the mean.
+ *
+ * Odd count so the median is an exact sample, not an interpolation. The 1 ms
+ * spacing spreads the burst across ~33 ms so samples decorrelate from supply
+ * ripple instead of all landing in the same part of the cycle. Called at 1 Hz
+ * from tasks that feed a 5 s watchdog, so the cost is immaterial. */
+#define VBAT_BURST_SAMPLES             33
+#define VBAT_BURST_GAP_MS              1
+#define VBAT_RAIL_COUNTS               4093   /* at/above this = clipped */
+
 /* Full-charge endpoints for the display battery gauges (FSD §10.2.2),
  * production values: REMOTE 8400 (2S LiPo), BASE 12600 (3S LiPo). */
 #define REMOTE_VBAT_FULL_MV            8400

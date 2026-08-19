@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.22 (2026-08-19)
+**Spec:** RLC-FSPEC-001 v1.23 (2026-08-19)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -202,7 +202,7 @@ Test specs: `rlc-hw-test-base/RLC_Base_Hardware_Test_Specification.md` and
 | 21 | LED task priority 1 (lowest) | §9.10 | DONE | `xTaskCreate(..., 1, ...)` |
 | 22 | Watchdog setup | §9.6 | DONE | `rlc_watchdog.c` |
 | 23 | TWDT per-task registration helper | §9.6 | DONE | `rlc_watchdog_add_task()` |
-| 24 | Battery ADC driver (ADC1, 8-sample avg, calibration) | §5.4.7 | DONE | `rlc_battery.c` |
+| 24 | Battery ADC driver (ADC1, median-of-33 burst + 8-deep average, calibration) | §5.4.7 | DONE | `rlc_battery.c` |
 | 25 | Battery 3-threshold check (OK/WARNING/LOW/CRITICAL) | §8.3.4 | DONE | `rlc_battery_check()` with `min_operate_mv` |
 | 26 | Debounce engine (8-bit / 16-bit shift register) | §5.3 | DONE | `rlc_debounce.c/h` |
 | 27 | Version header | §4.3 | DONE | `rlc_version.h` — v1.0.0 |
@@ -985,7 +985,8 @@ display bug; both are open items.
    `docs/calibration/remote_vbat_2026-08-19.md`.
 
 Remote battery criteria, for reference: `rlc_remote_battery.c` samples GPIO 1
-(ADC1_CH0) once per second through the 18 kΩ/10 kΩ (2.8:1) divider, 8-sample
+(ADC1_CH0) once per second through the 18 kΩ/10 kΩ (2.8:1) divider, taking the
+median of a 33-sample burst and then an 8-deep moving
 average (see bug #23 on the divider's lack of ADC headroom).
 Below `REMOTE_VBAT_CRITICAL_MV` it posts `EVT_BATTERY_CRITICAL`
 (edge-triggered) and the remote FSM enters STATE_ERROR — unrecoverable, power
@@ -1077,6 +1078,46 @@ channels 4-8 are blocked by bug #19 (dead pixel at channel 4).
 | T-D07 | NACK overlay text + 3 s timeout, screen restored cleanly | TODO |
 | T-D08 | Link-lost screen and recovery back to main status | TODO |
 | T-D09 | Full-screen redraw time and steady-state frame rate | TODO |
+
+---
+
+### Battery ADC Sampling Hardened (2026-08-19)
+
+`rlc_battery.c` took a **single** raw ADC read per call and fed an 8-deep mean.
+Divider calibration showed why that is not good enough: a noisy bench supply
+produced 600-1500 counts of sample spread with individual samples clipping at
+ADC full scale, and **a clipped sample can only bias a mean upward** — making a
+flat pack read as healthy, the one direction a battery guard must never fail in.
+
+Each reading is now the **median of a 33-sample burst** (1 ms spacing), feeding
+the existing 8-deep moving average. Odd count so the median is a real sample;
+the spacing spreads the burst over ~33 ms so samples decorrelate from supply
+ripple. Bursts where more than a quarter of samples clip log a warning — the
+median has already discarded them, but persistent clipping means supply noise
+or an input over range and should not pass silently.
+
+Cost is immaterial: sampling runs at 1 Hz in dedicated tasks that feed the 5 s
+task watchdog.
+
+**Measured effect (host test T-B03).** In a burst with 9 of 33 samples clipped,
+the mean reads **571 counts high** — roughly **+2 V** through the base's 4.3148
+divider ratio — while the median is exact.
+
+**On target, 30 s per unit, after reflashing:**
+
+| Unit | vbat spread | Clipping warnings |
+|---|---|---|
+| Base | 43 mV (0.35 %) | 0 |
+| Remote (on the noisy bench supply) | **20 mV (0.24 %)** | 0 |
+
+Covered by host tests T-B01…T-B07 (FSD §15.5), including the clipped-burst case
+contrasted directly against the mean, dropout rejection, and retention of the
+last good reading on total ADC failure.
+
+**Not changed:** the 8-deep moving average is still a mean. With each input
+already a robust median that is sufficient, and making it a median too would
+slow the response to a genuine voltage collapse — a behavioural change in a
+safety path that was not warranted by the evidence.
 
 ---
 

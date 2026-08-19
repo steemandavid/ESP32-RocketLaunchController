@@ -6,6 +6,8 @@
 #include "rlc_config.h"
 
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
@@ -80,13 +82,65 @@ int rlc_battery_init(int gpio_num, float divider_ratio)
     return 0;
 }
 
+/* Ascending insertion sort. The burst is small and fixed, so this is cheaper
+ * and more predictable than qsort, and pulls in no extra dependency. */
+static void sort_ints(int *a, int n)
+{
+    for (int i = 1; i < n; i++) {
+        int v = a[i], j = i - 1;
+        while (j >= 0 && a[j] > v) { a[j + 1] = a[j]; j--; }
+        a[j + 1] = v;
+    }
+}
+
+/**
+ * Take a burst of raw ADC samples and return the median.
+ *
+ * The median rather than a mean because a sample clipped at ADC full scale
+ * can only drag a mean UPWARD, which makes a flat pack look healthy — the one
+ * direction a battery guard must never fail in. See VBAT_BURST_SAMPLES.
+ *
+ * @param railed  receives the number of clipped samples seen (may be NULL)
+ * @return median raw count, or -1 if no sample could be read
+ */
+static int sample_burst_median(int *railed)
+{
+    int burst[VBAT_BURST_SAMPLES];
+    int got = 0, clipped = 0;
+
+    for (int i = 0; i < VBAT_BURST_SAMPLES; i++) {
+        int raw = 0;
+        if (adc_oneshot_read(s_adc_handle, s_channel, &raw) == ESP_OK) {
+            burst[got++] = raw;
+            if (raw >= VBAT_RAIL_COUNTS) clipped++;
+        }
+        if (i + 1 < VBAT_BURST_SAMPLES) vTaskDelay(pdMS_TO_TICKS(VBAT_BURST_GAP_MS));
+    }
+
+    if (railed) *railed = clipped;
+    if (got == 0) return -1;
+
+    sort_ints(burst, got);
+    return burst[got / 2];
+}
+
 uint16_t rlc_battery_sample(void)
 {
-    int raw = 0;
-    esp_err_t ret = adc_oneshot_read(s_adc_handle, s_channel, &raw);
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "ADC read failed");
+    int railed = 0;
+    int raw = sample_burst_median(&railed);
+    if (raw < 0) {
+        ESP_LOGW(TAG, "ADC read failed — all %d samples in the burst",
+                 VBAT_BURST_SAMPLES);
         return s_voltage_mv;
+    }
+
+    /* Clipping means the input is at or over the ADC's range. The median has
+     * already discarded these, but a persistent count is a real fault signal
+     * (supply noise, or an input above the divider's design range) and must
+     * not pass silently. */
+    if (railed > VBAT_BURST_SAMPLES / 4) {
+        ESP_LOGW(TAG, "%d/%d ADC samples clipped at full scale — check supply "
+                      "noise or input over-range", railed, VBAT_BURST_SAMPLES);
     }
 
     int voltage_mv = 0;

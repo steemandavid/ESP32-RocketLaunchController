@@ -2,7 +2,8 @@
  * RLC Battery Voltage Monitor
  *
  * ADC1-based battery voltage measurement with calibration,
- * 8-sample moving average, and threshold detection.
+ * a median-of-burst per sample, an 8-deep moving average, and threshold
+ * detection.
  */
 
 #pragma once
