@@ -32,6 +32,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
+| 21 | Remote VBAT sense is non-linear — under-reads by 9 % at 5.3 V growing to 30 % at 8.6 V | Hardware | OPEN — root cause not yet isolated | All remote battery protection. A full 2S pack reads as CRITICAL, so production thresholds would lock the remote in ERROR. Blocks restoring FSD §5.6.2 values. |
 | 20 | Shipped crypto keys are public — AES-128-CCM and the keyed CRC32 check are ineffective against anyone who has read the source | Security | OPEN — rotation deferred by decision | Field use where an adversary is in the threat model. No effect on bench work. |
 | 19 | Base LED strip: dead 4th pixel in the chain — channel 4 stuck, channels 5-8 dark | Hardware | OPEN — needs reflow or replacement | Channels 4-8 of the base strip; T-L15 for those channels |
 | 18 | Base ESP32 destroyed by relay-arc coupling on the continuity ADC inputs | Hardware + firmware | Software fix DONE and audited; hardware protection fitted on **channel 1 only** | All fire testing on channels 2-8, enforced in firmware by `FIRE_PROTECTED_CHANNEL_MASK` |
@@ -1070,6 +1071,55 @@ channels 4-8 are blocked by bug #19 (dead pixel at channel 4).
 | T-D07 | NACK overlay text + 3 s timeout, screen restored cleanly | TODO |
 | T-D08 | Link-lost screen and recovery back to main status | TODO |
 | T-D09 | Full-screen redraw time and steady-state frame rate | TODO |
+
+---
+
+### Bug #21 — Remote VBAT sense is non-linear (2026-08-19, OPEN)
+
+**Symptom.** Calibrating the remote's divider against a DVM (5.33-8.57 V) gives
+an implied ratio that drifts from **3.08 to 4.01** — 30 % across the sweep —
+instead of the constant 2.8 a resistive divider must produce.
+
+| V_true | pin mV (via adc_cali) | implied ratio | firmware would report | error |
+|---|---|---|---|---|
+| 5.33 | 1729 | 3.08 | 4843 | −9.1 % |
+| 5.79 | 1815 | 3.19 | 5082 | −12.2 % |
+| 6.27 | 1891 | 3.32 | 5296 | −15.5 % |
+| 6.77 | 1960 | 3.45 | 5488 | −18.9 % |
+| 7.56 | 2045 | 3.70 | 5726 | −24.3 % |
+| 8.00 | 2087 | 3.83 | 5842 | −27.0 % |
+| 8.57 | 2136 | 4.01 | 5979 | −30.2 % |
+
+**This cannot be a resistor-value error.** A resistive divider is linear; no
+combination of values produces a drifting ratio. Something non-linear is loading
+the sense node, or the ADC input itself is damaged. The pin voltage falls
+progressively short of an ideal 2.8:1 divider — by 174 mV at 5.33 V, rising to
+925 mV at 8.57 V — which is the signature of a clamp conducting harder as the
+node rises.
+
+**Consequence — showstopper for field use.** With the FSD §5.6.2 production
+thresholds (7000 / 6600 / 6400), **every voltage across the whole 2S range reads
+below CRITICAL**. A freshly charged pack would put the remote straight into
+STATE_ERROR at boot. This is precisely why the thresholds must not be restored
+until the sense circuit is fixed.
+
+**Resolves an earlier misreading.** On 2026-08-19 the remote reported
+`vbat=5740 mV` and the pack was suspected of being over-discharged. Working that
+back through this calibration puts the true pack voltage at **~7.6 V** — healthy.
+The pack was fine; the sense circuit was lying. (Not yet proven that the fault
+predates that reading — measuring the pack directly settles it.)
+
+**Candidate causes:** a clamp diode / zener / TVS on the sense node with a soft
+knee; damaged GPIO 1 ESD protection leaking to the 3.3 V rail (bug #18 failure
+class — note the documented warning that feeding the remote's battery input from
+a 12 V+ supply puts >4.5 V on GPIO 1); or an unintended parallel load.
+
+**Next diagnostic:** DVM directly on GPIO 1 to GND while sweeping. At 8.00 V in,
+an ideal divider gives 2857 mV; the ADC currently reports 2087 mV. If the DVM
+agrees with the ADC the node is genuinely being pulled down (external cause); if
+it reads ~2857 mV the ADC input is at fault (chip-level).
+
+**No calibration applied.** A non-linear fault cannot be corrected with a gain.
 
 ---
 

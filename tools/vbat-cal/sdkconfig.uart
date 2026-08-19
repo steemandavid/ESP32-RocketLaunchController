@@ -1,0 +1,6 @@
+# Console on UART0, for a board reached through its CH340 UART bridge rather
+# than its native USB port. Select with:
+#   idf.py -C tools/vbat-cal -DSDKCONFIG_DEFAULTS=sdkconfig.uart build
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y

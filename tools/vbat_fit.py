@@ -26,23 +26,36 @@ import argparse
 import re
 import sys
 
-CSV_RE = re.compile(r'^CSV,(\d+),(-?\d+),(-?\d+),(-?\d+),(-?\d+),')
+CSV_RE = re.compile(r'^CSV,(\d+),(-?\d+),(-?\d+),(-?\d+),(-?\d+),(-?\d+)')
+PLATEAU_RE = re.compile(r'^PLATEAU,(\d+),(-?\d+),(-?\d+),(\d+),(-?\d+)')
 
 
 def read_records(path):
-    recs = []
+    """Continuous trace records, and the firmware's own accepted plateaus.
+
+    The firmware decides what counts as held (a dwell inside a tolerance band),
+    so its PLATEAU records are authoritative when present. The continuous trace
+    is kept for diagnosis and as a fallback.
+    """
+    recs, plats = [], []
     with open(path, 'r', errors='replace') as fh:
         for line in fh:
             m = CSV_RE.search(line)
             if m:
                 recs.append({
-                    'seq': int(m.group(1)),
-                    'raw': int(m.group(2)),
-                    'rmin': int(m.group(3)),
-                    'rmax': int(m.group(4)),
-                    'mv': int(m.group(5)),
+                    'seq': int(m.group(1)), 'raw': int(m.group(2)),
+                    'rmin': int(m.group(3)), 'rmax': int(m.group(4)),
+                    'mv': int(m.group(5)), 'held': int(m.group(6)),
                 })
-    return recs
+                continue
+            m = PLATEAU_RE.search(line)
+            if m:
+                plats.append({
+                    'idx': int(m.group(1)), 'raw': float(m.group(2)),
+                    'mv': float(m.group(3)), 'n': int(m.group(4)),
+                    'held_ms': int(m.group(5)), 'spread': 0,
+                })
+    return recs, plats
 
 
 def find_plateaus(recs, tol_counts, min_len):
@@ -100,7 +113,12 @@ def fit_through_origin(xs, ys):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('logfile')
+    ap.add_argument('logfile', nargs='?',
+                    help='vbat-cal capture log (omit when using --pairs)')
+    ap.add_argument('--pairs', nargs='*', default=[],
+                    help='hand-noted RAW:REFERENCE_MV pairs, e.g. 636:8010 713:8990')
+    ap.add_argument('--ratio-nominal', type=float, default=None,
+                    help='nominal divider ratio, for comparison in the summary')
     ap.add_argument('--refs', nargs='*', type=float, default=[],
                     help='reference voltages in mV, in the order captured')
     ap.add_argument('--tol', type=int, default=10,
@@ -108,20 +126,55 @@ def main():
     ap.add_argument('--min-len', type=int, default=5,
                     help='minimum records per plateau (default 5)')
     ap.add_argument('--list-plateaus', action='store_true')
+    ap.add_argument('--rederive', action='store_true',
+                    help='ignore the firmware PLATEAU records and re-detect')
     args = ap.parse_args()
 
-    recs = read_records(args.logfile)
-    if not recs:
+    # Hand-noted pairs: the operator swept the supply and read raw counts off
+    # the terminal against a DVM. No log parsing involved.
+    if args.pairs:
+        plats, refs = [], []
+        for spec in args.pairs:
+            if ':' not in spec:
+                sys.exit(f'Bad pair "{spec}" — expected RAW:REFERENCE_MV, e.g. 636:8010')
+            raw_s, ref_s = spec.split(':', 1)
+            try:
+                raw_v, ref_v = float(raw_s), float(ref_s)
+            except ValueError:
+                sys.exit(f'Bad pair "{spec}" — both parts must be numbers')
+            if raw_v >= 4090:
+                sys.exit(f'Pair "{spec}" is at or near ADC full scale (4095). '
+                         f'That is an over-range reading, not a measurement — drop it.')
+            plats.append({'raw': raw_v, 'mv': 0.0, 'n': 1})
+            refs.append(ref_v)
+        print(f'{len(plats)} hand-noted pairs\n')
+        print(f'{"#":>3} {"raw":>9} {"ref_mV":>9}')
+        for i, (p, r) in enumerate(zip(plats, refs)):
+            print(f'{i:>3} {p["raw"]:>9.1f} {r:>9.1f}')
+        print()
+        report(plats, refs, args, raw_only=True)
+        return
+
+    if not args.logfile:
+        sys.exit('Give a logfile, or use --pairs RAW:REFERENCE_MV ...')
+
+    recs, fw_plats = read_records(args.logfile)
+    if not recs and not fw_plats:
         sys.exit('No CSV records found. Is this a vbat-cal capture?')
-    print(f'{len(recs)} records read from {args.logfile}')
+    print(f'{len(recs)} trace records read from {args.logfile}')
 
-    plats = find_plateaus(recs, args.tol, args.min_len)
-    print(f'{len(plats)} plateaus detected '
-          f'(tolerance {args.tol} counts, minimum {args.min_len} records)\n')
+    if fw_plats and not args.rederive:
+        plats = fw_plats
+        print(f'{len(plats)} plateaus accepted by the firmware '
+              f'(use --rederive to re-detect from the trace instead)\n')
+    else:
+        plats = find_plateaus(recs, args.tol, args.min_len)
+        print(f'{len(plats)} plateaus re-derived from the trace '
+              f'(tolerance {args.tol} counts, minimum {args.min_len} records)\n')
 
-    print(f'{"#":>3} {"n":>4} {"raw":>8} {"adc_mv":>8} {"spread":>7}')
+    print(f'{"#":>3} {"n":>5} {"raw":>9} {"adc_mv":>8}')
     for i, p in enumerate(plats):
-        print(f'{i:>3} {p["n"]:>4} {p["raw"]:>8.1f} {p["mv"]:>8.1f} {p["spread"]:>7}')
+        print(f'{i:>3} {p["n"]:>5} {p["raw"]:>9.1f} {p["mv"]:>8.1f}')
     print()
 
     if args.list_plateaus or not args.refs:
@@ -134,13 +187,50 @@ def main():
                  f'values.\nCheck alignment with --list-plateaus, or adjust --tol '
                  f'/ --min-len, before trusting any fit.')
 
+    report(plats, list(args.refs), args, raw_only=False)
+
+
+def report(plats, ys, args, raw_only):
+    # ---- Primary: reference volts against RAW counts -------------------
+    # This bypasses esp_adc_cal entirely and folds the whole chain (ADC gain,
+    # offset and divider) into one fit. If its residuals are as flat as the
+    # calibrated-mV fit below, it is the simpler and more robust model.
+    xr = [p['raw'] for p in plats]
+    ar, br = lstsq(xr, ys)
+    print('=== Model 0: reference vs RAW counts (bypasses esp_adc_cal) ===')
+    print(f'  mv_per_count = {ar:.6f}, offset = {br:+.1f} mV')
+    worst_raw = 0.0
+    for x, y in zip(xr, ys):
+        pred = ar * x + br
+        err = pred - y
+        worst_raw = max(worst_raw, abs(err))
+        print(f'   ref {y:8.1f} mV   raw {x:8.1f}   predicted {pred:8.1f}   '
+              f'error {err:+7.1f} mV ({100*err/y:+.2f} %)')
+    print(f'  worst-case error: {worst_raw:.1f} mV\n')
+
+    if raw_only:
+        print('=== Recommendation ===')
+        print(f'  Fit against raw counts: vbat_mV = {ar:.6f} * raw {br:+.1f}')
+        print(f'  Worst-case error across the sweep: {worst_raw:.1f} mV')
+        if abs(br) < 30:
+            print(f'  Offset is negligible, so a pure scale works: '
+                  f'vbat_mV = raw * {(sum(ys)/sum(p["raw"] for p in plats)):.6f}')
+        else:
+            print(f'  Offset {br:+.1f} mV is material — rlc_battery.c currently has no')
+            print(f'  offset term, so adopting this needs a code change.')
+        if args.ratio_nominal:
+            print(f'\n  For comparison against the nominal {args.ratio_nominal} divider:')
+            print(f'  the implied pin voltage per count and the resulting effective')
+            print(f'  ratio depend on the ADC reference, so compare end-to-end error')
+            print(f'  rather than the ratio alone.')
+        return
+
     xs = [p['mv'] for p in plats]
-    ys = list(args.refs)
 
     ratio_only = fit_through_origin(xs, ys)
     a, b = lstsq(xs, ys)
 
-    print('=== Model 1: gain-only (what the firmware implements) ===')
+    print('=== Model 1: gain-only on calibrated mV (what the firmware implements) ===')
     print(f'  ratio = {ratio_only:.4f}')
     worst = 0.0
     for x, y in zip(xs, ys):
@@ -163,6 +253,12 @@ def main():
     print(f'  worst-case error: {worst2:.1f} mV\n')
 
     print('=== Recommendation ===')
+    print(f'  worst-case error — raw fit {worst_raw:.1f} mV, '
+          f'gain-only {worst:.1f} mV, gain+offset {worst2:.1f} mV')
+    if worst_raw < worst * 0.5:
+        print('  The raw-count fit is markedly better, which means esp_adc_cal is')
+        print('  contributing error on this chip. Consider fitting raw directly in')
+        print('  rlc_battery.c rather than going through adc_cali_raw_to_voltage().')
     if abs(b) < 30 or worst2 > worst * 0.7:
         print(f'  Offset is small or buys little. Keep the gain-only model and set')
         print(f'  the divider ratio to {ratio_only:.4f}.')

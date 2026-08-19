@@ -1,5 +1,76 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-19 (bench) — Battery divider calibration: base done, remote reveals bug #21
+
+Method: DVM at the board terminals as reference, `tools/vbat-cal` streaming raw
+ADC counts, and each chip's own `adc_cali` linearisation curve dumped from the
+device (a pure function of the raw count, so it needs no applied voltage). Raw
+counts alone proved uninterpretable — fitting them directly gave 322 mV
+worst-case error with S-shaped residuals, which is ADC non-linearity, not the
+divider. Mapping through the curve first is what made the data usable.
+
+### Base — calibrated, divider was fine
+
+`BASE_VBAT_DIVIDER_RATIO` 4.3 → **4.3148** (gain-only, fitted over the 8.7–12.9 V
+operating band, 0.70 % worst-case). The 0.34 % correction says the resistors were
+always within tolerance; the divider was never the error source.
+
+Two findings that are not firmware:
+
+- **The ADC runs out of headroom.** A full 3S pack (12.6 V) puts 2920 mV on the
+  pin — 92 % of the ADC's 3163 mV ceiling; the 12.92 V test point hit 95 %.
+  Incremental scale collapses from ~3.58 mV/count mid-range to 2.42 at the top.
+  A ~5.5:1 divider would land the whole range in the linear region.
+- **Sampling noise now dominates.** ~130 counts peak-to-peak (±1.7 %) on the
+  bench supply; `rlc_battery.c` averages 8 single reads a second apart, leaving
+  ~±0.6 %. An oversampling burst would help. Not applied — it touches a safety
+  path and is the user's call.
+
+Offset models fitted better (39 mV vs 89 mV) but were **rejected**: a +424 mV
+offset is large and physically unexplained, a straight line absorbing ADC
+curvature that would extrapolate badly. Honest 0.7 % beats a fragile fudge.
+
+Error direction is conservative both before and after: the firmware under-reads
+near the arming thresholds (87–102 mV before, 50–68 mV after), so it blocks
+arming slightly early rather than late.
+
+### Remote — calibration aborted, bug #21 raised
+
+The implied ratio drifts **3.08 → 4.01 across the sweep, 30 %**. A resistive
+divider is linear by definition, so no resistor value explains this: something
+non-linear loads the sense node, or the ADC input is damaged. Pin voltage falls
+short of an ideal 2.8:1 divider by 174 mV at 5.33 V rising to 925 mV at 8.57 V —
+the signature of a clamp conducting harder as the node rises.
+
+**Showstopper:** the firmware under-reads by 9 % at the bottom growing to 30 % at
+full charge, so with the FSD §5.6.2 production thresholds (7000/6600/6400)
+*every* voltage in the 2S range reads below CRITICAL. A freshly charged pack
+would put the remote straight into STATE_ERROR at boot. Restoring those
+thresholds is blocked until the circuit is fixed.
+
+**Corrects an earlier conclusion.** This morning's `vbat=5740 mV` prompted a
+suggestion that the pack was over-discharged. Back-calculated through this data
+the true pack voltage was **~7.6 V** — healthy. The pack was fine; the sense
+circuit was lying. Whether the fault predates today is not yet proven; measuring
+the pack directly settles it.
+
+No ratio applied — a non-linear fault cannot be corrected with a gain.
+Next diagnostic: DVM directly on GPIO 1 while sweeping, to separate an external
+clamp from a damaged ADC input.
+
+### Tooling
+
+- `tools/vbat-cal` gained a boot-time dump of the chip's `adc_cali` curve
+  (`ADCMAP` records) and a `sdkconfig.uart` variant, since the remote is reached
+  over its CH340 bridge while the base is on native USB — the console has to
+  come out the port you are actually connected to.
+- `tools/vbat_fit.py` gained a `--pairs RAW:REF_MV` mode for hand-noted readings
+  and a raw-counts model alongside the calibrated-mV ones. Validated against
+  synthetic data with an injected ratio before being trusted on real numbers.
+- Evidence preserved under `docs/calibration/`: measurements, every fit
+  considered, and both chips' ADC curves, so the constants are reproducible
+  rather than magic.
+
 ## 2026-08-19 (evening) — Named error flags; battery calibration rig
 
 ### Error flags are shown by name

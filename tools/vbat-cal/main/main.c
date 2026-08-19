@@ -1,29 +1,39 @@
 /**
- * RLC battery-divider calibration capture.
+ * RLC battery-divider calibration readout.
  *
  * Reads the VBAT sense pin (GPIO 1, ADC1, 12-bit, 12 dB) using exactly the
- * same configuration as rlc_battery.c, and streams averaged readings as CSV
- * so a host can fit the divider ratio against a known reference voltage.
+ * same configuration as rlc_battery.c and prints a steady, averaged RAW ADC
+ * count twice a second.
  *
- * Reports BOTH the raw ADC count and the calibrated millivolts. That
- * separation matters: a wrong divider ratio shows up as a constant
- * proportional error, whereas poor ADC calibration shows up as curvature in
- * the residuals. With only calibrated mV the two are indistinguishable.
+ * Deliberately dumb: no plateau detection, no gating, no state. The operator
+ * sweeps the bench supply across the range, reads the reference voltage from
+ * a DVM at the board terminals, and notes the raw count shown here. The
+ * pairs are fitted afterwards by tools/vbat_fit.py --pairs.
  *
- * Procedure: feed the unit's battery input from a bench supply, hold each
- * setpoint ~5 s, and record this stream. Plateaus are then matched against
- * the reference voltages measured at the board terminals.
+ * Raw counts are the primary output. The calibrated pin voltage is shown
+ * alongside only as a sanity check: it comes from esp_adc_cal, which is one
+ * of the things the calibration is meant to check rather than trust.
  *
- *   ==> DO NOT EXCEED the per-unit input limits printed in the banner. <==
- *   The dividers differ per unit; feeding base voltages into the remote puts
- *   >4 V on a 3.3 V pin and destroys the chip (bug #18 failure class).
+ *   ==> INPUT LIMITS — exceeding these destroys the ESP32: <==
+ *       BASE   (3S, divider ~4.3:1): sweep 8.0-12.6 V, never above 13.0 V
+ *       REMOTE (2S, divider ~2.8:1): sweep 5.5-8.4 V,  never above 8.6 V
+ *   Feeding BASE voltages into the REMOTE puts >4 V on a 3.3 V pin.
  *
- * Build/flash:  idf.py -C tools/vbat-cal -p <by-id> flash monitor
- * Console is USB-Serial/JTAG (native USB port).
+ * A reading pinned at 4095 means the input is over range: either the supply
+ * is too high or the divider is not dividing. Stop and measure the pin.
+ *
+ * Build/flash, board reached over its NATIVE USB port (console on USB-JTAG):
+ *   idf.py -C tools/vbat-cal -p <by-id> flash monitor
+ *
+ * Board reached over a CH340 UART bridge instead (console on UART0):
+ *   rm -f tools/vbat-cal/sdkconfig
+ *   idf.py -C tools/vbat-cal -DSDKCONFIG_DEFAULTS=sdkconfig.uart -p <by-id> flash monitor
+ *
+ * The console must come out the port you are actually connected to, or the
+ * readout goes nowhere.
  */
 
 #include <stdio.h>
-#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -34,14 +44,16 @@
 static const char *TAG = "vbat_cal";
 
 /* Must match rlc_battery.c / pin_config.h */
-#define VBAT_GPIO        1
-#define BURST            64      /* samples averaged per emitted record */
-#define PERIOD_MS        500
+#define VBAT_GPIO     1
+#define BURST         64     /* samples averaged per printed line */
+#define PERIOD_MS     500
 
-/* Nominal ratios from rlc_config.h, printed for orientation only — the
- * calibration exists precisely because these are the suspect numbers. */
-#define RATIO_BASE       4.3f
-#define RATIO_REMOTE     2.8f
+/* Nominal ratios from rlc_config.h — printed for orientation only. These are
+ * the suspect numbers the calibration exists to replace. */
+#define RATIO_BASE    4.3f
+#define RATIO_REMOTE  2.8f
+
+#define ADC_FULL_SCALE 4095
 
 static adc_oneshot_unit_handle_t s_adc  = NULL;
 static adc_cali_handle_t         s_cali = NULL;
@@ -80,7 +92,7 @@ static void adc_setup(void)
         return;
     }
 #endif
-    ESP_LOGE(TAG, "ADC calibration UNAVAILABLE — mV column is an estimate only");
+    ESP_LOGE(TAG, "ADC calibration UNAVAILABLE — pin mV column is an estimate");
     s_cali = NULL;
 }
 
@@ -88,26 +100,33 @@ void app_main(void)
 {
     adc_setup();
 
-    printf("\n");
-    printf("=== RLC VBAT divider calibration ===\n");
-    printf("Pin GPIO %d, ADC1, 12-bit, 12 dB attenuation (same as rlc_battery.c)\n",
+    printf("\n=== RLC VBAT raw ADC readout ===\n");
+    printf("GPIO %d, ADC1, 12-bit, 12 dB attenuation (same config as rlc_battery.c)\n",
            VBAT_GPIO);
-    printf("\n");
-    printf("INPUT LIMITS — exceeding these destroys the ESP32:\n");
-    printf("  BASE   (3S, nominal divider %.2f:1): sweep 8.0-12.6 V, NEVER above 13.0 V\n",
-           (double)RATIO_BASE);
-    printf("  REMOTE (2S, nominal divider %.2f:1): sweep 5.5-8.4 V,  NEVER above 8.6 V\n",
-           (double)RATIO_REMOTE);
-    printf("  Feeding BASE voltages into the REMOTE puts >4 V on a 3.3 V pin.\n");
-    printf("\n");
-    printf("Hold each setpoint ~5 s. Measure the reference at the board terminals.\n");
-    printf("Columns: seq, raw_avg, raw_min, raw_max, adc_mv, vbat_if_base, vbat_if_remote\n");
-    printf("CSV_HEADER,seq,raw_avg,raw_min,raw_max,adc_mv,vbat_base_mv,vbat_remote_mv\n");
+    printf("Averaging %d samples, updating every %d ms.\n", BURST, PERIOD_MS);
+    /* Dump this chip's ADC linearisation curve before anything else.
+     * adc_cali_raw_to_voltage() is a pure function of the raw count for a
+     * given chip and attenuation, so the whole table can be emitted with no
+     * external voltage applied. Captured alongside a sweep it lets the host
+     * separate ADC non-linearity from the divider ratio, which is impossible
+     * from raw counts alone. Step 4 is far finer than the curve's curvature. */
+    printf("ADCMAP_BEGIN,raw,mv\n");
+    for (int r = 0; r <= ADC_FULL_SCALE; r += 4) {
+        int mv = 0;
+        if (s_cali) adc_cali_raw_to_voltage(s_cali, r, &mv);
+        else        mv = (r * 3300) / ADC_FULL_SCALE;
+        printf("ADCMAP,%d,%d\n", r, mv);
+    }
+    printf("ADCMAP_END\n");
+    fflush(stdout);
 
-    uint32_t seq = 0;
+    printf("\nSweep the supply and note (DVM volts -> raw). Raw is the number that matters.\n");
+    printf("LIMITS: base never above 13.0 V, remote never above 8.6 V.\n");
+    printf("A reading pinned at %d is OVER RANGE, not a measurement.\n\n", ADC_FULL_SCALE);
+
     while (1) {
         uint32_t sum = 0;
-        int rmin = 1 << 30, rmax = -1;
+        int rmin = ADC_FULL_SCALE + 1, rmax = -1, got = 0;
 
         for (int i = 0; i < BURST; i++) {
             int raw = 0;
@@ -115,18 +134,23 @@ void app_main(void)
             sum += (uint32_t)raw;
             if (raw < rmin) rmin = raw;
             if (raw > rmax) rmax = raw;
+            got++;
             vTaskDelay(pdMS_TO_TICKS(1));
         }
+        if (!got) { ESP_LOGW(TAG, "no ADC samples"); continue; }
 
-        int raw_avg = (int)(sum / BURST);
-        int adc_mv  = 0;
-        if (s_cali) adc_cali_raw_to_voltage(s_cali, raw_avg, &adc_mv);
-        else        adc_mv = (raw_avg * 3300) / 4095;
+        int raw_avg = (int)(sum / (uint32_t)got);
+        int pin_mv  = 0;
+        if (s_cali) adc_cali_raw_to_voltage(s_cali, raw_avg, &pin_mv);
+        else        pin_mv = (raw_avg * 3300) / ADC_FULL_SCALE;
 
-        /* Both interpretations, so one binary serves either unit. */
-        printf("CSV,%lu,%d,%d,%d,%d,%d,%d\n",
-               (unsigned long)seq++, raw_avg, rmin, rmax, adc_mv,
-               (int)(adc_mv * RATIO_BASE), (int)(adc_mv * RATIO_REMOTE));
+        printf("raw %4d   (min %4d  max %4d)   pin %4d mV   "
+               "vbat@%.1f = %5d mV   vbat@%.1f = %5d mV%s\n",
+               raw_avg, rmin, rmax, pin_mv,
+               (double)RATIO_BASE,   (int)(pin_mv * RATIO_BASE),
+               (double)RATIO_REMOTE, (int)(pin_mv * RATIO_REMOTE),
+               (raw_avg >= ADC_FULL_SCALE - 5) ? "   ** OVER RANGE **" :
+               (raw_avg <= 5)                  ? "   ** near zero **"  : "");
         fflush(stdout);
 
         vTaskDelay(pdMS_TO_TICKS(PERIOD_MS));

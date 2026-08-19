@@ -70,7 +70,14 @@
 
 /* ── Voltage Thresholds (millivolts) ──────────────────────────── */
 
-#define BASE_VBAT_DIVIDER_RATIO        4.3f
+/* Calibrated 2026-08-19 against a DVM at the board terminals across
+ * 4.56-12.92 V, mapping raw counts through the chip's own adc_cali curve.
+ * Fitted 4.3148 vs the 4.3 nominal — a 0.34 % difference, i.e. the divider
+ * resistors are within tolerance and were never the error source.
+ * Residual error in the 8.7-12.9 V operating band is under 90 mV (0.7 %),
+ * dominated by ADC compression near full scale, not by this ratio.
+ * See Development_Progress "Battery Divider Calibration". */
+#define BASE_VBAT_DIVIDER_RATIO        4.3148f
 #define BASE_VBAT_MIN_ARM_MV           10500
 #define BASE_VBAT_CRITICAL_MV          9000
 
