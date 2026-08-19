@@ -47,7 +47,14 @@ that is how the above was measured, and it makes this class of freeze visible in
 logs as well as on screen.
 
 FSD **v1.24**: §10.2.5 now documents which counter each field must come from and
-why `missed_pings` is unsuitable for either.
+why `missed_pings` is unsuitable for either. Its ASCII mock-up of the screen was
+also corrected — it still showed "Ping attempts: 7" and a stale field order,
+left over from the scale-2 legibility pass that renamed the line to
+"Attempts 7   RSSI -45 dBm". The mock-up now matches the code.
+
+Checked `.claude/RESUME.md` while auditing docs: it is an untracked Claude Code
+checkpoint artifact from an unrelated session, not project documentation, and
+was left alone.
 
 ## 2026-08-19 (late) — Battery sampling hardened against clipping
 

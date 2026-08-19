@@ -2231,18 +2231,22 @@ Green/yellow border. Displayed for `POST_FIRE_COOLDOWN_MS` (2000 ms) after STATU
 ```
 ┌──────────────────────────────────────────────────┐
 │                                                  │
-│          ⚠  LINK LOST  ⚠                         │
+│          !  LINK LOST  !                         │
 │                                                  │
 │     No response from base unit                   │
-│     Last contact: 4 seconds ago                  │
 │                                                  │
 │     All channels disarmed (assumed)              │
 │                                                  │
-│     Attempting to reconnect...                   │
-│     Ping attempts: 7                             │
+│     Last contact: 4 s ago                        │
 │                                                  │
+│     Attempting to reconnect...                   │
+│                                                  │
+│     Attempts 7   RSSI -45 dBm                    │
 └──────────────────────────────────────────────────┘
 ```
+
+Layout and wording as built; strings are abbreviated to fit 40 characters at
+the §10.3 scale-2 font floor.
 
 Yellow/amber background.
 
