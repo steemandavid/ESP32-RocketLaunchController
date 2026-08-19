@@ -32,7 +32,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
-| 21 | Remote VBAT sense is non-linear — 3.3 V zener leakage into a 6.4 kΩ divider | Hardware | OPEN — root cause found, fix not yet fitted | All remote battery protection. A full 2S pack reads as CRITICAL, so production thresholds would lock the remote in ERROR. Blocks restoring FSD §5.6.2 values. |
+| 21 | Remote VBAT sense was non-linear — 3.3 V zener leakage into a 6.4 kΩ divider | Hardware | **Zener removed 2026-08-19, sense verified and calibrated. PARTIAL — no replacement clamp fitted, so GPIO 1 is unprotected.** | Nothing functionally. Production thresholds restored. Remaining risk is overvoltage exposure on GPIO 1 until a BAT54-class clamp is fitted. |
 | 20 | Shipped crypto keys are public — AES-128-CCM and the keyed CRC32 check are ineffective against anyone who has read the source | Security | OPEN — rotation deferred by decision | Field use where an adversary is in the threat model. No effect on bench work. |
 | 19 | Base LED strip: dead 4th pixel in the chain — channel 4 stuck, channels 5-8 dark | Hardware | OPEN — needs reflow or replacement | Channels 4-8 of the base strip; T-L15 for those channels |
 | 18 | Base ESP32 destroyed by relay-arc coupling on the continuity ADC inputs | Hardware + firmware | Software fix DONE and audited; hardware protection fitted on **channel 1 only** | All fire testing on channels 2-8, enforced in firmware by `FIRE_PROTECTED_CHANNEL_MASK` |

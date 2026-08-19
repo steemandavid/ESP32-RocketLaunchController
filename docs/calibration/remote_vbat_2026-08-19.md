@@ -42,3 +42,69 @@ and a badly non-linear one on the other.
 §5.6.2 production thresholds (7000 / 6600 / 6400) is **blocked** until the sense
 circuit is fixed: with the current fault, every voltage in the 2S range reads
 below CRITICAL and the remote would boot straight into STATE_ERROR.
+
+
+---
+
+# Re-run after removing the zener — CALIBRATION SUCCEEDED
+
+The 3.3 V zener was removed from the ADC node (no replacement clamp fitted
+yet). DVM at the pin then read **2.86 V with 8.05 V in** against an ideal
+2875 mV — the divider behaves exactly as specified, confirming the zener was
+the entire fault.
+
+Re-swept 4.94–8.56 V. The bench supply was noisy (600–1500 counts of sample
+spread, with individual samples clipping at full scale), so `tools/vbat-cal`
+was changed to report a **median** of 129 samples rather than a mean: the
+median is immune to spikes and to clipping, and proved 2× more stable
+(14 counts of line-to-line variation versus 31 for the mean).
+
+| DVM (V) | raw (median) | pin mV | implied ratio | % of ADC ceiling |
+|---|---|---|---|---|
+| 4.94 | 2041 | 1735.2 | 2.8469 | 55 % |
+| 5.46 | 2267 | 1924.2 | 2.8375 | 61 % |
+| 5.93 | 2462 | 2086.0 | 2.8428 | 66 % |
+| 6.40 | 2666 | 2253.0 | 2.8407 | 71 % |
+| 6.96 | 2921 | 2456.5 | 2.8333 | 78 % |
+| 7.56 | 3213 | 2672.5 | 2.8288 | 85 % |
+| 8.00 | 3465 | 2842.5 | 2.8144 | 90 % |
+| 8.56 | 3838 | 3054.5 | 2.8024 | 97 % |
+
+Implied ratio now spans **1.6 %** (was 30 % with the zener), declining with
+voltage — the ADC-compression signature, same direction and magnitude as the
+base.
+
+| Model | Ratio | Offset | Worst case |
+|---|---|---|---|
+| gain-only, all points | 2.8261 | — | 72 mV |
+| gain+offset | 2.7533 | +179 mV | 29 mV |
+| **gain-only, operating band (≥6.3 V)** | **2.8211** | — | **57 mV** |
+
+**Adopted: 2.8211**, gain-only, same methodology and same reasoning as the
+base — the offset model fits better numerically but is a straight line
+absorbing ADC curvature, physically unexplained, and would extrapolate badly.
+
+## Threshold verification
+
+With ratio 2.8211 and FSD §5.6.2 production thresholds restored:
+
+| True | Firmware reports | Error | Behaviour |
+|---|---|---|---|
+| 6400 (CRITICAL) | 6356 | −44 | trips correctly |
+| 6600 (MIN_OPERATE) | 6561 | −39 | correct |
+| 7000 (MIN_ARM) | 6971 | −29 | blocks arming |
+| 8400 (full pack) | 8446 | +46 | arming allowed |
+
+Every error near a threshold is negative, so protection trips early rather
+than late.
+
+## Still open
+
+- **No clamp fitted on GPIO 1.** The zener was removed and not replaced. A
+  BAT54 (or BAT85 / BAT43 / 1N5711) to the 3.3 V rail is still required — see
+  bug #21. A 1N5819 is *not* suitable: as a 1 A power Schottky its reverse
+  leakage would reintroduce the same class of error, pulling readings up
+  rather than down.
+- **ADC headroom.** A full 2S pack sits at 97 % of the ADC ceiling. Rescaling
+  to 3.0 kΩ / 1.2 kΩ (ratio 3.5) would put it near 76 % and require re-running
+  this calibration.

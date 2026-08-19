@@ -34,6 +34,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -45,7 +46,7 @@ static const char *TAG = "vbat_cal";
 
 /* Must match rlc_battery.c / pin_config.h */
 #define VBAT_GPIO     1
-#define BURST         64     /* samples averaged per printed line */
+#define BURST         129    /* samples per printed line (odd -> exact median) */
 #define PERIOD_MS     500
 
 /* Nominal ratios from rlc_config.h — printed for orientation only. These are
@@ -96,6 +97,12 @@ static void adc_setup(void)
     s_cali = NULL;
 }
 
+static int cmp_int(const void *a, const void *b)
+{
+    int x = *(const int *)a, y = *(const int *)b;
+    return (x > y) - (x < y);
+}
+
 void app_main(void)
 {
     adc_setup();
@@ -120,37 +127,49 @@ void app_main(void)
     printf("ADCMAP_END\n");
     fflush(stdout);
 
-    printf("\nSweep the supply and note (DVM volts -> raw). Raw is the number that matters.\n");
+    printf("\nSweep the supply and note (DVM volts -> MEDIAN).\n");
+    printf("The MEDIAN is the number to record: it ignores supply noise spikes and\n");
+    printf("samples clipping at full scale, both of which bias a mean.\n");
     printf("LIMITS: base never above 13.0 V, remote never above 8.6 V.\n");
     printf("A reading pinned at %d is OVER RANGE, not a measurement.\n\n", ADC_FULL_SCALE);
 
+    static int buf[BURST];
+
     while (1) {
         uint32_t sum = 0;
-        int rmin = ADC_FULL_SCALE + 1, rmax = -1, got = 0;
+        int got = 0, railed = 0;
 
         for (int i = 0; i < BURST; i++) {
             int raw = 0;
             if (adc_oneshot_read(s_adc, s_chan, &raw) != ESP_OK) continue;
+            buf[got++] = raw;
             sum += (uint32_t)raw;
-            if (raw < rmin) rmin = raw;
-            if (raw > rmax) rmax = raw;
-            got++;
+            if (raw >= ADC_FULL_SCALE - 2) railed++;
             vTaskDelay(pdMS_TO_TICKS(1));
         }
         if (!got) { ESP_LOGW(TAG, "no ADC samples"); continue; }
 
+        qsort(buf, got, sizeof(buf[0]), cmp_int);
+        int med     = buf[got / 2];
         int raw_avg = (int)(sum / (uint32_t)got);
-        int pin_mv  = 0;
-        if (s_cali) adc_cali_raw_to_voltage(s_cali, raw_avg, &pin_mv);
-        else        pin_mv = (raw_avg * 3300) / ADC_FULL_SCALE;
+        int rmin = buf[0], rmax = buf[got - 1];
 
-        printf("raw %4d   (min %4d  max %4d)   pin %4d mV   "
-               "vbat@%.1f = %5d mV   vbat@%.1f = %5d mV%s\n",
-               raw_avg, rmin, rmax, pin_mv,
+        /* MEDIAN is the number to record. On a noisy supply the mean is
+         * dragged around by spikes, and once samples clip at full scale it can
+         * only be biased upward -- precisely at the top of the range where the
+         * thresholds live. The median ignores both. */
+        int pin_mv = 0;
+        if (s_cali) adc_cali_raw_to_voltage(s_cali, med, &pin_mv);
+        else        pin_mv = (med * 3300) / ADC_FULL_SCALE;
+
+        printf("MEDIAN %4d  | mean %4d  spread %4d (min %4d max %4d)  "
+               "pin %4d mV  vbat@%.1f = %5d  vbat@%.1f = %5d%s%s\n",
+               med, raw_avg, rmax - rmin, rmin, rmax, pin_mv,
                (double)RATIO_BASE,   (int)(pin_mv * RATIO_BASE),
                (double)RATIO_REMOTE, (int)(pin_mv * RATIO_REMOTE),
-               (raw_avg >= ADC_FULL_SCALE - 5) ? "   ** OVER RANGE **" :
-               (raw_avg <= 5)                  ? "   ** near zero **"  : "");
+               railed ? "  [clipped]" : "",
+               (med >= ADC_FULL_SCALE - 5) ? "  ** OVER RANGE **" :
+               (med <= 5)                  ? "  ** near zero **"  : "");
         fflush(stdout);
 
         vTaskDelay(pdMS_TO_TICKS(PERIOD_MS));

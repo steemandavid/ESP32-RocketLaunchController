@@ -81,18 +81,30 @@
 #define BASE_VBAT_MIN_ARM_MV           10500
 #define BASE_VBAT_CRITICAL_MV          9000
 
-#define REMOTE_VBAT_DIVIDER_RATIO      2.8f
-/* Bench-test overrides: remote reads ~3290 mV on USB power (3.3V rail).
- * Production values: MIN_ARM=7000, MIN_OPERATE=6600, CRITICAL=6400. */
-#define REMOTE_VBAT_MIN_ARM_MV         3200
-#define REMOTE_VBAT_MIN_OPERATE_MV     3100
-#define REMOTE_VBAT_CRITICAL_MV        3000
+/* Calibrated 2026-08-19 against a DVM at the board terminals across
+ * 4.94-8.56 V, after the bug #21 zener was removed (with it fitted the
+ * implied ratio drifted 30 % and no calibration was possible). Gain-only fit
+ * over the operating band, 57 mV worst case. Fitted 2.8211 vs 2.8 nominal —
+ * 0.75 %, i.e. the divider resistors are fine.
+ * Residual error is ADC compression: a full 2S pack sits at 97 % of the ADC's
+ * usable ceiling. See docs/calibration/remote_vbat_2026-08-19.md. */
+#define REMOTE_VBAT_DIVIDER_RATIO      2.8211f
+/* FSD §5.6.2 production values for the specified 2S pack, restored
+ * 2026-08-19 once the sense path was trustworthy (bug #21 zener removed and
+ * the divider calibrated). Verified against the calibration data: the
+ * firmware under-reads each threshold slightly — 6400→6356, 6600→6561,
+ * 7000→6971 — so protection trips early rather than late.
+ *
+ * NOTE these are 2S-pack values. The remote reads 0 mV on USB power alone
+ * (the divider is unfed, not a flat pack) and will sit in ERROR until a pack
+ * is connected. That is correct behaviour, not a fault. */
+#define REMOTE_VBAT_MIN_ARM_MV         7000
+#define REMOTE_VBAT_MIN_OPERATE_MV     6600
+#define REMOTE_VBAT_CRITICAL_MV        6400
 
-/* Full-charge endpoints for the display battery gauges (FSD §10.2.2).
- * These must be switched together with the thresholds above: on the bench
- * the remote reads the 3.3 V USB rail, in production it reads a 2S pack.
- * Production values: REMOTE 8400 (2S LiPo), BASE 12600 (3S LiPo). */
-#define REMOTE_VBAT_FULL_MV            4200
+/* Full-charge endpoints for the display battery gauges (FSD §10.2.2),
+ * production values: REMOTE 8400 (2S LiPo), BASE 12600 (3S LiPo). */
+#define REMOTE_VBAT_FULL_MV            8400
 #define BASE_VBAT_FULL_MV              12600
 
 /* ── Status Colours (HTML #RRGGBB) ────────────────────────────── */
