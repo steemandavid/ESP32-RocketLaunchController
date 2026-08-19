@@ -59,7 +59,19 @@ that the evidence did not justify.
 FSD **v1.23**: new §5.6.3 on battery ADC sampling, burst constants in §14.1,
 T-B rows in §15.5, and the stale "8-sample moving average" wording corrected in
 §4, §5.4.7 and §7.3.3. Development_Progress gained a section with the on-target
-figures.
+figures, and `rlc_battery.h`'s header comment was corrected too.
+
+README's safety-design section gained the median rationale — it belongs there
+alongside the other defensive decisions, and the bench figure (a burst with 9 of
+33 samples clipped reading ~2 V high as a mean, exactly right as a median) makes
+the case concretely rather than abstractly.
+
+Audited the remaining "8-sample" references and left them alone deliberately:
+`archive/` holds superseded FSD revisions, `Phase2_Code_Review.md` records what
+was true when it was written, and the two `rlc-hw-test-*` specs describe
+standalone bring-up firmware that does not share `rlc_battery.c`. Those are
+accurate for their own code; changing them would have introduced errors rather
+than fixed them.
 
 ## 2026-08-19 (bench, cont.) — Remote calibrated, thresholds restored, bugs #22/#23
 

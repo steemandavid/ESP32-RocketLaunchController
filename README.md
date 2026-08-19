@@ -51,6 +51,13 @@ feedback that detects a welded relay; a dead-man repeat-message scheme during
 firing; 10 s auto-disarm; and an unrecoverable ERROR state that requires a
 physical power cycle rather than attempting to self-heal.
 
+Battery readings take the **median** of a 33-sample burst rather than a mean,
+because a sample clipped at the ADC's full scale can only bias a mean *upward* —
+making a flat pack read as healthy, which is the one direction a battery guard
+must never fail in. This is not hypothetical: on a noisy bench supply a burst
+with 9 of 33 samples clipped read about 2 V high as a mean, and exactly right as
+a median.
+
 **Link** — ESP-NOW AES-128-CCM encryption, an application-layer CRC32-C
 integrity check over header + payload + a compile-time key, and replay
 protection via monotonic sequence numbers plus a random per-session token.
