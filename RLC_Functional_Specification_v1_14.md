@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.21
+**Version:** 1.22
 **Date:** 2026-08-19
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -35,6 +35,7 @@
 | 1.19 | 2026-08-19 | Strip orientation corrected to a **per-unit** setting after bench characterisation with the new `tools/strip-diag` firmware. The two strips are wired data-in at opposite ends: base at the channel-1 end (`RLC_STRIP_REVERSED = 0`, on-board LED mirrors channel 1), remote at the channel-8 end (`RLC_STRIP_REVERSED = 1`, on-board LED mirrors channel 8). v1.18 wrongly assumed both were reversed. Updated §11.0, §5.4.11, §5.5.8, §14.1. Host renderer tests (§15.5) now run once per unit so both orientations are asserted.
 | 1.20 | 2026-08-19 | Recorded bug #20 in §6.2.1: the PMK, LMK and `CMD_INTEGRITY_KEY` are committed to a public repository, so the AES-128-CCM security boundary and the keyed CRC32 integrity check are ineffective against an adversary who has read the source; only the §6.2.2 replay protection (random per-link-up session token) still holds. Keys must be rotated **and** moved out of tracked files, since git history preserves superseded values. Also corrected §6.2.1's key location: `rlc_config.h`, not the non-existent `protocol_config.h`.
 | 1.21 | 2026-08-19 | Error flags are now presented by name, not as a raw bitmask. Added §13.2a with the canonical display name for every bit 0-7 (including the reserved and undefined ones) and the documented deviation from §13.2's "stacked" wording: the single 40-character line at the §10.3 font floor holds one named flag, so multiple flags cycle at 2 s with an (n/total) counter rather than being truncated. Names live in `rlc_protocol.h` and are covered by host tests T-E01…T-E07 (§15.5).
+| 1.22 | 2026-08-19 | Recorded bug #21 as an as-built deviation in §5.5: an undocumented 3.3 V zener on the remote's VBAT ADC node leaks 27-144 µA into the 6429 Ω divider, making the sense non-linear and under-reading by up to 30 %. Noted that the specified 0-3.0 V range already puts a full 2S pack at 95 % of the ADC's usable ceiling. Base divider calibrated (4.3 → 4.3148); remote calibration blocked.
 
 ---
 
@@ -1082,6 +1083,9 @@ The remote's map is driven from the continuity bands in the cached STATUS_UPDATE
 | Minimum operating voltage | 6.4V (`REMOTE_VBAT_CRITICAL_MV`, 3.2V/cell) |
 | Minimum arm voltage | 7.0V (`REMOTE_VBAT_MIN_ARM_MV`, 3.5V/cell) |
 | Voltage divider ratio | 2.8:1 (18 kΩ + 10 kΩ, giving 0–3.0V ADC range for 0–8.4V battery) |
+
+> **AS-BUILT DEVIATION (2026-08-19) — an undocumented 3.3 V zener to ground is fitted on this ADC node, and it breaks the measurement.** Its reverse leakage rises from 27 µA to 144 µA across the 2S range; into the divider's 6429 Ω Thevenin impedance that is 174 mV to 925 mV of droop, making the sense non-linear and under-reading by 9 % at 5.3 V rising to 30 % at 8.6 V. A fully charged pack reads below CRITICAL. See bug #21. Fix: replace with a BAT54 Schottky to the 3.3 V rail, and preferably rescale to 3.0 kΩ / 1.2 kΩ (ratio 3.5) — the 0–3.0 V range specified above already puts full charge at 95 % of the ADC's usable ceiling.
+
 | Capacity | 2200 mAh (specified battery) |
 | Discharge rating | 30C continuous (66 A) — far exceeds remote unit demand (~300 mA peak) |
 | Connector | T-plug (Deans) (on battery); PCB must mate with T-plug or use T-plug pigtail. |

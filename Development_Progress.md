@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.21 (2026-08-19)
+**Spec:** RLC-FSPEC-001 v1.22 (2026-08-19)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -32,7 +32,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
-| 21 | Remote VBAT sense is non-linear — under-reads by 9 % at 5.3 V growing to 30 % at 8.6 V | Hardware | OPEN — root cause not yet isolated | All remote battery protection. A full 2S pack reads as CRITICAL, so production thresholds would lock the remote in ERROR. Blocks restoring FSD §5.6.2 values. |
+| 21 | Remote VBAT sense is non-linear — 3.3 V zener leakage into a 6.4 kΩ divider | Hardware | OPEN — root cause found, fix not yet fitted | All remote battery protection. A full 2S pack reads as CRITICAL, so production thresholds would lock the remote in ERROR. Blocks restoring FSD §5.6.2 values. |
 | 20 | Shipped crypto keys are public — AES-128-CCM and the keyed CRC32 check are ineffective against anyone who has read the source | Security | OPEN — rotation deferred by decision | Field use where an adversary is in the threat model. No effect on bench work. |
 | 19 | Base LED strip: dead 4th pixel in the chain — channel 4 stuck, channels 5-8 dark | Hardware | OPEN — needs reflow or replacement | Channels 4-8 of the base strip; T-L15 for those channels |
 | 18 | Base ESP32 destroyed by relay-arc coupling on the continuity ADC inputs | Hardware + firmware | Software fix DONE and audited; hardware protection fitted on **channel 1 only** | All fire testing on channels 2-8, enforced in firmware by `FIRE_PROTECTED_CHANNEL_MASK` |
@@ -1109,15 +1109,48 @@ back through this calibration puts the true pack voltage at **~7.6 V** — healt
 The pack was fine; the sense circuit was lying. (Not yet proven that the fault
 predates that reading — measuring the pack directly settles it.)
 
-**Candidate causes:** a clamp diode / zener / TVS on the sense node with a soft
-knee; damaged GPIO 1 ESD protection leaking to the 3.3 V rail (bug #18 failure
-class — note the documented warning that feeding the remote's battery input from
-a 12 V+ supply puts >4.5 V on GPIO 1); or an unintended parallel load.
+**ROOT CAUSE (confirmed 2026-08-19): a 3.3 V zener to ground on the ADC node.**
+DVM on GPIO 1 read **2.10 V with 7.95 V in**, agreeing with the ADC's 2.087 V —
+so the ESP32 is measuring correctly and the node really is being dragged down.
+The board carries a 3.3 V zener from the ADC pin to ground.
 
-**Next diagnostic:** DVM directly on GPIO 1 to GND while sweeping. At 8.00 V in,
-an ideal divider gives 2857 mV; the ADC currently reports 2087 mV. If the DVM
-agrees with the ADC the node is genuinely being pulled down (external cause); if
-it reads ~2857 mV the ADC input is at fault (chip-level).
+Low-voltage zeners (< 5 V) break down by the Zener mechanism, which has a very
+soft knee: they leak substantially below nominal Vz, unlike avalanche parts.
+Back-calculated leakage against the divider's 6429 Ω Thevenin impedance:
+
+| V_in | ideal node | actual | droop | zener current |
+|---|---|---|---|---|
+| 5.33 | 1904 | 1730 | 174 mV | 27 µA |
+| 6.77 | 2418 | 1960 | 458 mV | 71 µA |
+| 7.95 | 2839 | 2100 | 739 mV | 115 µA |
+| 8.57 | 3061 | 2136 | 925 mV | 144 µA |
+
+**The part is not faulty** — it is behaving as a 3.3 V zener does. This is a
+design error, amplified by the high-impedance divider. It also explains why the
+base is unaffected: the base's VBAT node has no zener, and its small residual
+drift runs in the opposite direction (ADC compression, not clamp loading).
+
+**Spec deviation.** FSD §5.5 specifies only "2.8:1 (18 kΩ + 10 kΩ)" for this
+node — **no zener**. The clamp is an as-built addition absent from the spec, the
+mirror image of bug #18, where the FSD specified zeners on base GPIO 21/42 that
+were not fitted.
+
+**Fix.**
+
+1. *Essential:* replace the 3.3 V zener with a **BAT54 Schottky to the 3.3 V
+   rail** (~1 µA leakage instead of 144 µA → ~6 mV droop). Clamping at ~3.6 V
+   retains overvoltage protection; simply removing the zener would leave GPIO 1
+   exposed to the >4.5 V fault the docs warn about. BAT54S is already the
+   recommended part for base GPIO 21/42 protection.
+2. *Strongly recommended alongside:* rescale the divider to **3.0 kΩ / 1.2 kΩ**
+   (ratio 3.50, 2400 mV at 8.4 V = 76 % of the ADC ceiling, Thevenin 857 Ω,
+   2.0 mA draw — negligible on a 2200 mAh pack). The FSD's own "0–3.0 V ADC
+   range for 0–8.4 V battery" puts full charge at 95 % of the ceiling, the same
+   headroom problem measured on the base.
+
+If both are done, `REMOTE_VBAT_DIVIDER_RATIO` becomes 3.5 and this calibration
+must be re-run. If only the zener is swapped, linearity is restored and the
+remote inherits the base's ~0.7 % compression error at full charge.
 
 **No calibration applied.** A non-linear fault cannot be corrected with a gain.
 
