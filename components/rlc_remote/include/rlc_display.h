@@ -21,18 +21,23 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "rlc_config.h"
+
 /**
- * Display colour constants (RGB888 — FSD §10.2.0).
- * Blue used instead of green for continuity GOOD (colour-blind accessibility).
+ * Continuity colours are defined once in rlc_config.h (RLC_COLOR_CONT_*, as
+ * HTML 0xRRGGBB values) and shared with the base unit's 8-pixel NeoPixel
+ * strip, so the same igniter state is the same colour on both units.
+ * Shape coding on the channel grid (filled circle / triangle / ring /
+ * diamond) carries the meaning independently of colour.
  */
-#define DISP_COLOR_CONT_GOOD      { 0, 120, 255 }   /* Blue — continuity GOOD */
-#define DISP_COLOR_CONT_OPEN      { 255, 0, 0 }     /* Red — continuity OPEN / error */
-#define DISP_COLOR_CONT_SHORT     { 255, 140, 0 }   /* Orange — continuity SHORT */
-#define DISP_COLOR_CONT_MARGINAL  { 255, 220, 0 }   /* Yellow — continuity MARGINAL */
-#define DISP_COLOR_SELECTED       { 0, 220, 255 }   /* Cyan — selected channel */
-#define DISP_COLOR_ARMED_BG       { 180, 0, 0 }     /* Red — armed channel background */
-#define DISP_COLOR_WHITE          { 255, 255, 255 }
-#define DISP_COLOR_BLACK          { 0, 0, 0 }
+#define DISP_COLOR_CONT_GOOD      RLC_COLOR_CONT_GOOD
+#define DISP_COLOR_CONT_OPEN      RLC_COLOR_CONT_OPEN
+#define DISP_COLOR_CONT_SHORT     RLC_COLOR_CONT_SHORT
+#define DISP_COLOR_CONT_MARGINAL  RLC_COLOR_CONT_MARGINAL
+#define DISP_COLOR_SELECTED       0x00DCFF   /* Cyan — selected channel */
+#define DISP_COLOR_ARMED_BG       0xB40000   /* Red — armed channel background */
+#define DISP_COLOR_WHITE          0xFFFFFF
+#define DISP_COLOR_BLACK          0x000000
 
 /**
  * Initialise the ILI9488 display: SPI bus, panel init sequence, framebuffer,

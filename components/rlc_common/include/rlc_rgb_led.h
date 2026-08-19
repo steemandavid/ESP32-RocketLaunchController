@@ -25,6 +25,7 @@ typedef enum {
     LED_PATTERN_LINK_LOST,      /* Yellow fast blink (200ms on/off) */
     LED_PATTERN_ERROR,          /* Red triple flash */
     LED_PATTERN_PING_FAIL,      /* Orange 250ms flash (overlay) */
+    LED_PATTERN_CHANNEL_STATUS, /* Base 8-pixel strip: one pixel per igniter channel */
 } rlc_led_pattern_t;
 
 /**
@@ -62,3 +63,33 @@ void rlc_rgb_led_set_pixel_count(int count);
  * Set pattern based on FSM state (convenience).
  */
 void rlc_rgb_led_set_state(rlc_state_t state);
+
+/* ── Multi-pixel status feeds (base unit 8-pixel strip) ────────── */
+
+/**
+ * Publish the igniter continuity map: 2 bits per channel, same encoding as
+ * STATUS_UPDATE (00=OPEN, 01=GOOD, 10=MARGINAL, 11=SHORT), channel 1 in the
+ * least significant pair. Pixel N shows channel N+1 in the colours configured
+ * by RLC_COLOR_CONT_* in rlc_config.h.
+ *
+ * Once published, LED_PATTERN_IDLE and LED_PATTERN_IDLE_ARM_ON render the
+ * channel map instead of plain green on a multi-pixel strip, and the ERROR
+ * pattern shows it dimmed between flashes. Firing-path patterns (ARMED,
+ * PRE_FIRE, FIRING) are left alone — those signals stay unmistakable.
+ *
+ * Note the DevKit's built-in NeoPixel shares the strip's data line, so it
+ * mirrors pixel 0 (channel 1).
+ */
+void rlc_rgb_led_set_channel_bands(uint16_t bands);
+
+/**
+ * Highlight one channel (1-8) on the strip; 0 = none. The highlighted pixel
+ * pulses so the armed/firing channel is identifiable on the map.
+ */
+void rlc_rgb_led_set_active_channel(uint8_t channel);
+
+/**
+ * Publish link RSSI in dBm (0 = unknown). While booting/linking, a multi-pixel
+ * strip shows this as a signal-strength bar instead of the blue pulse.
+ */
+void rlc_rgb_led_set_rssi(int rssi_dbm);

@@ -67,10 +67,17 @@ static const char *TAG = "rlc_disp";
 #define C_WHITE      0xFFFFFF
 #define C_GREY       0x808080
 #define C_DGREY      0x303030
-#define C_GOOD       0x0078FF   /* blue   — continuity GOOD */
-#define C_OPEN       0xFF0000   /* red    — continuity OPEN */
-#define C_SHORT      0xFF8C00   /* orange — continuity SHORT */
-#define C_MARGINAL   0xFFDC00   /* yellow — continuity MARGINAL */
+/* Continuity colours come from rlc_config.h so the display and the base
+ * unit's 8-pixel strip always show the same colour for the same state. */
+#define C_GOOD       RLC_COLOR_CONT_GOOD
+#define C_OPEN       RLC_COLOR_CONT_OPEN
+#define C_SHORT      RLC_COLOR_CONT_SHORT
+#define C_MARGINAL   RLC_COLOR_CONT_MARGINAL
+
+/* Non-continuity accents (unchanged by the continuity palette) */
+#define C_INFO       0x0078FF   /* blue   — link OK, VRO credit */
+#define C_WARN       0xFFDC00   /* yellow — warnings */
+#define C_FAULT      0xFF0000   /* red    — errors */
 #define C_SELECTED   0x00DCFF   /* cyan   — selected channel */
 #define C_ARMED_BG   0xB40000   /* red    — armed channel background */
 #define C_AMBER      0xFFA000
@@ -511,7 +518,7 @@ static void draw_top_bar_dynamic(const disp_data_t *d)
     draw_field(6, BAR_TXT_Y1, 9 * CHAR_W(2), buf, 2, C_WHITE, C_BLACK);
     draw_bar(6 + 9 * CHAR_W(2) + 6, BAR_TXT_Y1, 60, CHAR_H(2),
              linked ? pct_from_range(d->link.rssi_avg_dbm, -100, -30) : 0,
-             linked ? C_GOOD : C_DGREY, C_BLACK);
+             linked ? C_INFO : C_DGREY, C_BLACK);
 
     /* Link state + round-trip time */
     const char *lnk = "LINK ??";
@@ -522,7 +529,7 @@ static void draw_top_bar_dynamic(const disp_data_t *d)
         default:                     lnk = "LINK --"; break;
     }
     draw_field(6, BAR_TXT_Y2, 7 * CHAR_W(2), lnk, 2,
-               linked ? C_WHITE : C_MARGINAL, C_BLACK);
+               linked ? C_WHITE : C_WARN, C_BLACK);
 
     if (linked && d->link.ping_rtt_ms > 0) {
         snprintf(buf, sizeof(buf), "%3ums", d->link.ping_rtt_ms);
@@ -537,21 +544,21 @@ static void draw_top_bar_dynamic(const disp_data_t *d)
     format_volts(v, sizeof(v), d->vbat_mv);
     snprintf(buf, sizeof(buf), "RC %s", v);
     draw_field(256, BAR_TXT_Y1, 10 * CHAR_W(2), buf, 2,
-               (d->vbat_mv && d->vbat_mv < REMOTE_VBAT_MIN_ARM_MV) ? C_MARGINAL : C_WHITE,
+               (d->vbat_mv && d->vbat_mv < REMOTE_VBAT_MIN_ARM_MV) ? C_WARN : C_WHITE,
                C_BLACK);
     draw_bar(256 + 10 * CHAR_W(2), BAR_TXT_Y1, 92, CHAR_H(2),
              pct_from_range(d->vbat_mv, REMOTE_VBAT_CRITICAL_MV, REMOTE_VBAT_FULL_MV),
-             (d->vbat_mv < REMOTE_VBAT_MIN_ARM_MV) ? C_OPEN : C_GOOD, C_BLACK);
+             (d->vbat_mv < REMOTE_VBAT_MIN_ARM_MV) ? C_FAULT : C_GREEN, C_BLACK);
 
     /* Base battery from STATUS_UPDATE (3S: 9.0-12.6 V) */
     uint16_t bmv = d->status_fresh ? d->status.battery_voltage_mv : 0;
     format_volts(v, sizeof(v), bmv);
     snprintf(buf, sizeof(buf), "BS %s", v);
     draw_field(256, BAR_TXT_Y2, 10 * CHAR_W(2), buf, 2,
-               (bmv && bmv < BASE_VBAT_MIN_ARM_MV) ? C_MARGINAL : C_WHITE, C_BLACK);
+               (bmv && bmv < BASE_VBAT_MIN_ARM_MV) ? C_WARN : C_WHITE, C_BLACK);
     draw_bar(256 + 10 * CHAR_W(2), BAR_TXT_Y2, 92, CHAR_H(2),
              pct_from_range(bmv, BASE_VBAT_CRITICAL_MV, BASE_VBAT_FULL_MV),
-             (bmv && bmv < BASE_VBAT_MIN_ARM_MV) ? C_OPEN : C_GOOD, C_BLACK);
+             (bmv && bmv < BASE_VBAT_MIN_ARM_MV) ? C_FAULT : C_GREEN, C_BLACK);
 }
 
 /* ── Screen: main status (IDLE) — FSD §10.2.2 ─────────────────── */
@@ -653,14 +660,14 @@ static void draw_main_dynamic(const disp_data_t *d)
 
     if (d->status_fresh && d->status.error_flags) {
         snprintf(buf, sizeof(buf), "BASE ERROR FLAGS 0x%02X", d->status.error_flags);
-        draw_text_centred_bg(DH - 16, buf, 1, C_OPEN, C_BLACK);
+        draw_text_centred_bg(DH - 16, buf, 1, C_FAULT, C_BLACK);
     } else if (!d->remote_key_armed) {
         snprintf(buf, sizeof(buf), "Turn ARM key, then hold encoder to arm channel %u",
                  d->selected);
         draw_text_centred_bg(DH - 16, buf, 1, C_GREY, C_BLACK);
     } else {
         snprintf(buf, sizeof(buf), "Hold encoder to arm channel %u", d->selected);
-        draw_text_centred_bg(DH - 16, buf, 1, C_MARGINAL, C_BLACK);
+        draw_text_centred_bg(DH - 16, buf, 1, C_WARN, C_BLACK);
     }
 }
 
@@ -683,12 +690,12 @@ static void draw_armed_dynamic(const disp_data_t *d, bool blink_on)
     draw_top_bar_dynamic(d);
 
     /* Pulsing red border (FSD §10.2.3) */
-    draw_frame(BOX_X, BOX_Y, BOX_W, BOX_H, 6, blink_on ? C_OPEN : C_DGREY);
+    draw_frame(BOX_X, BOX_Y, BOX_W, BOX_H, 6, blink_on ? C_FAULT : C_DGREY);
     fill_rect(BOX_X + 6, BOX_Y + 6, BOX_W - 12, BOX_H - 12, C_BLACK);
 
     snprintf(buf, sizeof(buf), "CHANNEL %u", d->armed);
     draw_text_centred(BOX_Y + 24, buf, 4, C_WHITE);
-    draw_text_centred(BOX_Y + 66, "ARMED", 4, C_OPEN);
+    draw_text_centred(BOX_Y + 66, "ARMED", 4, C_FAULT);
 
     uint8_t band = CONT_OPEN;
     if (d->status_fresh && d->armed >= 1 && d->armed <= 8) {
@@ -719,7 +726,7 @@ static void draw_firing_dynamic(const disp_data_t *d, bool blink_on)
     draw_top_bar_dynamic(d);
 
     bool igniting = (d->state == STATE_FIRING);
-    uint32_t border = igniting ? (blink_on ? C_OPEN : 0x600000) : C_OPEN;
+    uint32_t border = igniting ? (blink_on ? C_FAULT : 0x600000) : C_FAULT;
 
     draw_frame(BOX_X, BOX_Y, BOX_W, BOX_H, 8, border);
     fill_rect(BOX_X + 8, BOX_Y + 8, BOX_W - 16, BOX_H - 16,
@@ -736,7 +743,7 @@ static void draw_firing_dynamic(const disp_data_t *d, bool blink_on)
         uint32_t ms = d->prefire_remain_ms;
         snprintf(buf, sizeof(buf), "PRE-FIRE %lu.%lus",
                  (unsigned long)(ms / 1000), (unsigned long)((ms % 1000) / 100));
-        draw_text_centred_bg(BOX_Y + 92, buf, 3, C_MARGINAL, C_BLACK);
+        draw_text_centred_bg(BOX_Y + 92, buf, 3, C_WARN, C_BLACK);
     }
 
     draw_text_centred_bg(BOX_Y + 140, "HOLD FIRE BUTTON - RELEASE TO ABORT", 1,
@@ -801,8 +808,8 @@ static void draw_link_lost_dynamic(const disp_data_t *d)
 static void draw_error_screen(const char *text)
 {
     fill_rect(0, 0, DW, DH, C_BLACK);
-    draw_frame(0, 0, DW, DH, 8, C_OPEN);
-    draw_text_centred(50, "X  ERROR  X", 4, C_OPEN);
+    draw_frame(0, 0, DW, DH, 8, C_FAULT);
+    draw_text_centred(50, "X  ERROR  X", 4, C_FAULT);
 
     /* Wrap the description across up to two lines of 34 chars at scale 2 */
     char line[40];
@@ -818,7 +825,7 @@ static void draw_error_screen(const char *text)
         y += CHAR_H(2) + 6;
     }
 
-    draw_text_centred(250, "System halted. Power cycle required.", 1, C_MARGINAL);
+    draw_text_centred(250, "System halted. Power cycle required.", 1, C_WARN);
 }
 
 /* ── Screen: splash / firmware mismatch — FSD §10.2.1 ─────────── */
@@ -831,7 +838,7 @@ static void draw_splash_static(void)
     draw_text_centred(106, "v" RLC_VERSION_STRING, 2, C_SELECTED);
 
     fill_rect(90, 138, DW - 180, 1, C_DGREY);
-    draw_text_centred(152, "VRO - VLAAMSE RAKET ORGANISATIE", 2, C_GOOD);
+    draw_text_centred(152, "VRO - VLAAMSE RAKET ORGANISATIE", 2, C_INFO);
 
     draw_text_centred(DH - 22, "(C) 2026 David Steeman", 1, C_GREY);
 }
@@ -846,7 +853,7 @@ static void draw_splash_dynamic(const disp_data_t *d, int attempt,
     bool linked = (d->link.state == RLC_LINK_STATE_LINKED);
 
     draw_text_centred_bg(196, linked ? "Connected to base" : "Connecting to base...",
-                         2, linked ? C_GOOD : C_WHITE, C_BLACK);
+                         2, linked ? C_GREEN : C_WHITE, C_BLACK);
 
     if (linked) {
         snprintf(buf, sizeof(buf), "RSSI %d dBm", d->link.rssi_avg_dbm);
@@ -865,16 +872,16 @@ static void draw_splash_dynamic(const disp_data_t *d, int attempt,
     } else {
         pct = (attempt * 100) / max_attempts;
     }
-    draw_bar(90, 262, 300, 20, pct, linked ? C_GOOD : C_SELECTED, C_BLACK);
+    draw_bar(90, 262, 300, 20, pct, linked ? C_GREEN : C_SELECTED, C_BLACK);
 }
 
 static void draw_fw_mismatch(const uint8_t *base_ver, const uint8_t *remote_ver)
 {
     char buf[40];
     fill_rect(0, 0, DW, DH, C_BLACK);
-    draw_frame(0, 0, DW, DH, 8, C_MARGINAL);
+    draw_frame(0, 0, DW, DH, 8, C_WARN);
     draw_text_centred(40, "ESP32 ROCKET LAUNCH CONTROLLER", 1, C_GREY);
-    draw_text_centred(70, "! FIRMWARE MISMATCH !", 3, C_MARGINAL);
+    draw_text_centred(70, "! FIRMWARE MISMATCH !", 3, C_WARN);
 
     snprintf(buf, sizeof(buf), "Base:   v%u.%u.%u",
              base_ver[0], base_ver[1], base_ver[2]);
@@ -895,7 +902,7 @@ static void draw_overlay(const char *text, bool is_nack)
     int y = (DH - h) / 2;
     uint32_t bg = is_nack ? C_ARMED_BG : 0x604000;
     fill_rect(20, y, DW - 40, h, bg);
-    draw_frame(20, y, DW - 40, h, 3, is_nack ? C_OPEN : C_AMBER);
+    draw_frame(20, y, DW - 40, h, 3, is_nack ? C_FAULT : C_AMBER);
     draw_text_centred(y + 14, is_nack ? "COMMAND REJECTED" : "NOTICE", 1, C_WHITE);
 
     int scale = (text_width(text, 2) <= DW - 60) ? 2 : 1;

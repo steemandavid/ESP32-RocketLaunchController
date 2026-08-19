@@ -825,6 +825,44 @@ Supporting changes:
 - FSM display hooks: NACK overlays, "TURN ARM KEY FIRST" and other local
   rejection toasts, multi-arm error screen, fire-complete screen.
 
+### Base 8-Pixel Status Strip (2026-08-19)
+
+An 8-way NeoPixel strip is wired to the base's `PIN_RGB_LED` (GPIO 48), sharing
+the data line with the DevKit's built-in NeoPixel — so the built-in LED mirrors
+pixel 0 (channel 1). One pixel per igniter channel.
+
+| Continuity | Colour | Constant |
+|---|---|---|
+| GOOD | dark green `#006400` | `RLC_COLOR_CONT_GOOD` |
+| MARGINAL | light green `#90EE90` | `RLC_COLOR_CONT_MARGINAL` |
+| OPEN | yellow `#FFFF00` | `RLC_COLOR_CONT_OPEN` |
+| SHORT | red `#FF0000` | `RLC_COLOR_CONT_SHORT` |
+
+The constants live in `rlc_config.h` as HTML `0xRRGGBB` values and are the
+**single source of truth for both units** — the remote display's channel grid
+resolves its colours from the same macros, so pad and handheld always agree.
+
+**Deviation from FSD §10.2.0**, which specifies blue for GOOD, red for OPEN and
+orange for SHORT, with blue chosen deliberately to avoid red-green ambiguity for
+colour-blind operators. The requested palette pairs green (good) with red
+(short) and moves red off OPEN. The display's shape coding (filled circle /
+triangle / ring / diamond) still carries the meaning without colour, and the
+palette is now a one-line config change. FSD §10.2.0 should be updated to match.
+
+Strip behaviour by pattern:
+
+| Pattern | Strip |
+|---|---|
+| `IDLE` | Channel map (base only; remote's single pixel stays solid green) |
+| `IDLE_ARM_ON` | Channel map breathing 100 %/25 % — status stays readable while the key-ON warning is obvious |
+| `BOOT`/`LINKING` | RSSI bar once the peer is heard (green ≥ −60, amber ≥ −80, red below); blue pulse until then |
+| `ERROR` | Red triple flash unchanged, with the channel map dimmed to 20 % during the 700 ms gap |
+| `ARMED`, `PRE_FIRE`, `FIRING` | **Unchanged** — whole-strip red patterns per FSD §11; the firing-path signal stays unmistakable |
+
+Data is fed from the base housekeeping loop (100 ms) via
+`rlc_rgb_led_set_channel_bands()` / `set_active_channel()` / `set_rssi()`,
+deliberately not from the FSM, so the fire path is untouched.
+
 ### Phase 4 Findings — Battery Thresholds (2026-08-19)
 
 Raised while diagnosing a "remote power fail" report on the bench. Neither is a

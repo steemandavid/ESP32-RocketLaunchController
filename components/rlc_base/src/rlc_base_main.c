@@ -187,10 +187,21 @@ void base_app_main(void)
 
     ESP_LOGI(TAG, "base ready — Phase 3 FSM active, waiting for commands");
 
-    /* Housekeeping loop — watchdog + status log */
+    /* Housekeeping loop — watchdog + status log + LED status feeds */
     int64_t last_status_log_ms = 0;
     while (1) {
         rlc_watchdog_feed();
+
+        /* Feed the 8-pixel strip: one pixel per igniter channel, the armed or
+         * firing channel highlighted, and link quality for the boot-time bar.
+         * Done here rather than in the FSM to keep the fire path untouched. */
+        rlc_rgb_led_set_channel_bands(continuity_get_bands());
+        uint8_t firing_ch = base_fsm_get_firing_channel();
+        rlc_rgb_led_set_active_channel(firing_ch ? firing_ch
+                                                 : base_fsm_get_armed_channel());
+        rlc_link_status_t led_ls;
+        rlc_link_get_status(&led_ls);
+        rlc_rgb_led_set_rssi(led_ls.rssi_avg_dbm);
 
         int64_t now = esp_timer_get_time() / 1000;
         if (now - last_status_log_ms >= 5000) {

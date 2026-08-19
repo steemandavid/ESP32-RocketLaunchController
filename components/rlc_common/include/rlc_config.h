@@ -87,6 +87,31 @@
 #define REMOTE_VBAT_FULL_MV            4200
 #define BASE_VBAT_FULL_MV              12600
 
+/* ── Status Colours (HTML #RRGGBB) ────────────────────────────── */
+
+/* Igniter continuity status. These drive BOTH the base unit's 8-pixel
+ * NeoPixel strip (one pixel per channel) and the remote display's channel
+ * grid, so the two always agree. Edit here to restyle both.
+ *
+ * NOTE: this palette (green/red) deviates from FSD §10.2.0, which specifies
+ * blue for GOOD to avoid red-green ambiguity for colour-blind operators.
+ * Shape coding on the display (circle/triangle/ring/diamond) still carries
+ * the meaning independently of colour. */
+#define RLC_COLOR_CONT_GOOD        0x006400   /* darkgreen  — 0.5-20 Ω, normal igniter */
+#define RLC_COLOR_CONT_MARGINAL    0x90EE90   /* lightgreen — 20-500 Ω, high resistance */
+#define RLC_COLOR_CONT_OPEN        0xFFFF00   /* yellow     — >500 Ω or no igniter */
+#define RLC_COLOR_CONT_SHORT       0xFF0000   /* red        — <0.5 Ω, wiring fault */
+
+/* Link-quality bar shown on the strip while the base is booting/linking */
+#define RLC_COLOR_RSSI_STRONG      0x00FF00   /* >= -60 dBm */
+#define RLC_COLOR_RSSI_FAIR        0xFFA000   /* -60..-80 dBm */
+#define RLC_COLOR_RSSI_WEAK        0xFF0000   /* < -80 dBm */
+
+/* Unpack an 0xRRGGBB constant */
+#define RLC_COLOR_R(c)  ((uint8_t)(((c) >> 16) & 0xFF))
+#define RLC_COLOR_G(c)  ((uint8_t)(((c) >>  8) & 0xFF))
+#define RLC_COLOR_B(c)  ((uint8_t)( (c)        & 0xFF))
+
 /* ── Hardware Configuration ───────────────────────────────────── */
 
 #define NUM_CHANNELS                   8
