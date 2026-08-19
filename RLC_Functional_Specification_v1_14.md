@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.15
-**Date:** 2026-04-14
+**Version:** 1.19
+**Date:** 2026-08-19
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -29,6 +29,10 @@
 | 1.13 | 2026-04-14 | Arm relay redesign: physical arm key switch removed from fire path (cannot handle igniter current). Arm relay (SPDT, driven via IRLZ44N MOSFET in series with physical key switch) now provides primary fire path interlock — forming a hardware AND gate (key switch ON AND software MOSFET drive required). Key switch moved to arm relay coil drive path (SPDT, carries only coil current). Arm sense circuit now reads ARM SENSE node (arm relay COM output) through voltage divider (27 kΩ / 10 kΩ) + 3.3 V zener clamp. Added arm status feedback LEDs (green = SAFE, red = key position, red = relay energised). Added contact welding detection via arm sense. Updated §2.1, §3, §5.4.2, §5.4.3, §5.4.4, §5.4.5, §5.4.9, §5.4.10, §7.2.2, §7.2.5, §7.2.7, §7.4.1, §9.1, §9.2, §9.7, §9.13. |
 | 1.14 | 2026-04-14 | Operational tuning: removed NVS key provisioning note (compile-time keys are acceptable). Made link retry more aggressive: 5 attempts at 2s intervals (was 15 at 2s then 5s). Changed missed ping RGB LED flash from 50ms to 250ms. Reduced PRE_FIRE_DELAY_MS from 5000ms to 2000ms. Reduced FIRE_PULSE_DURATION_MS from 2000ms to 1000ms. Made runtime UART logging compile-time optional (disabled by default, enabled via CONFIG_RLC_SERIAL_DEBUG_LOGGING). Updated §6.2.1, §6.4.1, §6.4.2, §7.2.3, §9.11, §14.1. |
 | 1.15 | 2026-04-16 | Circuit documentation correction after on-target testing revealed errors. Split §5.4.3 into arm relay feedback (GPIO 21, renamed from "Arm Switch Position Sense") and new §5.4.3b key switch sense (GPIO 42). Fixed §5.4.4 key switch diagram to show key sense connection (was "No separate GPIO"). Fixed §5.4.5 circuit topology to include key sense circuit. Fixed §7.2.2 arming guards: guard 1 now checks key sense GPIO 42 (was incorrectly checking arm sense GPIO 21, creating circular dependency). Fixed §7.2.3, §7.2.4, §7.2.7 to distinguish key switch events from arm relay feedback events. Updated debounce table, protocol fields, task priorities, boot sequence, test descriptions, and hardware notes. Updated §5.4.9 arm relay output sensing description. |
+| 1.16 | 2026-07-21 | Documentation accuracy corrections after remote display validation and full code review. Aligned all 8 buzzer/alarm pattern timings (§12.1 table, §6.4.2, App D.2) with `rlc_buzzer.c` (patterns had drifted shorter in firmware). Watchdog timeout 2 s → 5 s (§9.6, §14.1, T-S07) to match `WATCHDOG_TIMEOUT_S`. Softened ILI9488 display-ID health check (§5.5.6): clone panels report a non-standard ID (observed 0x2A403300); only a zero/garbage read-back or SPI failure is a fault. Fixed hw-test spec console transport (USB-Serial/JTAG `/dev/ttyACM*`, not UART0/`/dev/ttyUSB0`). Refreshed stale spec-version citations (Development_Progress.md, hw-test spec). Fixed stale code comments (`rlc_rgb_led.h` 50→250 ms; `rlc_watchdog.h` 2 s→5 s). |
+| 1.17 | 2026-08-17 | Bug #18 as-built deviations and firmware channel gate. Recorded that the 3.3 V zener clamps on GPIO 21 (§5.4.3) and GPIO 42 (§5.4.3b) are **not fitted**, and that the arm relay contact has **no snubber** — the spec previously described all three as present. The bug #18 relay-order fix (arm relay OFF → 20 ms → channel relays OFF) makes the arm relay the sole contact breaking 6 A DC, placing that arc on the ARM SENSE node and putting the arm relay contact at risk of erosion/welding (detected by `weld_check()`, fails safe to ERROR). Added the required protection BOM (BAT54S or zener on GPIO 21/42, 47 Ω/100 nF contact snubber, SMBJ18A-class TVS on arm relay COM) and updated the §5.4.9 circuit diagram. Documented the new firmware gate `FIRE_PROTECTED_CHANNEL_MASK` (currently 0x01, channel 1 only): `guard_arm()` NACKs ARM on unprotected channels and `relay_fire_set()` refuses to energise them. Noted that the delivered fire pulse is now FIRE_PULSE_DURATION_MS + arm-relay release time (affects T-F08). |
+| 1.18 | 2026-08-19 | RGB LED strip repurposed as an igniter continuity display on **both** units. §11 rewritten around a six-layer rendering model: the 8-pixel strip shows one pixel per igniter channel at all times, and system status *modulates* the map (alarm wink, stale dim, breathing) rather than replacing it — only the firing path (ARMED/PRE_FIRE/FIRING) and ERROR still take the whole strip. Removed the per-state whole-strip colours for IDLE, LINK_LOST and POST_FIRE, the boot-time RSSI bar, and the 250 ms whole-strip orange ping-miss flash (§11.2 — the 80 ms buzzer beep remains the per-miss indicator). §5.5.8: the **remote now carries an 8-pixel external strip**, not just the on-board LED. §5.4.11/§5.5.8: strip data-in is at the channel-8 end on both units, so pixel 0 — which the on-board LED mirrors in parallel — is channel 8; the on-board LEDs no longer carry independent meaning. Added alarm-wink palette and strip tuning constants to §14.1. Added host-compiled renderer tests (§15.5, T-L01…T-L09).
+| 1.19 | 2026-08-19 | Strip orientation corrected to a **per-unit** setting after bench characterisation with the new `tools/strip-diag` firmware. The two strips are wired data-in at opposite ends: base at the channel-1 end (`RLC_STRIP_REVERSED = 0`, on-board LED mirrors channel 1), remote at the channel-8 end (`RLC_STRIP_REVERSED = 1`, on-board LED mirrors channel 8). v1.18 wrongly assumed both were reversed. Updated §11.0, §5.4.11, §5.5.8, §14.1. Host renderer tests (§15.5) now run once per unit so both orientations are asserted.
 
 ---
 
@@ -475,7 +479,7 @@ Key constraints of this board:
 | Octal PSRAM — not available | GPIO 33, 34, 35, 36, 37 | Internal SPI bus for PSRAM |
 | USB — reserved | GPIO 19, 20 | USB D+/D- for programming/debug |
 | UART0 — reserved | GPIO 43, 44 | Serial debug/programming via USB-to-UART bridge |
-| On-board RGB LED | GPIO 48 | WS2812 addressable LED — used for status indication |
+| On-board RGB LED | GPIO 48 | WS2812 — drives the 8-pixel igniter strip; on-board LED mirrors pixel 0 |
 
 **Available GPIOs (24 general-purpose + GPIO48 for RGB LED):**
 GPIO 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 38, 39, 40, 41, 42, 47
@@ -611,12 +615,26 @@ The ADC voltage is converted to a continuity band using threshold comparison wit
 | Quantity | 1 (senses ARM SENSE node — the arm relay COM output / fire bus) |
 | Pin | GPIO 21 |
 | Function | Post-energise verification that the arm relay contacts are actually closed and VBAT is present on the fire bus. Used for the M1 arm relay verify flow and contact-welding detection (§5.4.3b provides separate key switch position sensing). |
-| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp |
+| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp — **zener NOT FITTED as-built 2026-08-17, see deviation note below** |
 | Debounce | 16-bit shift-register, 10 ms polling, 160 ms debounce (same engine as other digital inputs, §5.3) |
 
 The arm sense circuit reads the ARM SENSE node, which is the arm relay COM output — i.e., the fire bus (§5.4.9). This node carries VBAT whenever the arm relay contacts close (NO→COM). The arm relay coil drive path (§5.4.4) requires both the physical key switch ON and the MOSFET driven, so arm sense HIGH implies both conditions are met. However, the firmware also has a **separate** key switch sense input (§5.4.3b, GPIO 42) that reads the key switch position directly, enabling the firmware to distinguish between key switch OFF and arm relay dropout.
 
 The ARM SENSE node connects to GPIO 21 through a voltage divider (27 kΩ series, 10 kΩ to GND) with a 3.3 V zener diode clamp across the lower resistor.
+
+> **AS-BUILT DEVIATION (2026-08-17) — the zener clamp is NOT fitted.** On the
+> current base hardware, GPIO 21 (§5.4.3) and GPIO 42 (§5.4.3b) have the
+> 27 kΩ/10 kΩ divider only; neither 3.3 V zener is installed, and the arm relay
+> contact has no snubber. This matters because the bug #18 relay-order fix made
+> the arm relay the sole contact breaking 6 A DC, putting that arc on the ARM
+> SENSE node. The 27 kΩ series resistor limits DC VBAT to ~0.33 mA into the pin's
+> internal clamp (survivable), so the exposure is inductive spikes at contact
+> break, plus contact erosion trending toward a welded arm relay. Required before
+> an extended fire-test campaign: BAT54S dual Schottky (or the spec'd zener) on
+> GPIO 21 and GPIO 42, a 47 Ω/100 nF snubber across the arm relay contact, and an
+> SMBJ18A-class TVS from arm relay COM to GND. Firmware currently restricts
+> firing to channel 1 via `FIRE_PROTECTED_CHANNEL_MASK`. See
+> `Development_Progress.md` bug #18.
 
 **Reading interpretation:**
 - **Arm relay de-energised:** ARM SENSE node is disconnected from VBAT (arm relay COM↔NC, NC unused). R2 (10 kΩ) pulls the GPIO to ~0 V. GPIO reads LOW (debounced: 0x0000 = arm relay open).
@@ -642,7 +660,7 @@ The ARM SENSE node connects to GPIO 21 through a voltage divider (27 kΩ series,
 | Quantity | 1 (senses key switch NO output — direct key switch position) |
 | Pin | GPIO 42 |
 | Function | Direct read of the physical key switch position. HIGH = key switch ON (VBAT present at key switch NO output). Used in `guard_arm()`, PRE_FIRE guard, and FSM disarm triggers. Enables the firmware to detect key switch position independently of arm relay state, resolving the circular dependency where arming requires the arm relay to already be closed. |
-| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp (identical to arm sense) |
+| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp (identical to arm sense) — **zener NOT FITTED as-built 2026-08-17, see §5.4.3 deviation note** |
 | Debounce | 16-bit shift-register, 10 ms polling, 160 ms debounce (same engine as arm sense, §5.3) |
 
 The key sense circuit reads the key switch NO output — the same node that feeds VBAT+ to the arm relay coil positive terminal (§5.4.4). When the key switch is ON, VBAT+ appears at this node. When OFF, the node is disconnected from VBAT+ and pulled low. The key switch NO output connects to GPIO 42 through a voltage divider (27 kΩ series, 10 kΩ to GND) with a 3.3 V zener diode clamp — identical to the arm sense circuit on GPIO 21.
@@ -755,7 +773,12 @@ The following diagram shows the relationship between the arm key switch, arm rel
                                │
                           10 kΩ ── GND
                                │
-                        3.3 V zener ── GND
+                        3.3 V zener ── GND   [NOT FITTED as-built 2026-08-17]
+
+    ARM RELAY CONTACT SNUBBER: [NOT FITTED as-built 2026-08-17]
+    The bug #18 relay-order fix makes the arm relay the sole contact breaking
+    6 A DC. Required: 47 Ω/100 nF RC across the contact + SMBJ18A-class TVS
+    from arm relay COM to GND.
 
     CONTINUITY CIRCUIT (per channel, via channel relay NC contact):
 
@@ -909,9 +932,10 @@ GPIO      (10k)│
 |---|---|
 | Type | WS2812 (NeoPixel) addressable RGB LED strip (8 external pixels) + on-board LED on GPIO 48 |
 | Pin | GPIO 48 (fixed, on-board) |
-| Pixels | 8 addressable external pixels. Pixel 0 also drives the on-board LED in parallel. |
+| Pixels | 8 addressable external pixels, one per igniter channel. Pixel 0 also drives the on-board LED in parallel. |
+| Pixel order | **Data-in at the channel-1 end** — channel N is pixel `N-1` (`RLC_STRIP_REVERSED = 0`). Pixel 0, and therefore the on-board LED, is channel 1. |
 | Driver | ESP32-S3 RMT peripheral |
-| Function | Visual status indication (see §11) |
+| Function | Igniter continuity display with status modulation (see §11) |
 
 ### 5.5 Remote Unit I/O
 
@@ -1012,7 +1036,7 @@ Three indicator LEDs are driven directly from GPIO outputs. All three LEDs have 
 
 SPI bus shall use SPI2_HOST on the ESP32-S3.
 
-**Display health check:** at boot, the firmware SHALL read back the ILI9488 display ID register (command 0x04, "Read Display Identification Information") via SPI. If the read-back value does not match the expected ILI9488 ID, or the SPI transaction fails, the remote SHALL transition to ERROR state (the operator cannot safely control the system without visual feedback). A periodic display health check (every 5000 ms) SHALL re-read the display ID register during IDLE state. **The display health check SHALL be performed within `display_task`, serialised with normal display writes.** It SHALL NOT be performed from a separate task or timer callback. Display failure during ARMED, PRE_FIRE, or FIRING SHALL trigger an immediate CMD_DISARM and transition to ERROR.
+**Display health check:** at boot, the firmware SHALL read back the ILI9488 display ID register (command 0x04, "Read Display Identification Information") via SPI. If the read-back ID is invalid (e.g., 0x00000000 indicating no panel response) or the SPI transaction fails, the remote SHALL transition to ERROR state (the operator cannot safely control the system without visual feedback). ILI9488-class clone panels may report a non-standard ID (observed 0x2A403300 on this hardware); any non-zero read-back is considered valid — only a zero/garbage read-back or SPI failure is treated as a fault. A periodic display health check (every 5000 ms) SHALL re-read the display ID register during IDLE state. **The display health check SHALL be performed within `display_task`, serialised with normal display writes.** It SHALL NOT be performed from a separate task or timer callback. Display failure during ARMED, PRE_FIRE, or FIRING SHALL trigger an immediate CMD_DISARM and transition to ERROR.
 
 #### 5.5.7 Buzzer Output
 
@@ -1025,7 +1049,9 @@ SPI bus shall use SPI2_HOST on the ESP32-S3.
 
 #### 5.5.8 RGB LED (Status Indicator)
 
-Same as Base Unit §5.4.11. On-board WS2812 on GPIO 48. Remote unit uses only the single on-board LED (no external strip).
+Same as Base Unit §5.4.11: an 8-pixel WS2812 strip on GPIO 48, one pixel per igniter channel, with the on-board WS2812 in parallel mirroring pixel 0. **Unlike the base, data-in is at the channel-8 end**, so channel N is pixel `7-(N-1)` (`RLC_STRIP_REVERSED = 1`) and the on-board LED mirrors channel 8.
+
+The remote's map is driven from the continuity bands in the cached STATUS_UPDATE rather than from local sensing, so it can go stale; §11.1 layer 4 dims it when it does. Brightness is set independently of the base via `RGB_LED_BRIGHTNESS_REMOTE`, since the remote runs from the smaller 2S pack.
 
 ### 5.6 Power Supply
 
@@ -1325,13 +1351,13 @@ Once linked, the remote sends a `PING` message every 500 ms. The base responds w
 
 **RSSI tracking:** the remote shall record the RSSI from each received frame (PONG, STATUS_UPDATE, ACK, NACK). The display shall show the average RSSI of the 3 most recently received frames.
 
-**Missed ping action (remote):** on each individual ping failure, the remote buzzer shall emit a single short beep (150 ms) and the RGB LED shall flash orange (250 ms) and then return to the current state colour.
+**Missed ping action (remote):** on each individual ping failure, the remote buzzer shall emit a single short beep (80 ms). There is no strip indication per miss — the beep is the indicator, RSSI and ping RTT are on the display, and sustained failures raise the amber link alarm wink (§11.2).
 
 **PONG validation:** the remote shall verify that the `ping_timestamp` echoed in the PONG matches the timestamp sent in the corresponding PING. A PONG with a mismatched timestamp is discarded silently and does NOT count as a successful ping. The failure counter continues.
 
 **Link loss action:** if 3 consecutive pings fail:
-- Remote: display "LINK LOST" warning, buzzer alarm pattern (400 ms on / 400 ms off, repeating), RGB LED yellow fast blink, transition to LINK_LOST state.
-- Base: immediately disarm all channels, de-energise all channel relays, activate siren for 4000 ms (500 on / 500 off, 4 cycles), RGB LED yellow fast blink, transition to LINK_LOST state.
+- Remote: display "LINK LOST" warning, buzzer alarm pattern (400 ms on / 400 ms off, repeating), amber link alarm wink over the channel map, transition to LINK_LOST state.
+- Base: immediately disarm all channels, de-energise all channel relays, activate siren for 4000 ms (500 on / 500 off, 4 cycles), amber link alarm wink over the channel map, transition to LINK_LOST state.
 
 **Remote battery at base:** the base receives the remote's battery voltage via the PING message. If the remote battery is below `REMOTE_VBAT_MIN_OPERATE_MV`, the base should log an advisory warning. **Additionally, if the remote battery (as reported in PING) is below `REMOTE_VBAT_MIN_ARM_MV`, the base SHALL refuse ARM commands with NACK reason 0x0C ("REMOTE BATTERY LOW").** This provides defence-in-depth against a remote firmware bug that ignores its own battery threshold.
 
@@ -1429,14 +1455,14 @@ For the initial command:
 
 | State | Description | RGB LED | Siren |
 |---|---|---|---|
-| `BOOT` | Initialisation. All outputs inactive. Waiting for link. | Blue slow pulse | Off |
-| `IDLE` | Linked. All channel relays de-energised (NC position). | Green solid (arm switch OFF) or green fast blink (arm switch ON) | Off |
+| `BOOT` | Initialisation. All outputs inactive. Waiting for link. | Channel map (cyan chase until continuity valid) | Off |
+| `IDLE` | Linked. All channel relays de-energised (NC position). | Channel map; whole map breathes while the key switch is ON | Off |
 | `ARMED` | One channel selected for firing. All channel relays remain de-energised (NC). | Red slow blink (500/500) | Pulsing (500 on / 500 off) |
 | `PRE_FIRE` | FIRE accepted. Countdown running. Dead-man active. | Red fast blink (100/100) | Continuous |
 | `FIRING` | Igniter relay active. Fire pulse timer running. | Red solid | Continuous |
-| `POST_FIRE` | Fire complete. All channel relays de-energised. Cooldown. | Yellow solid | Off |
-| `LINK_LOST` | Comms lost. All channel relays de-energised. | Yellow fast blink (200/200) | 500 on / 500 off, 4 cycles on entry |
-| `ERROR` | Unrecoverable error. All channel relays de-energised. Requires power cycle. | Red triple flash | 3 blasts on entry |
+| `POST_FIRE` | Fire complete. All channel relays de-energised. Cooldown. | Channel map — the fired channel flips to OPEN as it is resampled | Off |
+| `LINK_LOST` | Comms lost. All channel relays de-energised. | Channel map with the amber link alarm wink | 500 on / 500 off, 4 cycles on entry |
+| `ERROR` | Unrecoverable error. All channel relays de-energised. Requires power cycle. | Red triple flash, map dimmed in the gap | 3 blasts on entry |
 
 ### 7.2 State Transition Rules
 
@@ -1540,7 +1566,7 @@ For the initial command:
   4. Clear armed channel.
   5. Start post-fire cooldown timer (`POST_FIRE_COOLDOWN_MS`, default: 2000 ms).
   6. Send `STATUS_UPDATE` (all bitmasks cleared).
-  7. RGB LED → yellow solid.
+  7. RGB LED → channel map (fired channel flips to OPEN as it is resampled).
 - Exceptions:
   - CMD_CEASE_FIRE during FIRING → `relay_all_safe()` immediately. Siren off. Return to IDLE. ACK the command. The igniter has received partial energy but the operator explicitly asked to stop.
   - Base arm switch → DISARM during FIRING → same as CEASE_FIRE. Key switch OFF breaks arm relay coil current, de-energising arm relay. Immediate cutoff.
@@ -1552,7 +1578,7 @@ For the initial command:
 #### 7.2.6 POST_FIRE → IDLE
 
 - Trigger: Cooldown timer elapsed.
-- Actions: state change only. RGB LED → green solid.
+- Actions: state change only. RGB LED → channel map.
 - Exceptions:
   - CMD_ARM received during cooldown → NACK reason 0x05. Must wait for IDLE.
   - Link lost during POST_FIRE → relays are already safe. Transition to LINK_LOST immediately (safe either way).
@@ -1577,7 +1603,7 @@ Actions:
 3. Clear armed channel.
 4. Cancel arm timeout timer (if running).
 5. Send `CMD_ACK` (if triggered by command) or `STATUS_UPDATE`.
-6. RGB LED → green solid.
+6. RGB LED → channel map.
 
 #### 7.2.8 Any State → LINK_LOST
 
@@ -1586,7 +1612,7 @@ Actions:
   1. Execute full disarm (§7.2.7 actions 1–3).
   2. Activate siren for 4000 ms (500 on / 500 off, 4 cycles).
   3. Send STATUS_UPDATE (if possible — link may be partially functional).
-  4. RGB LED → yellow fast blink.
+  4. RGB LED → channel map with the amber link alarm wink.
 - Recovery: when a valid PING is received, respond with PONG, transition to IDLE (not ARMED). **Siren is silenced immediately on transition to IDLE**, even if the SIREN_LINK_LOST pattern has not completed its 4-cycle duration.
 - Exceptions:
   - LINK_LOST persists for extended time → base stays in LINK_LOST. System is safe (all relays off). No automatic shutdown. Operator must physically intervene.
@@ -1720,13 +1746,13 @@ The fire pulse shall be driven by a hardware timer interrupt, NOT a software del
 
 | State | Description | RGB LED |
 |---|---|---|
-| `BOOT` | Initialisation. Display splash screen. | Blue slow pulse |
-| `LINKING` | Sending `LINK_REQUEST`, waiting for `LINK_ACK`. Display "Connecting..." with retry counter. | Blue slow pulse |
-| `IDLE` | Linked. Display status overview. Operator can select channels. | Green solid |
+| `BOOT` | Initialisation. Display splash screen. | Cyan chase (no continuity data yet) |
+| `LINKING` | Sending `LINK_REQUEST`, waiting for `LINK_ACK`. Display "Connecting..." with retry counter. | Cyan chase, then the channel map once STATUS_UPDATE arrives |
+| `IDLE` | Linked. Display status overview. Operator can select channels. | Channel map, selected channel pulsing; dimmed if the data is stale |
 | `ARMED` | ARM command ACK'd. Fire button active. | Red slow blink (500/500) |
 | `PRE_FIRE` | Fire button held. Pre-fire countdown active. CMD_FIRE sent at 200 ms intervals. | Red fast blink (100/100) |
 | `FIRING` | Local countdown elapsed. Ignition assumed active. CMD_FIRE continues at 200 ms intervals. | Red solid |
-| `LINK_LOST` | Heartbeat lost. Buzzer alarm. All commands disabled. | Yellow fast blink (200/200) |
+| `LINK_LOST` | Heartbeat lost. Buzzer alarm. All commands disabled. | Dimmed channel map with the amber link alarm wink |
 | `ERROR` | Unrecoverable error. Intentionally unrecoverable to prevent operation with a compromised unit. Requires power cycle. | Red triple flash |
 
 ### 8.2 State Transition Rules
@@ -1820,7 +1846,7 @@ The fire pulse shall be driven by a hardware timer interrupt, NOT a software del
   2. Display "LINK LOST" prominently.
   3. Buzzer: continuous alarm pattern (200 ms on / 200 ms off).
   4. Continue sending PINGs at 500 ms.
-  5. RGB LED → yellow fast blink.
+  5. RGB LED → channel map with the amber link alarm wink.
 - Recovery: on first successful PONG, transition to IDLE (never directly to ARMED).
 
 ### 8.3 Input Processing
@@ -1915,9 +1941,9 @@ After a fire pulse completes, the base automatically disarms the channel and de-
 
 ### 9.6 Watchdog Timer
 
-Both units shall enable the ESP32-S3 hardware watchdog timer with a 2-second timeout. The main loop and all critical tasks must feed the watchdog. A watchdog reset results in a clean boot with all outputs in safe state.
+Both units shall enable the ESP32-S3 hardware watchdog timer with a 5-second timeout. The main loop and all critical tasks must feed the watchdog. A watchdog reset results in a clean boot with all outputs in safe state.
 
-**Task Watchdog Timer (TWDT):** Each critical task (arm switch, fire button, continuity, heartbeat, state machine) SHALL register with the ESP-IDF Task Watchdog Timer via `esp_task_wdt_add()`. The TWDT timeout SHALL be 2 seconds. Unlike the hardware watchdog (which detects total system lock), TWDT detects individual task starvation — if any registered task fails to call `esp_task_wdt_reset()` within the timeout, the TWDT triggers a panic or reset.
+**Task Watchdog Timer (TWDT):** Each critical task (arm switch, fire button, continuity, heartbeat, state machine) SHALL register with the ESP-IDF Task Watchdog Timer via `esp_task_wdt_add()`. The TWDT timeout SHALL be 5 seconds. Unlike the hardware watchdog (which detects total system lock), TWDT detects individual task starvation — if any registered task fails to call `esp_task_wdt_reset()` within the timeout, the TWDT triggers a panic or reset.
 
 ### 9.7 GPIO Initialisation Order
 
@@ -2224,42 +2250,61 @@ When a NACK is received, the human-readable text from the NACK reason code table
 
 ## 11. RGB LED Status Specification
 
-Both units have an on-board WS2812 (NeoPixel) addressable RGB LED on GPIO 48, driven via the ESP32-S3 RMT peripheral.
+Both units carry a WS2812 (NeoPixel) 8-pixel addressable strip on GPIO 48, driven via the ESP32-S3 RMT peripheral. Each DevKit's on-board WS2812 sits **in parallel** on the same data line and therefore mirrors pixel 0; it carries no independent meaning.
 
-### 11.1 Base Unit LED Patterns
+### 11.0 Principle
 
-| State | Colour | Pattern | Description |
+The strip is an **igniter continuity display**: one pixel per channel, showing the same continuity bands as the remote's channel grid, in the same colours (§10.2.0, `RLC_COLOR_CONT_*`). System status **modulates** that map rather than replacing it, so the operator never loses sight of the pad. The only exceptions are the firing path and ERROR, which take the whole strip so those signals stay unmistakable.
+
+**Pixel order.** The two strips are wired data-in at **opposite ends**, so `RLC_STRIP_REVERSED` is set per unit (verified 2026-08-19 with `tools/strip-diag`):
+
+| Unit | Data-in end | Mapping | `RLC_STRIP_REVERSED` | On-board LED shows |
+|---|---|---|---|---|
+| Base | channel 1 | channel N → pixel `N-1` | 0 | channel 1 |
+| Remote | channel 8 | channel N → pixel `7-(N-1)` | 1 | channel 8 |
+
+### 11.1 Rendering layers
+
+Highest active layer wins. Identical on both units except where noted.
+
+| # | Layer | Rendering | Condition |
 |---|---|---|---|
-| BOOT | Blue (0,0,255) | Slow pulse (2s cycle, fade in/out) | Initialising |
-| IDLE (arm switch OFF) | Green (0,255,0) | Solid | Safe, linked, ready |
-| IDLE (arm switch ON) | Green (0,255,0) | Fast blink (250ms on/250ms off) | Arm switch active, waiting for remote ARM |
-| ARMED | Red (255,0,0) | Slow blink (500ms on/500ms off) | Channel armed, danger |
-| PRE_FIRE | Red (255,0,0) | Fast blink (100ms on/100ms off) | Imminent ignition |
-| FIRING | Red (255,0,0) | Solid | Active ignition |
-| POST_FIRE | Yellow (255,180,0) | Solid | Cooldown |
-| LINK_LOST | Yellow (255,180,0) | Fast blink (200ms on/200ms off) | No communication |
-| ERROR | Red (255,0,0) | Triple flash (100on/100off/100on/100off/100on/700off) | Fault, power cycle required |
+| 1 | Firing path | Whole strip red — ARMED slow blink (500 ms on/off), PRE_FIRE fast blink (100 ms on/off), FIRING solid | FSM in ARMED / PRE_FIRE / FIRING |
+| 2 | ERROR | Red triple flash (100on/100off/100on/100off/100on/700off); the channel map is shown dimmed to `RLC_STRIP_ERROR_DIM_PCT` during the 700 ms gap so pad state stays readable during a fault | FSM in ERROR, or firmware version mismatch |
+| 3 | Alarm wink | Full-strip flash of `RLC_STRIP_ALARM_WINK_MS` every `RLC_STRIP_ALARM_PERIOD_MS`, over a map that otherwise runs normally. Several concurrent alarms **alternate colours on successive winks** | any alarm class raised (§11.2) |
+| 4 | Stale data | Whole map dimmed to `RLC_STRIP_STALE_DIM_PCT` — last known, not live | **Remote only:** cached STATUS_UPDATE older than 2 × `STATUS_UPDATE_INTERVAL_MS` |
+| 5 | Breathing | Map alternates full / `RLC_STRIP_BREATHE_LOW_PCT` every `RLC_STRIP_BREATHE_MS`. **Base:** whole map. **Remote:** selected channel only | **Base:** key switch in ARM with nothing armed. **Remote:** arm switch ON |
+| 6 | Channel map | One pixel per channel in the continuity colours; the channel of interest pulses full / `RLC_STRIP_CURSOR_LOW_PCT` every `RLC_STRIP_CURSOR_MS` (**base:** armed or firing channel; **remote:** encoder cursor) | default — includes BOOT, LINKING, IDLE, LINK_LOST and POST_FIRE |
 
-### 11.2 Remote Unit LED Patterns
+Layers 3 and 4 compose: STATUS_UPDATE can be late while the link is healthy, so dim means "the data is old" and a wink means "something is wrong".
 
-| State | Colour | Pattern | Description |
+Before the first continuity data arrives, a **cyan left-to-right chase** (`RLC_COLOR_STRIP_BOOT`, `RLC_STRIP_CHASE_MS` per step) runs in place of the map — clearly "not ready", clearly not a channel state.
+
+POST_FIRE deliberately renders as the plain map: the fired channel flips GOOD → OPEN within one continuity sweep (~800 ms), inside the 2000 ms cooldown, making the post-fire igniter check (T-S19) readable at a glance.
+
+### 11.2 Alarm classes
+
+Colours are chosen to be unmistakable for any continuity colour, so a wink can never be read as a channel state.
+
+| Class | Colour | Base raises when | Remote raises when |
 |---|---|---|---|
-| BOOT / LINKING | Blue (0,0,255) | Slow pulse (2s cycle) | Searching for base |
-| IDLE | Green (0,255,0) | Solid | Linked, safe |
-| ARMED | Red (255,0,0) | Slow blink (500ms on/500ms off) | Channel armed |
-| PRE_FIRE | Red (255,0,0) | Fast blink (100ms on/100ms off) | Pre-fire countdown active |
-| FIRING | Red (255,0,0) | Solid | Fire command active |
-| LINK_LOST | Yellow (255,180,0) | Fast blink (200ms on/200ms off) | Lost contact |
-| ERROR | Red (255,0,0) | Triple flash | Fault |
-| Ping failure | Orange (255,100,0) | Single flash (250ms) overlaid on current pattern | Brief indicator |
+| `RLC_ALARM_LINK_LOST` | Amber `#FFB400` | link state != LINKED | link state != LINKED |
+| `RLC_ALARM_BATTERY` | Magenta `#FF00FF` | own pack below `BASE_VBAT_MIN_ARM_MV` | own pack below `REMOTE_VBAT_MIN_ARM_MV`, **or** base pack below `BASE_VBAT_MIN_ARM_MV` as reported in a fresh STATUS_UPDATE |
+| `RLC_ALARM_ARM_FAULT` | White `#FFFFFF` | `ERR_RELAY_FAULT` set | `ERR_RELAY_FAULT` in a fresh STATUS_UPDATE |
+
+A 0 mV reading means the ADC has not yet produced a sample (or, on the remote, that the battery divider is unfed) and does **not** raise the battery alarm.
+
+There is no per-missed-ping strip indication. The 80 ms buzzer beep (§6.4.2) remains the per-miss indicator, and the remote display carries RSSI and ping RTT; sustained failures raise the link alarm above.
 
 ### 11.3 Implementation
 
-- Driver: WS2812 driver using ESP32-S3 RMT peripheral (8-pixel strip on base unit, single on-board LED on remote unit; pixel 0 drives both the external strip and the on-board LED in parallel on the base unit).
-- GPIO: 48 (fixed, on-board, defined as `RGB_LED = 48`).
-- Brightness: configurable in `rlc_config.h` (`RGB_LED_BRIGHTNESS`, default: 30 out of 255).
-- Pattern engine: implemented in `rlc_common` as a FreeRTOS task that accepts state changes and drives the LED accordingly. Patterns are defined as arrays of (colour, duration_ms) pairs with repeat flags.
-- The ping-failure orange flash is implemented as a brief override that temporarily replaces the current pattern for 250 ms, then restores it.
+- Driver: `rlc_common/src/rlc_rgb_led.c`, WS2812 via the ESP32-S3 RMT peripheral. The renderer is **unit-agnostic** — both units run the same layer resolver and differ only in what they feed it.
+- GPIO: 48 (fixed, on-board, `RGB_LED_GPIO`).
+- Brightness: per unit, `RGB_LED_BRIGHTNESS_BASE` / `RGB_LED_BRIGHTNESS_REMOTE` (default 30 of 255). Eight pixels draw roughly 55 mA at that setting, scaling linearly.
+- Pattern engine: a FreeRTOS task at priority 1 (§9.10), ticking every `RLC_STRIP_FRAME_MS`. All animation phase is derived from `esp_timer_get_time()`, so patterns are stable across frame jitter.
+- **Feeds:** `set_channel_bands()`, `set_active_channel()`, `set_alarms()`, `set_stale()`, `set_key_warning()` are published from each unit's **housekeeping loop**, never from an FSM, so the fire path is untouched. The FSMs set only the firing-path and ERROR patterns.
+- Torn reads on the feed variables are tolerated by design: the worst case is one frame of stale colour on a status display.
+- Renderer behaviour is covered by host-compiled tests (§15.5, `tests/host/run.sh`, T-L01…T-L09) that assert every emitted pixel against a mock strip backend.
 
 ---
 
@@ -2271,14 +2316,14 @@ The remote uses an active buzzer for audible feedback. Patterns are implemented 
 
 | Pattern Name | Sequence (ms) | Usage |
 |---|---|---|
-| `BEEP_SHORT` | 200 on | Single confirmation beep |
-| `BEEP_DOUBLE` | 250 on, 300 off, 250 on | Arm confirmed |
-| `BEEP_TRIPLE` | 250 on, 250 off, 250 on, 250 off, 250 on | Error / NACK received |
+| `BEEP_SHORT` | 100 on | Single confirmation beep |
+| `BEEP_DOUBLE` | 100 on, 100 off, 100 on | Arm confirmed |
+| `BEEP_TRIPLE` | 100 on, 80 off, 100 on, 80 off, 100 on | Error / NACK received |
 | `BEEP_LONG` | 500 on | Disarm event |
-| `BEEP_PING_FAIL` | 150 on | Ping failure |
-| `BEEP_CONTINUITY_LOST` | 300 on, 300 off, 300 on, 300 off, 300 on | Continuity → OPEN disarm (distinctive pattern) |
-| `ALARM_LINK_LOST` | 400 on, 400 off, repeating | Link lost alarm |
-| `ALARM_CRITICAL` | 250 on, 250 off, repeating | Critical error alarm |
+| `BEEP_PING_FAIL` | 80 on | Ping failure |
+| `BEEP_CONTINUITY_LOST` | 200 on, 100 off, 200 on, 100 off, 200 on | Continuity → OPEN disarm (distinctive pattern) |
+| `ALARM_LINK_LOST` | 200 on, 200 off, repeating | Link lost alarm |
+| `ALARM_CRITICAL` | 100 on, 100 off, repeating | Critical error alarm |
 
 ### 12.2 Siren Patterns (Base only)
 
@@ -2369,7 +2414,7 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `POST_FIRE_COOLDOWN_MS` | 2000 | Cooldown before returning to IDLE |
 | `SIREN_LINK_LOST_DURATION_MS` | 4000 | Siren duration on link loss (4 × 500on/500off) |
 | `NACK_DISPLAY_DURATION_MS` | 3000 | How long NACK reason text is shown on display |
-| `WATCHDOG_TIMEOUT_S` | 2 | Hardware watchdog timeout |
+| `WATCHDOG_TIMEOUT_S` | 5 | Hardware watchdog timeout |
 | `ARM_TIMEOUT_MS` | 10000 | Maximum time in ARMED state without CMD_FIRE before auto-disarm |
 | `DEBOUNCE_POLL_INTERVAL_MS` | 10 | Default shift-register poll interval |
 
@@ -2396,7 +2441,14 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `CMD_INTEGRITY_KEY` | 16-byte pre-shared key for CRC32 integrity check |
 | `BASE_MAC_ADDR` | 6-byte MAC of the base unit |
 | `REMOTE_MAC_ADDR` | 6-byte MAC of the remote unit |
-| `RGB_LED_BRIGHTNESS` | 0–255, default: 30 |
+| `RGB_LED_BRIGHTNESS_BASE` / `_REMOTE` | 0–255, default: 30 each |
+| `RLC_STRIP_REVERSED` | per unit — 0 (base, data-in at channel 1), 1 (remote, data-in at channel 8) |
+| `RLC_STRIP_ALARM_WINK_MS` / `_PERIOD_MS` | 300 / 3000 |
+| `RLC_STRIP_STALE_DIM_PCT` / `_ERROR_DIM_PCT` | 10 / 20 |
+| `RLC_STRIP_BREATHE_LOW_PCT` / `_CURSOR_LOW_PCT` | 25 / 40 |
+| `RLC_STRIP_BREATHE_MS` / `_CURSOR_MS` / `_CHASE_MS` / `_FRAME_MS` | 250 / 500 / 120 / 50 |
+| `RLC_COLOR_ALARM_LINK` / `_BATT` / `_FAULT` | `#FFB400` / `#FF00FF` / `#FFFFFF` |
+| `RLC_COLOR_STRIP_BOOT` | `#00FFFF` |
 
 ### 14.4 Display Configuration
 
@@ -2490,7 +2542,7 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-S04 | Hold fire button at boot, then arm | Fire does not trigger (fresh press required). |
 | T-S05 | Corrupt a message (bit flip simulation) | Message rejected (CRC integrity check or ESP-NOW decrypt failure). |
 | T-S06 | Verify GPIO init order | Measure SPDT relay outputs with logic analyser during boot. Must be inactive (de-energised) before ESP-NOW init. |
-| T-S07 | Watchdog test: infinite loop in main task | Unit reboots within 2 seconds. All SPDT relays de-energised after reboot. |
+| T-S07 | Watchdog test: infinite loop in main task | Unit reboots within 5 seconds. All SPDT relays de-energised after reboot. |
 | T-S08 | Hold fire button, then arm (button already pressed at ARMED entry) | Fire does not trigger — fresh press detection requires 0xFF→0x00 transition after entering ARMED state. |
 | T-S09 | LINK_REQUEST while ARMED | Send LINK_REQUEST while base is ARMED. Base silently ignores it; session and armed state are unaffected. |
 | T-S10 | Display SPI failure at boot | Disconnect display MOSI. Remote fails display ID read-back and transitions to ERROR. |
@@ -2517,6 +2569,17 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-U07 | Battery threshold | Feed ADC values. Verify all three remote thresholds (MIN_ARM, MIN_OPERATE, CRITICAL). |
 | T-U08 | Version comparison | Verify strict MAJOR.MINOR.PATCH matching logic. |
 | T-U09 | Update sequence gap | Feed update_sequence numbers with gaps. Verify warning at gap > 2. |
+| T-L01 | LED strip renderer | Channel → pixel mapping with `RLC_STRIP_REVERSED`: channel 1 at pixel 7, channel 8 at pixel 0. |
+| T-L02 | LED strip renderer | Continuity map colours: GOOD/MARGINAL/OPEN/SHORT resolve to `RLC_COLOR_CONT_*` on the correct pixels. |
+| T-L03 | LED strip renderer | Cyan boot chase runs while no continuity data has been published, and advances in channel order. |
+| T-L04 | LED strip renderer | Alarm wink timing: full-strip alarm colour inside the wink window, map restored after it, repeating each period. |
+| T-L05 | LED strip renderer | Concurrent alarms alternate colours across successive winks. |
+| T-L06 | LED strip renderer | Stale flag dims the whole map to `RLC_STRIP_STALE_DIM_PCT`; clearing it restores full brightness. |
+| T-L07 | LED strip renderer | Channel-of-interest cursor pulses to `RLC_STRIP_CURSOR_LOW_PCT` while other channels stay steady. |
+| T-L08 | LED strip renderer | Key warning breathes the whole map with no active channel (base) and only the cursor with one (remote). |
+| T-L09 | LED strip renderer | Stale dim and cursor pulse compose without either overriding the other. |
+
+**Runner:** `./tests/host/run.sh` — compiles each `tests/host/test_*.c` against the mock headers in `tests/host/stubs/` and runs it. T-L01…T-L09 include `rlc_rgb_led.c` directly so the real rendering functions are exercised, capturing and asserting every emitted pixel.
 | T-U10 | Continuity band classification | Feed known microvolt values: 0, 300, 500, 1000, 30000, 66000, 100000, 500000, 1500000, 2000000, 3190000. Verify correct band assignment (SHORT, GOOD, MARGINAL, OPEN) at each threshold. |
 | T-U11 | Continuity hysteresis | Feed voltage sequence oscillating near each threshold boundary. Verify no spurious band transitions within the hysteresis band. |
 | T-U12 | Continuity bands encoding | Verify 2-bit-per-channel packing into uint16: ch1 in bits 1:0 through ch8 in bits 15:14. Verify extraction for all band combinations. Verify that enum values (CONT_OPEN=0, CONT_GOOD=1, CONT_MARGINAL=2, CONT_SHORT=3) match wire encoding directly (00=OPEN, 01=GOOD, 10=MARGINAL, 11=SHORT) with no mapping required. |
@@ -2820,7 +2883,7 @@ This appendix provides a comprehensive reference of all protocol exceptions and 
 
 | Exception | Scenario | Handling |
 |---|---|---|
-| PONG not received within 500 ms | Single packet loss | Increment failure counter. Remote buzzer: 150 ms beep. RGB LED: orange flash (250 ms). |
+| PONG not received within 500 ms | Single packet loss | Increment failure counter. Remote buzzer: 80 ms beep. RGB LED: orange flash (250 ms). |
 | 3 consecutive PONG failures | Sustained link loss | Both units → LINK_LOST. Base disarms. Siren. Buzzer alarm. |
 | PONG with wrong ping_timestamp | Stale/mismatched pong | Discard silently. Do NOT count as success. Failure counter continues. |
 | PING received after link loss | Remote recovering | Base responds with PONG. Both → IDLE. |

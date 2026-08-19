@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.14 (2026-04-14)
+**Spec:** RLC-FSPEC-001 v1.19 (2026-08-19)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -19,7 +19,7 @@
 | 1 | Foundation and Communication | COMPLETE |
 | 2 | Input/Output and Debouncing | COMPLETE |
 | 3 | State Machines and Command Processing | CODE COMPLETE |
-| 4 | Display | NOT STARTED |
+| 4 | Display | CODE COMPLETE |
 | 5 | Hardening and Final Testing | NOT STARTED |
 
 ---
@@ -146,7 +146,7 @@ Test specs: `rlc-hw-test-base/RLC_Base_Hardware_Test_Specification.md` and
 | 3 | Verify CRC32-C test vector (§6.2.2) | DONE | `rlc_selftest_run()` — `"123456789"` → `0xE3069283` |
 | 4 | Initialise ADC calibration | DONE | `rlc_battery_init()` with calibration |
 | 5 | Initialise ESP-NOW, PMK, register peer (3 retries) | DONE | `rlc_espnow_init()` + `rlc_espnow_add_peer()` |
-| 6 | Initialise display + read-back ID (remote only) | STUB | `display_init()` is no-op (Phase 4) |
+| 6 | Initialise display + read-back ID (remote only) | DONE | Phase 4: `display_init()` + `display_is_healthy()`; ERROR halt on failure |
 | 7 | Configure input GPIOs + debounce engine | DONE | Phase 1: debounce engine exists; GPIOs are Phase 2 |
 | 8 | Configure hardware watchdog + TWDT | DONE | `rlc_watchdog_init()` + `esp_task_wdt_add()` in link task |
 | 9 | Start FreeRTOS tasks | DONE | link_task (prio 6), led_task (prio 1) |
@@ -465,7 +465,7 @@ They should be verified before Phase 3 work begins, or during Phase 5 hardening.
 ## Phase 3 — State Machines and Command Processing
 
 **FSD ref:** §4.3 Phase 3, §7 (Base FSM), §8 (Remote FSM), §6.3 (Commands)
-**Status:** ON-TARGET TESTING PAUSED — G1 partial (T-R04 PASS, T-R05 SKIP, T-R06 SKIP). Base ESP32 destroyed during first fire pulse. Software fixes applied (relay order + weld detection). Hardware protection (Schottky diode clamps) and replacement ESP32 required before resuming G2/G3.
+**Status:** ON-TARGET TESTING RESUMING (channel 1 only) — G1 partial (T-R04 PASS, T-R05 SKIP/code-reviewed, T-R06 pending). Blocker resolved 2026-07-21: base ESP32 chip #3 installed (MAC `44:1B:F6:D4:0D:68`), hardware protection fitted on **channel 1** (clamping diodes on the ADC input + snubber across the relay contact; channels 2–8 still unprotected — test channel 1 ONLY), software relay-order fix already in place. Both units reflashed; G0 re-verified with chip #3 (LINK_ACK, rssi=-35). Next: G2 arming (T-A01..T-A15) then G3 fire (T-F01..T-F09) on channel 1, pending battery connection.
 
 ### Phase 3 Architecture
 
@@ -588,7 +588,7 @@ Added dedicated key switch sense input to resolve circular dependency in `guard_
 
 **Preamble.** All remaining Phase 3 tests are on-target and require user interaction — there are no host-side unit tests in this project. Testing runs the two flashed units against each other with real relays, continuity banks, arm switches, encoder, and arm/fire buttons. Execute the plan top-to-bottom; later groups assume earlier groups passed.
 
-**Target hardware.** Base on `/dev/ttyACM0` (MAC `44:1B:F6:81:FA:F8`), Remote on `/dev/ttyACM1` (MAC `44:1B:F6:81:F1:70`). **Verify ports each session** — they shift when units hot-plug or reboot rapidly. Use `esptool.py -p /dev/ttyACMx chip_id` to confirm. Both running commit `e03b826` or later.
+**Target hardware.** Identify each board by its **stable by-id** under `/dev/serial/by-id/` — never `/dev/ttyACMx` (those numbers shift on every hot-plug). Prefer each board's **COM port** by-id (`usb-1a86_USB_Single_Serial_…` — the UART-bridge serial, stable across ESP32 chip swaps); the native-USB by-id (`usb-Espressif_…`) embeds the chip MAC and changes whenever a chip is swapped. Base MAC `44:1B:F6:D4:0D:68` (chip #3), Remote MAC `AC:A7:04:E2:F2:8C` (chip #2; #1 flash-damaged). Confirm identity with `esptool.py -p <by-id> read-mac`. Both running commit `e03b826` or later.
 
 ### Phase 3 On-Target Testing Fixes
 
@@ -617,6 +617,57 @@ Bugs discovered and fixed during Phase 3 on-target testing (2026-04-15):
 
 **HARDWARE DAMAGE (2026-04-16):** Base unit ESP32-S3 destroyed during first on-target fire pulse (T-R06). Root cause: relay de-energization order allowed 6A arc at channel relay contacts to couple VBAT to continuity ADC inputs. Software fix applied (relay order reversed). Hardware protection (Schottky diode clamps on GPIO 2-10) required before resuming fire tests. Replacement ESP32 needed.
 
+**Bug #18 audit + software channel gate (2026-08-17).** Audited the software half of the
+fix and added a firmware gate against firing unprotected channels.
+
+- **Relay-order fix verified complete.** All 13 de-energise call sites in
+  `rlc_base_fsm.c` route through `relay_all_safe()` (arm relay OFF → 20 ms →
+  channel relays OFF); `relay_fire_set(ch, true)` at the PRE_FIRE→FIRING
+  transition is the only place a channel relay is ever energised. No path
+  bypasses the ordering.
+- **New: `FIRE_PROTECTED_CHANNEL_MASK`** in `rlc_config.h` (currently `0x01` —
+  channel 1 only). `guard_arm()` NACKs ARM on any channel outside the mask
+  (reusing `NACK_INVALID_CHANNEL`, so the wire protocol is unchanged; the real
+  reason is logged on the base), and `relay_fire_set()` refuses to energise an
+  unprotected channel relay as a last line of defence. De-energising is always
+  allowed. `relay_init()` logs a warning each boot while the mask != `0xFF`.
+  **Bump the mask to `0xFF` once channels 2–8 get their clamps + snubbers.**
+- **Residual exposure — the software fix only covers the break, not the make.**
+  The arm relay is energised on entry to ARMED, so VBAT is already live on the
+  fire bus when `relay_fire_set(ch, true)` transfers the channel contact
+  NC→NO. Contact bounce/arc at *make* can still couple VBAT toward the NC
+  contact — i.e. the unclamped ADC pin. Only the hardware protection (ADC clamp
+  diodes + contact snubber) closes that window; no relay ordering can. Treat the
+  clamps as mandatory, not belt-and-braces.
+- **The arm relay now breaks the 6 A fire current** (previously the channel
+  relay did), and the arc lands on the ARM SENSE node that GPIO 21 watches.
+  **As-built 2026-08-17 (confirmed with the user): the arm relay contact has NO
+  snubber, and GPIO 21 has NO clamp diode/zener — only the 27 kΩ/10 kΩ divider.**
+  The FSD (§5.4.3, §5.4.3b) states the 3.3 V zener as fitted on both GPIO 21 and
+  GPIO 42; it is **not** fitted on either. Doc/hardware mismatch — correct the FSD.
+  - *ESP32 risk on GPIO 21: moderate, not the ADC-pin scenario.* The continuity
+    front end is `3.3V → 3.3 kΩ → sense node → NC contact` with the ADC pin
+    tapping the sense node, i.e. **zero** series resistance to VBAT — hence
+    instant death. GPIO 21 has 27 kΩ in series, so DC VBAT is ~0.33 mA into the
+    internal clamp (survivable); the exposure is inductive spikes at contact
+    break (200 V → ~7 mA, marginal and cumulative).
+  - *The bigger risk is the interlock, not the MCU.* Unsnubbed 6 A DC break
+    erodes and eventually **welds** the arm relay contact — and a welded arm
+    relay leaves VBAT permanently on the fire bus, defeating the primary fire
+    path interlock. `weld_check()` detects it (hard ERROR, power-cycle to
+    clear), so it fails safe — but all switching wear now lands on the one
+    contact the safety case depends on.
+  - *Hardware to fit:* (a) RC snubber across the arm relay contact — start
+    47 Ω 0.5 W + 100 nF film rated ≥ 100 V; (b) TVS across the fire bus (arm
+    relay COM to GND, e.g. SMBJ18A/20A) to clamp the kick at the node the sense
+    divider watches; (c) clamp on GPIO 21 — the spec'd 3.3 V zener across R2, or
+    better a BAT54S dual Schottky (mid node to the GPIO, to 3V3 and GND) plus
+    ~10 nF to GND to slow edges; (d) the same clamp on GPIO 42 (key sense sits
+    on the fire-path high side too).
+- **Fire-pulse duration side effect:** igniter current now ends when the *arm*
+  relay opens, so the delivered pulse is ~`FIRE_PULSE_DURATION_MS` + arm-relay
+  release time. Account for this in T-F08 (oscilloscope timing).
+
 **Required test equipment.**
 - Power supply for base (≥ 9 V) and remote (≥ 3.7 V Li-ion or bench supply on VBAT)
 - 10 squib simulator resistors (≈ 10 Ω each) wired to channels 0–9
@@ -627,16 +678,16 @@ Bugs discovered and fixed during Phase 3 on-target testing (2026-04-15):
 **Test tooling.** Run these in two terminals throughout the session:
 ```bash
 # Terminal 1 — base log
-idf.py -B build_base -p /dev/ttyACM0 monitor
+idf.py -B build_base -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E044219-if00 monitor   # base COM
 # Terminal 2 — remote log
-./build_remote.sh && idf.py -p /dev/ttyACM1 monitor
+./build_remote.sh && idf.py -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E043219-if00 monitor   # remote COM
 ```
 Watch for `state=` lines (base 5 s housekeeping log) and `rfsm:` / `bfsm:` tags.
 
 **Flash procedure (run once at session start).**
 ```bash
-./build_base.sh flash    # flashes /dev/ttyACM0
-./build_remote.sh flash  # flashes /dev/ttyACM1
+./build_base.sh flash    # flashes base (default PORT = base COM by-id; override with -p)
+./build_remote.sh flash  # flashes remote (default PORT = remote COM by-id; override with -p)
 ```
 
 **Pass criteria for Phase 3 as a whole.**
@@ -710,7 +761,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 
 ### Phase 3 FSD Fire Tests (§15.3)
 
-**BLOCKED** — requires replacement base ESP32 + Schottky diode clamps on continuity ADC inputs. See bug #18.
+**Blocker resolved 2026-07-21** (chip #3 + clamping diodes + snubber on channel 1) — resume fire tests on **channel 1 only** until channels 2–8 receive the same protection. See bug #18. Channel-1-only is now enforced in firmware by `FIRE_PROTECTED_CHANNEL_MASK` (2026-08-17), not just by operator discipline.
 
 | ID | Test | Status |
 |----|------|--------|
@@ -735,26 +786,270 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 ## Phase 4 — Display
 
 **FSD ref:** §4.3 Phase 4, §10 (Display Specification)
-**Status:** NOT STARTED
+**Status:** CODE COMPLETE — awaiting on-target verification
+
+Implemented independently of the base firing-sequence debugging: the display
+lives entirely in the remote unit (`components/rlc_remote/src/rlc_display.c`).
+
+Architecture: a PSRAM framebuffer (480x320x3, RGB666) is rendered by
+`display_task` (prio 2, core 1, 8192 stack — FSD §9.10); only the dirty
+bounding box is flushed over SPI through an internal-RAM row bounce buffer.
+No other task touches SPI, so the FSM and input tasks never block on the panel.
+Screens are derived from the remote FSM state, with latched overrides for
+ERROR / firmware mismatch and a timed overlay for NACKs and notices.
 
 ### Phase 4 Development Tasks
 
-| # | Task | FSD ref | Status |
-|---|------|---------|--------|
-| 1 | ILI9488 SPI display driver (480x320, SPI2_HOST, 20 MHz) | §10.1 | TODO |
-| 2 | Display health check (ID read-back at boot) | §9.13 step 6 | TODO |
-| 3 | Screen layout manager | §10.3 | TODO |
-| 4 | Splash screen | §10.3.1 | TODO |
-| 5 | Main status screen (IDLE) — RSSI bar, battery, continuity grid, channel | §10.3.2 | TODO |
-| 6 | Armed screen — channel indicator, continuity, status | §10.3.3 | TODO |
-| 7 | Firing / Pre-fire screen — countdown, pulse indicator | §10.3.4 | TODO |
-| 8 | Link lost screen | §10.3.5 | TODO |
-| 9 | Error screen | §10.3.6 | TODO |
-| 10 | Fire complete screen | §10.3.7 | TODO |
-| 11 | Firmware mismatch screen | §10.3.8 | TODO |
-| 12 | Partial refresh (dirty-rectangle) for dynamic elements | §10.4 | TODO |
-| 13 | NACK reason display (human-readable text) | §10.5 | TODO |
-| 14 | Display refresh rate >= 5 Hz | §10.4 | TODO |
+| # | Task | FSD ref | Status | Implementation |
+|---|------|---------|--------|----------------|
+| 1 | ILI9488 SPI display driver (480x320, SPI2_HOST, 20 MHz) | §10.1 | DONE | Init sequence ported from validated `rlc-hw-test-remote` |
+| 2 | Display health check (ID read-back at boot) | §9.13 step 6 | DONE | `display_is_healthy()`; remote halts in ERROR on failure (T-S10) |
+| 3 | Screen layout manager | §10.3 | DONE | `display_task` + `screen_for_state()` |
+| 4 | Splash screen | §10.2.1 | DONE | Title, version, VRO + author credits, attempt counter, progress bar; held for `SPLASH_MIN_DURATION_MS` (10 s) so it is readable even when linking completes in <1 s |
+| 5 | Main status screen (IDLE) — RSSI bar, battery, continuity grid, channel | §10.2.2 | DONE | Top bar (RSSI/RTT/both batteries), 4x2 channel grid, legend, arm-sense line |
+| 6 | Armed screen — channel indicator, continuity, status | §10.2.3 | DONE | Pulsing red border, large channel number, arm-sense confirmation |
+| 7 | Firing / Pre-fire screen — countdown, pulse indicator | §10.2.4 | DONE | 100 ms countdown, "IGNITION ACTIVE" on red field |
+| 8 | Link lost screen | §10.2.5 | DONE | Amber frame, last-contact seconds, ping attempts |
+| 9 | Error screen | §10.2.6 | DONE | `display_error()` latches text until reboot |
+| 10 | Fire complete screen | §10.2.4a | DONE | Shown for POST_FIRE_COOLDOWN_MS with return countdown |
+| 11 | Firmware mismatch screen | §10.2.1 | DONE | Auto-detected from `RLC_LINK_STATE_VERSION_MISMATCH` |
+| 12 | Partial refresh (dirty-rectangle) for dynamic elements | §10.3 | DONE | Dirty bounding box; full redraw only on screen change |
+| 13 | NACK reason display (human-readable text) | §10.2.7 | DONE | 3 s overlay via `display_nack()`; `display_toast()` for local rejections |
+| 14 | Display refresh rate >= 5 Hz | §10.3 | DONE | 10 Hz frame loop (`DISPLAY_FRAME_MS` 100) |
+
+Supporting changes:
+- `remote_fsm_get_status()` — spinlock-guarded snapshot of the cached
+  STATUS_UPDATE (continuity bands, base battery, arm sense, error flags).
+- `remote_fsm_get_prefire_remaining_ms()` — drives the pre-fire countdown.
+- `rlc_link_status_t.ping_rtt_ms` — PING/PONG round-trip for the top bar.
+- FSM display hooks: NACK overlays, "TURN ARM KEY FIRST" and other local
+  rejection toasts, multi-arm error screen, fire-complete screen.
+
+### 8-Pixel Igniter Status Strip — Both Units (2026-08-19, revised)
+
+An 8-way NeoPixel strip is wired to `PIN_RGB_LED` (GPIO 48) on **both** units,
+one pixel per igniter channel. Each DevKit's built-in NeoPixel sits in parallel
+on the same data line (confirmed on the bench) and so mirrors pixel 0. The
+built-in LEDs no longer carry any independent meaning — the old link/boot
+indication is gone.
+
+**The two strips are wired data-in at opposite ends**, so `RLC_STRIP_REVERSED`
+is set per unit in `rlc_config.h` (verified with `tools/strip-diag`):
+
+| Unit | Data-in end | Mapping | `RLC_STRIP_REVERSED` | Built-in LED shows |
+|---|---|---|---|---|
+| Base | channel 1 | channel N → pixel `N-1` | 0 | channel 1 |
+| Remote | channel 8 | channel N → pixel `7-(N-1)` | 1 | channel 8 |
+
+| Continuity | Colour | Constant |
+|---|---|---|
+| GOOD | dark green `#006400` | `RLC_COLOR_CONT_GOOD` |
+| MARGINAL | light green `#90EE90` | `RLC_COLOR_CONT_MARGINAL` |
+| OPEN | yellow `#FFFF00` | `RLC_COLOR_CONT_OPEN` |
+| SHORT | red `#FF0000` | `RLC_COLOR_CONT_SHORT` |
+
+The constants live in `rlc_config.h` and are the **single source of truth for
+both units** — the remote display's channel grid resolves its colours from the
+same macros, so pad, handheld strip and handheld screen always agree.
+
+**Deviation from FSD §10.2.0**, which specifies blue for GOOD, red for OPEN and
+orange for SHORT, with blue chosen deliberately to avoid red-green ambiguity for
+colour-blind operators. The requested palette pairs green (good) with red
+(short) and moves red off OPEN. The display's shape coding (filled circle /
+triangle / ring / diamond) still carries the meaning without colour, and the
+palette is a one-line config change. FSD §10.2.0 should be updated to match.
+
+#### Rendering layers (FSD §11.1)
+
+The strip is an **igniter continuity display**; system status modulates the map
+rather than replacing it. Highest active layer wins:
+
+| # | Layer | Rendering |
+|---|---|---|
+| 1 | `ARMED` / `PRE_FIRE` / `FIRING` | Whole strip red — **unchanged**, the firing signal stays unmistakable |
+| 2 | `ERROR` | Red triple flash; map dimmed to 20 % in the 700 ms gap |
+| 3 | Alarm wink | 300 ms full-strip flash every 3 s; concurrent alarms alternate colours |
+| 4 | Stale (remote only) | Whole map dimmed to 10 % — cached STATUS_UPDATE has aged out |
+| 5 | Breathing | Base: whole map, key switch ON. Remote: selected channel, arm switch ON |
+| 6 | Channel map | Continuity; channel of interest pulses (base: armed/firing, remote: cursor) |
+
+`BOOT`, `LINKING`, `IDLE`, `LINK_LOST` and `POST_FIRE` all render as layer 6.
+Before the first continuity data arrives, a cyan chase runs instead. Alarm
+colours: link lost = amber, battery = magenta, arm-sense fault = white — none of
+which can be confused with a continuity colour.
+
+#### What was removed
+
+- The boot-time **RSSI bar** and blue boot pulse (`set_rssi()`, `led_show_rssi_bar()`).
+- Whole-strip `IDLE` green, `LINK_LOST` amber and `POST_FIRE` amber.
+- The 250 ms whole-strip **orange ping-miss flash** (`flash_overlay()`), which
+  wiped the map and blocked the LED task; the 80 ms buzzer beep remains.
+- Dead code: `LED_PATTERN_CHANNEL_STATUS`, `LED_PATTERN_PING_FAIL`,
+  `rlc_rgb_led_set_state()` — none were ever called.
+- `LED_PATTERN_IDLE_ARM_ON` was documented but never set by the FSM; the key-ON
+  warning is now a feed (`set_key_warning()`) rather than a pattern.
+
+#### Architecture
+
+`rlc_rgb_led.c` is now **unit-agnostic**: one layer resolver, both units, only
+the feeds differ. All feeds (`set_channel_bands`, `set_active_channel`,
+`set_alarms`, `set_stale`, `set_key_warning`) are published from each unit's
+**housekeeping loop** at 10 Hz — deliberately not from the FSM, so the fire path
+is untouched. The FSMs set only the firing-path and ERROR patterns. Animation
+phase derives from `esp_timer_get_time()`, so patterns are stable across frame
+jitter.
+
+The remote's map comes from the cached STATUS_UPDATE (`remote_fsm_get_status()`,
+which returns a freshness flag) rather than local sensing — the one genuine
+asymmetry between the units, and the reason layer 4 exists. Dim means "the data
+is old"; a wink means "something is wrong". The two compose.
+
+#### Host tests
+
+`./tests/host/run.sh` compiles `tests/host/test_strip.c`, which includes
+`rlc_rgb_led.c` directly and links it against mock `led_strip` / FreeRTOS /
+`esp_timer` headers, capturing every emitted pixel. **30 checks, 0 failures**
+covering T-L01…T-L09 (FSD §15.5). This is the project's first host-compiled
+test suite.
+
+### Display Legibility — Minimum Font Size (2026-08-19)
+
+Field feedback: scale-1 text (6x8 px per character) is unreadable at arm's
+length. **Scale 2 (12x16 px) is now the floor** — no text on any screen is
+drawn below it; the only remaining scale-1 calls are 1-pixel frame and rule
+thicknesses. "Connected to base" on the splash is the reference size.
+
+Layout consequences: channel cells shortened from 86 to 80 px to free two
+scale-2 status rows, and several strings abbreviated so they still fit 480 px
+at 12 px/character:
+
+| Was | Now |
+|---|---|
+| `Turn ARM key, then hold encoder to arm channel N` | `TURN ARM KEY TO ARM CH N` |
+| `ARM SENSE ON  HW ON  KEY SAFE` | `ARM ON  HW ON  KEY SAFE` |
+| `BASE ERROR FLAGS 0x0A` | `BASE ERROR 0x0A` |
+| `PRESS AND HOLD FIRE TO LAUNCH` | `HOLD FIRE TO LAUNCH` |
+| `HOLD FIRE BUTTON - RELEASE TO ABORT` | `RELEASE TO ABORT` |
+| `Returning to IDLE in 1.8s` | `IDLE IN 1.8s` |
+| `Ping attempts: 7   RSSI -45 dBm` | `Attempts 7   RSSI -45 dBm` |
+| `System halted. Power cycle required.` | `System halted - power cycle` |
+| `ESP32 ROCKET LAUNCH CONTROLLER` (mismatch screen) | `ROCKET LAUNCH CONTROLLER` |
+
+The NACK/toast overlay previously fell back to scale 1 for long strings; it now
+always renders at scale 2 (every NACK reason string fits).
+
+### Phase 4 Findings — Battery Thresholds (2026-08-19)
+
+Raised while diagnosing a "remote power fail" report on the bench. Neither is a
+display bug; both are open items.
+
+1. **The base never checks the remote's battery.** FSD §7 (line 1357) requires
+   the base to refuse ARM with NACK `0x0C` ("REMOTE BATTERY LOW") when the
+   voltage reported in PING is below `REMOTE_VBAT_MIN_ARM_MV`, as defence in
+   depth against a remote firmware bug. `remote_battery_voltage_mv` arrives in
+   every PING but nothing in `components/rlc_base/` reads it, and
+   `check_arm_guards()` only tests the base's own pack. **Requirement not
+   implemented.**
+2. **`rlc_config.h` still carries the bench-test threshold overrides**
+   (`REMOTE_VBAT_MIN_ARM_MV` 3200 / `MIN_OPERATE` 3100 / `CRITICAL` 3000, sized
+   for the 3.3 V USB rail). FSD §5.6.2 production values for the specified 2S
+   pack are 7000 / 6600 / 6400. As shipped, the remote would arm on a 2S pack at
+   3.3 V per cell — well under the FSD floor. **Must be switched back before
+   field use**, together with `REMOTE_VBAT_FULL_MV` (bench 4200 → 2S 8400),
+   the new display gauge endpoint.
+
+Remote battery criteria, for reference: `rlc_remote_battery.c` samples GPIO 1
+(ADC1_CH0) once per second through the 18 kΩ/10 kΩ (2.8:1) divider, 8-sample
+average. Below `REMOTE_VBAT_CRITICAL_MV` it posts `EVT_BATTERY_CRITICAL`
+(edge-triggered) and the remote FSM enters STATE_ERROR — unrecoverable, power
+cycle required. A reading of **0 mV means the divider is unfed**, not a flat
+pack: USB power alone does not energise the VBAT sense. Note the divider is
+sized for 8.4 V full scale; feeding the battery input from a 12 V+ supply puts
+>4.5 V on GPIO 1, above the 3.3 V absolute maximum (bug #18 failure class).
+
+### Bug #19 — Base LED strip: dead pixel at channel 4 (2026-08-19, OPEN)
+
+**Symptom.** With the base strip powered, channels 1-3 render correctly,
+**channel 4 is stuck solid blue and never updates**, and channels 5-8 stay dark.
+Stable across every test pattern.
+
+**Diagnosis.** Characterised with `tools/strip-diag`, which paints static solid
+frames (red/green/blue/yellow/white) and walks a single pixel along the chain.
+Channels 1-3 rendered all five colours correctly, so the data line from GPIO 48
+is clean. The single-pixel walk lit ch1 first, proving the base strip's data-in
+is at the **channel-1 end** — the opposite of the remote, and the reason the
+first firmware showed the map mirrored on this unit.
+
+The fault is at the **4th pixel in the data chain**: it holds a value latched at
+power-up (blue) and never updates, meaning its data input is not receiving valid
+bits — a dead LED controller, or a broken joint between pixel 3's DOUT and pixel
+4's DIN. Channels 5-8 are dark because a WS2812 that has never received a frame
+stays off; nothing valid propagates past the fault.
+
+**Not** a supply or logic-level problem: three pixels rendering five different
+static patterns perfectly rules out marginal 3.3 V data levels, which corrupt the
+pixels *nearest* DIN and produce flicker rather than a stable pattern. (An
+earlier working hypothesis blamed level shifting; the static-frame evidence
+disproved it.)
+
+**Fix required (hardware):** reflow or replace the 4th LED in the base strip, or
+cut the strip after pixel 3 and splice in a replacement section. Until then the
+base shows only channels 1-3.
+
+**Preceding cause, resolved:** the strip was entirely dark because its 5 V feed
+was not connected.
+
+### LED Strip Tests (2026-08-19)
+
+Host renderer tests — `./tests/host/run.sh`, run once per unit (the two strip
+orientations), 30 checks each, all passing:
+
+| ID | Test | Status |
+|----|------|--------|
+| T-L01 | Channel → pixel mapping (reversed: ch1=pixel7, ch8=pixel0) | PASS |
+| T-L02 | Continuity map colours on the correct pixels | PASS |
+| T-L03 | Cyan boot chase before any continuity data | PASS |
+| T-L04 | Alarm wink timing; map restored between winks | PASS |
+| T-L05 | Concurrent alarms alternate colours across winks | PASS |
+| T-L06 | Stale flag dims map to 10 %, clears cleanly | PASS |
+| T-L07 | Cursor pulse on the channel of interest only | PASS |
+| T-L08 | Key warning: whole map (base) vs cursor only (remote) | PASS |
+| T-L09 | Stale dim and cursor pulse compose | PASS |
+
+On-target, both units flashed and running:
+
+| ID | Test | Status | Notes |
+|----|------|--------|-------|
+| T-L10 | Both units build with no warnings | PASS | |
+| T-L11 | Base boots, links, no watchdog trips | PASS | rssi −34 dBm, vbat 11618 mV, key ON, cont=0x0000 |
+| T-L12 | Remote boots, links, no watchdog trips | PASS | rssi −42 dBm, vbat 5740 mV, arm switch ON, sel=1 |
+| T-L13 | Link-loss alarm path: remote held in reset | PASS | Base detected loss in 1.5 s, held LINK_LOST 25 s, recovered to IDLE cleanly |
+| T-L14 | Strip colours match the map **by eye** | PASS | Remote verified: ch1 red/SHORT, ch2-8 yellow/OPEN, ch2 breathing as cursor |
+| T-L15 | Continuity change moves the right pixel | TODO | Needs a resistor on a known channel |
+| T-L16 | Alarm wink legible at arm's length in daylight | TODO | May drive a brightness change |
+| T-L17 | Remote cursor pulse follows the encoder | PASS | Cursor observed on the selected channel |
+| T-L18 | Base strip renders all 8 channels | FAIL | Bug #19 — dead pixel at channel 4; ch1-3 correct |
+
+**Verified by eye on the remote (2026-08-19):** channel 1 red (SHORT), channels
+2-8 yellow (OPEN), channel 2 breathing as the selected channel — mapping,
+colours, cursor breathing and the reversed orientation all confirmed correct.
+
+**Base:** channels 1-3 render correctly once the orientation was fixed;
+channels 4-8 are blocked by bug #19 (dead pixel at channel 4).
+
+### Phase 4 On-Target Tests (pending)
+
+| ID | Test | Status |
+|----|------|--------|
+| T-D01 | Panel ID read-back at boot (expect clone ID 0x2A403300) | TODO |
+| T-D02 | Splash holds 10 s, then transitions to main status | TODO |
+| T-D03 | Continuity grid matches base STATUS_UPDATE for all 8 channels | TODO |
+| T-D04 | Encoder rotation moves the cyan selection cursor | TODO |
+| T-D05 | ARMED screen on arm, red pulse, arm-sense confirmed | TODO |
+| T-D06 | Pre-fire countdown smoothness (100 ms steps) | TODO |
+| T-D07 | NACK overlay text + 3 s timeout, screen restored cleanly | TODO |
+| T-D08 | Link-lost screen and recovery back to main status | TODO |
+| T-D09 | Full-screen redraw time and steady-state frame rate | TODO |
 
 ---
 
@@ -805,10 +1100,10 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 
 | Item | Value |
 |------|-------|
-| Base MAC | `44:1B:F6:81:FA:F8` |
-| Remote MAC | `44:1B:F6:81:F1:70` |
-| Base serial | `/dev/ttyACM0` (verify with `udevadm` each session) |
-| Remote serial | `/dev/ttyACM1` (verify with `udevadm` each session) |
+| Base MAC | `44:1B:F6:D4:0D:68` (chip #3; #2 `44:1B:F6:81:FA:F8` & #1 `94:A9:90:31:18:38` destroyed) |
+| Remote MAC | `AC:A7:04:E2:F2:8C` (chip #2; #1 `44:1B:F6:81:F1:70` flash-damaged) |
+| Base serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E044219-if00` (stable board serial) |
+| Remote serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E043219-if00` (verified 2026-08-19 by `read_mac` → `ac:a7:04:e2:f2:8c`; was `...5B5E042156` before the board swap) |
 | ESP-IDF version | v5.4.1 |
 | Target | ESP32-S3 (xtensa) |
 | Flash size | 16 MB |
@@ -840,14 +1135,14 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 | `cmd_fire_repeat_task` (fire_rep) | 4 | 0 | 2048 | 3 DONE |
 | `battery_task` | 3 | 0 | 3072 | 2 |
 | `encoder_task` | 3 | 0 | 4096 | 2 |
-| `display_task` | 2 | 1 | 8192 | 4 |
+| `display_task` | 2 | 1 | 8192 | 4 DONE |
 | `buzzer_task` | 1 | 1 | 2048 | 2 |
 | `rgb_led_task` | 1 (lowest) | 1 | 2048 | 1 DONE |
 
 ## Build Commands
 
 ```
-./build_base.sh flash          # Build + flash base to /dev/ttyACM0
-./build_remote.sh flash        # Build + flash remote to /dev/ttyACM1
+./build_base.sh flash          # Build + flash base (COM by-id; override with -p)
+./build_remote.sh flash        # Build + flash remote (COM by-id; override with -p)
 ./build_base.sh flash -p PORT  # Custom port
 ```

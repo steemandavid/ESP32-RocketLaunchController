@@ -109,8 +109,9 @@ void base_app_main(void)
     }
 
     rlc_rgb_led_init();
-    rlc_rgb_led_set_pattern(LED_PATTERN_BOOT);
-    rlc_rgb_led_set_pixel_count(8);  /* Base unit has 8-pixel strip */
+    rlc_rgb_led_set_pixel_count(NUM_CHANNELS);  /* 8-pixel igniter strip */
+    rlc_rgb_led_set_brightness(RGB_LED_BRIGHTNESS_BASE);
+    rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
 
     /* §9.13 Step 4: Initialise ADC calibration + battery */
     rlc_battery_init(PIN_VBAT_ADC, BASE_VBAT_DIVIDER_RATIO);
@@ -187,10 +188,36 @@ void base_app_main(void)
 
     ESP_LOGI(TAG, "base ready — Phase 3 FSM active, waiting for commands");
 
-    /* Housekeeping loop — watchdog + status log */
+    /* Housekeeping loop — watchdog + status log + LED status feeds */
     int64_t last_status_log_ms = 0;
     while (1) {
         rlc_watchdog_feed();
+
+        /* Feed the 8-pixel igniter strip: one pixel per channel, the armed or
+         * firing channel highlighted, plus the alarm and key-warning layers.
+         * Done here rather than in the FSM to keep the fire path untouched. */
+        rlc_rgb_led_set_channel_bands(continuity_get_bands());
+        uint8_t firing_ch = base_fsm_get_firing_channel();
+        uint8_t armed_ch  = base_fsm_get_armed_channel();
+        rlc_rgb_led_set_active_channel(firing_ch ? firing_ch : armed_ch);
+
+        rlc_link_status_t led_ls;
+        rlc_link_get_status(&led_ls);
+
+        /* ERR_VBAT_LOW is never raised by the FSM (only CRITICAL, which goes
+         * straight to ERROR), so compare the live reading against the arming
+         * floor. 0 mV means the ADC has not produced a sample yet. */
+        uint16_t vbat_mv = rlc_battery_get_voltage_mv();
+        uint32_t alarms = 0;
+        if (led_ls.state != RLC_LINK_STATE_LINKED)             alarms |= RLC_ALARM_LINK_LOST;
+        if (vbat_mv > 0 && vbat_mv < BASE_VBAT_MIN_ARM_MV)     alarms |= RLC_ALARM_BATTERY;
+        if (base_fsm_get_error_flags() & ERR_RELAY_FAULT)      alarms |= RLC_ALARM_ARM_FAULT;
+        rlc_rgb_led_set_alarms(alarms);
+
+        /* Key switch in ARM but nothing armed yet: the whole map breathes.
+         * The base never learns the remote's cursor, so there is no single
+         * channel to single out here (the remote breathes its own). */
+        rlc_rgb_led_set_key_warning(key_sense_get_debounced() && !armed_ch && !firing_ch);
 
         int64_t now = esp_timer_get_time() / 1000;
         if (now - last_status_log_ms >= 5000) {

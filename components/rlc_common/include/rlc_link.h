@@ -50,6 +50,7 @@ typedef struct {
     int              rssi_avg_dbm;     /* average of last 3 frames, 0 if unknown */
     int              last_rssi_dbm;
     uint16_t         missed_pings;     /* consecutive failures in current window */
+    uint16_t         ping_rtt_ms;      /* last PING->PONG round-trip, 0 if unknown */
     uint16_t         linkreq_attempts; /* LINK_REQUEST retry count (remote) */
     uint8_t          peer_fw[3];       /* major, minor, patch reported by peer */
     bool             peer_fw_known;

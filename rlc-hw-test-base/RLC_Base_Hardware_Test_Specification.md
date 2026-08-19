@@ -363,7 +363,7 @@ Requires test resistors connected to channel terminals via SPDT relay NC contact
 cd rlc-hw-test-base
 idf.py set-target esp32s3
 idf.py build
-idf.py -p /dev/ttyUSB0 flash monitor
+idf.py -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E044219-if00 flash monitor   # base COM port (stable by-id)
 ```
 
 The serial monitor serves as both the test CLI and the log output.

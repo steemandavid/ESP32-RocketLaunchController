@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "sdkconfig.h"
 
 /* ── Timing Constants ─────────────────────────────────────────── */
 
@@ -39,6 +40,10 @@
 #define SIREN_LINK_LOST_DURATION_MS    4000
 #define NACK_DISPLAY_DURATION_MS       3000
 
+/* Minimum time the splash screen stays up, even if the link comes up sooner
+ * (linking typically completes in well under a second). FSD §10.2.1. */
+#define SPLASH_MIN_DURATION_MS         10000
+
 #define WATCHDOG_TIMEOUT_S             5
 #define DEBOUNCE_POLL_INTERVAL_MS      10
 #define CONT_RELAY_DROPOUT_MS          50    /* Relay settling before first ADC sample (§5.4.6) */
@@ -46,6 +51,22 @@
 /* ── Fire Safety Configuration ─────────────────────────────────── */
 
 #define COMPLETE_PULSE_ON_LINK_LOSS    1     /* 1 = complete fire pulse on link loss, 0 = immediate abort */
+
+/* Bitmask of channels whose continuity ADC input has the bug #18 hardware
+ * protection fitted (Schottky clamp diodes on the ADC pin + snubber across
+ * the relay contact). Bit 0 = ch1 ... bit 7 = ch8.
+ *
+ * Firing a channel without that protection couples VBAT onto an unclamped
+ * ADC input (GPIO 2-10) and destroys the ESP32 — this already happened twice
+ * (Dev-Progress bug #18). ARM is NACKed and the channel relay refuses to
+ * close for any channel not in this mask.
+ *
+ * Set to 0xFF once all eight channels are protected. */
+#define FIRE_PROTECTED_CHANNEL_MASK    0x01  /* channel 1 only (2026-07-21) */
+
+#define CHANNEL_IS_PROTECTED(ch) \
+    (((ch) >= 1) && ((ch) <= NUM_CHANNELS) && \
+     ((FIRE_PROTECTED_CHANNEL_MASK >> ((ch) - 1)) & 1u))
 
 /* ── Voltage Thresholds (millivolts) ──────────────────────────── */
 
@@ -59,6 +80,42 @@
 #define REMOTE_VBAT_MIN_ARM_MV         3200
 #define REMOTE_VBAT_MIN_OPERATE_MV     3100
 #define REMOTE_VBAT_CRITICAL_MV        3000
+
+/* Full-charge endpoints for the display battery gauges (FSD §10.2.2).
+ * These must be switched together with the thresholds above: on the bench
+ * the remote reads the 3.3 V USB rail, in production it reads a 2S pack.
+ * Production values: REMOTE 8400 (2S LiPo), BASE 12600 (3S LiPo). */
+#define REMOTE_VBAT_FULL_MV            4200
+#define BASE_VBAT_FULL_MV              12600
+
+/* ── Status Colours (HTML #RRGGBB) ────────────────────────────── */
+
+/* Igniter continuity status. These drive the 8-pixel NeoPixel strip on BOTH
+ * units (one pixel per channel) and the remote display's channel grid, so
+ * pad and handheld always agree. Edit here to restyle all three.
+ *
+ * NOTE: this palette (green/red) deviates from FSD §10.2.0, which specifies
+ * blue for GOOD to avoid red-green ambiguity for colour-blind operators.
+ * Shape coding on the display (circle/triangle/ring/diamond) still carries
+ * the meaning independently of colour. */
+#define RLC_COLOR_CONT_GOOD        0x006400   /* darkgreen  — 0.5-20 Ω, normal igniter */
+#define RLC_COLOR_CONT_MARGINAL    0x90EE90   /* lightgreen — 20-500 Ω, high resistance */
+#define RLC_COLOR_CONT_OPEN        0xFFFF00   /* yellow     — >500 Ω or no igniter */
+#define RLC_COLOR_CONT_SHORT       0xFF0000   /* red        — <0.5 Ω, wiring fault */
+
+/* Alarm-wink colours. Deliberately chosen to be unmistakable for any
+ * continuity colour above, so a wink can never be read as a channel state. */
+#define RLC_COLOR_ALARM_LINK       0xFFB400   /* amber   — link lost */
+#define RLC_COLOR_ALARM_BATT       0xFF00FF   /* magenta — battery low/critical */
+#define RLC_COLOR_ALARM_FAULT      0xFFFFFF   /* white   — arm-sense fault */
+
+/* Shown as a left-to-right chase before the first continuity sweep is valid */
+#define RLC_COLOR_STRIP_BOOT       0x00FFFF   /* cyan */
+
+/* Unpack an 0xRRGGBB constant */
+#define RLC_COLOR_R(c)  ((uint8_t)(((c) >> 16) & 0xFF))
+#define RLC_COLOR_G(c)  ((uint8_t)(((c) >>  8) & 0xFF))
+#define RLC_COLOR_B(c)  ((uint8_t)( (c)        & 0xFF))
 
 /* ── Hardware Configuration ───────────────────────────────────── */
 
@@ -83,8 +140,8 @@
 }
 
 /* Peer MAC addresses — actual hardware MACs */
-#define BASE_MAC_ADDR    { 0x44, 0x1B, 0xF6, 0x81, 0xFA, 0xF8 }
-#define REMOTE_MAC_ADDR  { 0x44, 0x1B, 0xF6, 0x81, 0xF1, 0x70 }
+#define BASE_MAC_ADDR    { 0x44, 0x1B, 0xF6, 0xD4, 0x0D, 0x68 }  /* chip #3 (2026-07-21); #2 44:1B:F6:81:FA:F8 & #1 94:A9:90:31:18:38 destroyed */
+#define REMOTE_MAC_ADDR  { 0xAC, 0xA7, 0x04, 0xE2, 0xF2, 0x8C }  /* remote chip #2 (2026-07-22); #1 44:1B:F6:81:F1:70 flash damaged */
 
 /* ── Continuity Sensing (Base only, §14.5) ───────────────────── */
 
@@ -106,7 +163,44 @@
 /* ── RGB LED ──────────────────────────────────────────────────── */
 
 #define RGB_LED_GPIO               48
-#define RGB_LED_BRIGHTNESS         30   /* 0–255 */
+
+/* Master brightness, 0–255. Split per unit: the pad strip may need to be
+ * brighter for daylight visibility, while the handheld runs off a smaller
+ * 2S pack. 8 pixels draw roughly 55 mA at 30/255, scaling linearly. */
+#define RGB_LED_BRIGHTNESS_BASE    30
+#define RGB_LED_BRIGHTNESS_REMOTE  30
+
+/* Strip orientation, per unit — the two strips are wired data-in at opposite
+ * ends (verified 2026-08-19 with tools/strip-diag, single-pixel walk):
+ *
+ *   Base   — DIN at the CHANNEL-1 end: channel N is pixel N-1, on-board LED
+ *            (parallel on the same data line) mirrors channel 1.
+ *   Remote — DIN at the CHANNEL-8 end: channel N is pixel 7-(N-1), on-board
+ *            LED mirrors channel 8.
+ *
+ * Set to 1 when data-in is at the channel-8 end. */
+#ifdef CONFIG_RLC_UNIT_BASE
+#define RLC_STRIP_REVERSED         0
+#else
+#define RLC_STRIP_REVERSED         1
+#endif
+
+/* Alarm wink: a brief full-strip flash over the continuity map, so igniter
+ * status stays readable while the alarm stays unmissable. */
+#define RLC_STRIP_ALARM_WINK_MS    300
+#define RLC_STRIP_ALARM_PERIOD_MS  3000
+
+/* Dim/pulse depths, percent of RGB_LED_BRIGHTNESS_* */
+#define RLC_STRIP_STALE_DIM_PCT    10   /* remote: cached STATUS_UPDATE is stale */
+#define RLC_STRIP_ERROR_DIM_PCT    20   /* map during the ERROR flash gap */
+#define RLC_STRIP_BREATHE_LOW_PCT  25   /* key-ON / arm-ready breathing trough */
+#define RLC_STRIP_CURSOR_LOW_PCT   40   /* remote channel-cursor pulse trough */
+
+/* Animation periods */
+#define RLC_STRIP_BREATHE_MS       250
+#define RLC_STRIP_CURSOR_MS        500
+#define RLC_STRIP_CHASE_MS         120  /* boot chase step */
+#define RLC_STRIP_FRAME_MS         50   /* led_task tick */
 
 /* ── Display Configuration (Remote only) ──────────────────────── */
 

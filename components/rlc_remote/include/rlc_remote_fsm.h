@@ -67,3 +67,18 @@ bool remote_fsm_is_fire_repeat_active(void);
  * Notify the FSM to stop fire repeat.
  */
 void remote_fsm_stop_fire_repeat(void);
+
+/**
+ * Snapshot the most recent STATUS_UPDATE received from the base.
+ * Used by the display task (FSD §10.2.2 — continuity grid, base battery,
+ * arm sense). The copy is taken under the FSM's status mutex.
+ *
+ * @param out  receives the cached payload (zeroed if never received)
+ * @return true if the data is fresh (< 2 x STATUS_UPDATE_INTERVAL_MS old)
+ */
+bool remote_fsm_get_status(rlc_payload_status_update_t *out);
+
+/**
+ * Remaining PRE_FIRE countdown in ms (0 when not in PRE_FIRE).
+ */
+uint32_t remote_fsm_get_prefire_remaining_ms(void);

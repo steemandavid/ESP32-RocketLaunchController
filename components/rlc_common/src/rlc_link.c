@@ -82,6 +82,7 @@ static uint16_t          s_remote_battery_mv = 0;
 /* Timing state (monotonic ms via esp_timer_get_time() / 1000). */
 static int64_t           s_last_linkreq_ms = 0;
 static int64_t           s_last_ping_sent_ms = 0;   /* remote: when last PING sent   */
+static uint16_t          s_ping_rtt_ms = 0;         /* remote: last round-trip time  */
 static uint32_t          s_last_ping_timestamp = 0; /* remote: stamp in last PING    */
 static bool              s_ping_outstanding = false;
 static int64_t           s_last_ping_rx_ms = 0;     /* base: when last PING received */
@@ -134,25 +135,12 @@ static void set_state(rlc_link_state_t st)
     rlc_link_state_t prev = s_state;
     s_state = st;
 
-    switch (st) {
-        case RLC_LINK_STATE_BOOT:
-            rlc_rgb_led_set_pattern(LED_PATTERN_BOOT);
-            break;
-        case RLC_LINK_STATE_WAITING:
-            rlc_rgb_led_set_pattern(LED_PATTERN_BOOT);  /* base: still in BOOT pulse */
-            break;
-        case RLC_LINK_STATE_LINKING:
-            rlc_rgb_led_set_pattern(LED_PATTERN_BOOT);  /* remote: boot-like pulse */
-            break;
-        case RLC_LINK_STATE_LINKED:
-            rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
-            break;
-        case RLC_LINK_STATE_LOST:
-            rlc_rgb_led_set_pattern(LED_PATTERN_LINK_LOST);
-            break;
-        case RLC_LINK_STATE_VERSION_MISMATCH:
-            rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-            break;
+    /* The strip is an igniter display: link state is signalled by the amber
+     * alarm wink over the channel map (fed from the housekeeping loops), not
+     * by taking the whole strip. Only a version mismatch — which halts the
+     * unit — claims it outright. */
+    if (st == RLC_LINK_STATE_VERSION_MISMATCH) {
+        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
     }
 
     /* Phase 3: Notify FSM of link state transitions. */
@@ -438,6 +426,12 @@ static void handle_pong(const uint8_t *payload, uint16_t plen)
     s_ping_outstanding = false;
     s_missed_pings = 0;
 
+    /* Round-trip time for the display top bar (FSD §10.2.2) */
+    int64_t rtt = now_ms() - s_last_ping_sent_ms;
+    if (rtt < 0) rtt = 0;
+    if (rtt > UINT16_MAX) rtt = UINT16_MAX;
+    s_ping_rtt_ms = (uint16_t)rtt;
+
     /* Phase 3: Track ping success in health window. */
     s_ping_window[s_ping_window_idx] = true;
     s_ping_window_idx = (s_ping_window_idx + 1) % HEARTBEAT_WINDOW_SIZE;
@@ -656,8 +650,10 @@ static void tick_remote(void)
         s_missed_pings++;
         ESP_LOGW(TAG, "PING miss %u", s_missed_pings);
 
-        /* FSD §11.2 / §6.4.2: brief orange overlay (250 ms). Colour (255,100,0). */
-        rlc_rgb_led_flash_overlay(255, 100, 0, 250);
+        /* FSD §6.4.2: the buzzer beep remains the per-miss indicator. The
+         * former 250 ms whole-strip orange flash is gone — it wiped the
+         * continuity map and blocked the LED task. RSSI and ping RTT are on
+         * the remote display; sustained failures raise the link alarm wink. */
 
         /* Phase 3: Track ping failure in health window. */
         s_ping_window[s_ping_window_idx] = false;
@@ -803,6 +799,7 @@ void rlc_link_get_status(rlc_link_status_t *out)
     out->rssi_avg_dbm   = s_rssi_avg;
     out->last_rssi_dbm  = s_rssi_last;
     out->missed_pings   = s_missed_pings;
+    out->ping_rtt_ms    = s_ping_rtt_ms;
     out->linkreq_attempts = s_linkreq_attempts;
     memcpy(out->peer_fw, s_peer_fw, 3);
     out->peer_fw_known  = s_peer_fw_known;

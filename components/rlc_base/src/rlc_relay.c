@@ -55,12 +55,27 @@ void relay_init(void)
     drive_output(PIN_ARM_RELAY, false, PIN_ARM_RELAY_ACTIVE);
 
     ESP_LOGI(TAG, "relay GPIOs initialised — channels + arm relay safe");
+
+    if (FIRE_PROTECTED_CHANNEL_MASK != 0xFF) {
+        ESP_LOGW(TAG, "bug #18 gate ACTIVE — firing allowed on mask 0x%02X only; "
+                      "all other channels lack ADC clamp/snubber",
+                 FIRE_PROTECTED_CHANNEL_MASK);
+    }
 }
 
 void relay_fire_set(uint8_t channel, bool state)
 {
     if (channel < 1 || channel > NUM_CHANNELS) {
         ESP_LOGE(TAG, "invalid channel %u", channel);
+        return;
+    }
+    /* Bug #18 hardware gate — last line of defence. Closing an unprotected
+     * channel relay onto a live fire bus can couple VBAT to its unclamped
+     * continuity ADC input. De-energising is always allowed. */
+    if (state && !CHANNEL_IS_PROTECTED(channel)) {
+        ESP_LOGE(TAG, "REFUSED to energise ch %u relay — no ADC clamp/snubber "
+                      "fitted (protected mask 0x%02X), see bug #18",
+                 channel, FIRE_PROTECTED_CHANNEL_MASK);
         return;
     }
     drive_output(s_channel_pins[channel - 1], state, PIN_RELAY_CH_ACTIVE);

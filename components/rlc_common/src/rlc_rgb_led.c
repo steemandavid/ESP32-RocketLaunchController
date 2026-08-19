@@ -2,7 +2,7 @@
  * RLC RGB LED Status Driver
  *
  * WS2812 on GPIO 48 via RMT, driven by a FreeRTOS task.
- * Supports single pixel (remote) or 8-pixel strip (base unit).
+ * See rlc_rgb_led.h for the rendering layer model.
  */
 
 #include "rlc_rgb_led.h"
@@ -14,6 +14,7 @@
 #include "freertos/semphr.h"
 #include "led_strip.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 static const char *TAG = "rlc_led";
 
@@ -21,23 +22,54 @@ static led_strip_handle_t s_led_strip = NULL;
 static rlc_led_pattern_t s_current_pattern = LED_PATTERN_OFF;
 static SemaphoreHandle_t s_pattern_mutex = NULL;
 static TaskHandle_t s_led_task = NULL;
-static int s_pixel_count = 1;  /* Default: single pixel (remote) */
+static int s_pixel_count = 1;  /* Default: single pixel until configured */
+static uint8_t s_brightness = RGB_LED_BRIGHTNESS_BASE;
 
-/* Overlay flash state — protected by s_overlay_mutex */
-static SemaphoreHandle_t s_overlay_mutex = NULL;
-static bool     s_overlay_active = false;
-static uint8_t  s_overlay_r, s_overlay_g, s_overlay_b;
-static uint16_t s_overlay_duration_ms;
+/* Status feeds — published by the units' housekeeping loops. Torn reads are
+ * harmless here: the worst case is one frame of stale colour. */
+static volatile uint16_t s_channel_bands = 0;
+static volatile bool     s_channel_bands_valid = false;
+static volatile uint8_t  s_active_channel = 0;
+static volatile uint32_t s_alarms = 0;
+static volatile bool     s_stale = false;
+static volatile bool     s_key_warning = false;
 
-static void led_set_rgb(uint8_t r, uint8_t g, uint8_t b)
+/* ── Pixel helpers ────────────────────────────────────────────── */
+
+/* Channel index 0..7 → pixel index on the strip. The two units are wired
+ * data-in at opposite ends (RLC_STRIP_REVERSED, set per unit in rlc_config.h),
+ * so pixel 0 — which the parallel on-board LED mirrors — is channel 1 on the
+ * base and channel 8 on the remote. */
+static inline int pixel_for_channel(int ch_idx)
+{
+#if RLC_STRIP_REVERSED
+    return s_pixel_count - 1 - ch_idx;
+#else
+    return ch_idx;
+#endif
+}
+
+/* Write one pixel with brightness and an optional dim, in percent. */
+static void led_set_pixel(int idx, uint32_t colour, int scale_pct)
+{
+    if (!s_led_strip || idx < 0 || idx >= s_pixel_count) return;
+    uint32_t r = RLC_COLOR_R(colour) * s_brightness / 255;
+    uint32_t g = RLC_COLOR_G(colour) * s_brightness / 255;
+    uint32_t b = RLC_COLOR_B(colour) * s_brightness / 255;
+    if (scale_pct != 100) {
+        r = r * scale_pct / 100;
+        g = g * scale_pct / 100;
+        b = b * scale_pct / 100;
+    }
+    led_strip_set_pixel(s_led_strip, idx, r, g, b);
+}
+
+/* Paint every pixel one colour (whole-strip patterns). */
+static void led_fill(uint32_t colour, int scale_pct)
 {
     if (!s_led_strip) return;
-    /* Apply brightness scaling */
-    r = (uint8_t)((r * RGB_LED_BRIGHTNESS) / 255);
-    g = (uint8_t)((g * RGB_LED_BRIGHTNESS) / 255);
-    b = (uint8_t)((b * RGB_LED_BRIGHTNESS) / 255);
     for (int i = 0; i < s_pixel_count; i++) {
-        led_strip_set_pixel(s_led_strip, i, r, g, b);
+        led_set_pixel(i, colour, scale_pct);
     }
     led_strip_refresh(s_led_strip);
 }
@@ -49,35 +81,116 @@ static void led_off(void)
     led_strip_refresh(s_led_strip);
 }
 
+static uint32_t band_colour(uint8_t band)
+{
+    switch (band) {
+        case CONT_GOOD:     return RLC_COLOR_CONT_GOOD;
+        case CONT_MARGINAL: return RLC_COLOR_CONT_MARGINAL;
+        case CONT_SHORT:    return RLC_COLOR_CONT_SHORT;
+        default:            return RLC_COLOR_CONT_OPEN;
+    }
+}
+
+/* ── Layer 6: the channel map ─────────────────────────────────── */
+
+/* One pixel per igniter channel. `base_pct` dims the whole map (stale data,
+ * ERROR gap); `active_pct` overrides it for the channel of interest. */
+static void led_show_channel_map(int base_pct, int active_pct)
+{
+    if (!s_led_strip) return;
+    uint16_t bands = s_channel_bands;
+    uint8_t  active = s_active_channel;
+
+    for (int i = 0; i < s_pixel_count; i++) {
+        uint8_t band = (uint8_t)((bands >> (2 * i)) & 0x3);
+        int pct = (active && (i == active - 1)) ? active_pct : base_pct;
+        led_set_pixel(pixel_for_channel(i), band_colour(band), pct);
+    }
+    led_strip_refresh(s_led_strip);
+}
+
+/* Shown until the first continuity data arrives: a cyan chase in channel
+ * order, clearly "not ready" and clearly not a channel state. */
+static void led_show_boot_chase(int64_t now_ms)
+{
+    if (!s_led_strip) return;
+    int lit = (int)((now_ms / RLC_STRIP_CHASE_MS) % s_pixel_count);
+    for (int i = 0; i < s_pixel_count; i++) {
+        led_set_pixel(pixel_for_channel(i),
+                      (i == lit) ? RLC_COLOR_STRIP_BOOT : 0x000000, 100);
+    }
+    led_strip_refresh(s_led_strip);
+}
+
+/* ── Layer 3: the alarm wink ──────────────────────────────────── */
+
+/* Colour for the Nth wink. Several alarms may be raised at once; successive
+ * winks cycle through them so every active alarm is eventually seen. */
+static uint32_t alarm_wink_colour(uint32_t alarms, int64_t wink_index)
+{
+    uint32_t active[3];
+    int n = 0;
+    if (alarms & RLC_ALARM_BATTERY)   active[n++] = RLC_COLOR_ALARM_BATT;
+    if (alarms & RLC_ALARM_ARM_FAULT) active[n++] = RLC_COLOR_ALARM_FAULT;
+    if (alarms & RLC_ALARM_LINK_LOST) active[n++] = RLC_COLOR_ALARM_LINK;
+    if (n == 0) return 0x000000;
+    return active[wink_index % n];
+}
+
+/* ── Status rendering: layers 3-6 ─────────────────────────────── */
+
+static void led_render_status(int64_t now_ms)
+{
+    /* Layer 3 — alarm wink over everything below it. */
+    uint32_t alarms = s_alarms;
+    if (alarms) {
+        int64_t phase = now_ms % RLC_STRIP_ALARM_PERIOD_MS;
+        if (phase < RLC_STRIP_ALARM_WINK_MS) {
+            int64_t idx = now_ms / RLC_STRIP_ALARM_PERIOD_MS;
+            led_fill(alarm_wink_colour(alarms, idx), 100);
+            return;
+        }
+    }
+
+    /* No continuity data yet — nothing meaningful to map. */
+    if (!s_channel_bands_valid) {
+        led_show_boot_chase(now_ms);
+        return;
+    }
+
+    /* Layer 4 — stale cached data (remote): last known, not live. */
+    int base_pct = s_stale ? RLC_STRIP_STALE_DIM_PCT : 100;
+    int active_pct = base_pct;
+
+    if (s_key_warning) {
+        /* Layer 5 — key-ON / arm-ready breathing. The base has no cursor
+         * (it never learns the remote's selection), so its whole map
+         * breathes; the remote knows its cursor and breathes only that. */
+        bool trough = ((now_ms / RLC_STRIP_BREATHE_MS) % 2) != 0;
+        int low = base_pct * RLC_STRIP_BREATHE_LOW_PCT / 100;
+        if (s_active_channel) {
+            active_pct = trough ? low : base_pct;
+        } else {
+            base_pct = active_pct = trough ? low : base_pct;
+        }
+    } else if (s_active_channel) {
+        /* Layer 6 — highlight the channel of interest with a gentle pulse. */
+        bool trough = ((now_ms / RLC_STRIP_CURSOR_MS) % 2) != 0;
+        active_pct = trough ? (base_pct * RLC_STRIP_CURSOR_LOW_PCT / 100)
+                            : base_pct;
+    }
+
+    led_show_channel_map(base_pct, active_pct);
+}
+
+/* ── Pattern engine ───────────────────────────────────────────── */
+
 static void led_task(void *arg)
 {
     (void)arg;
-    int step = 0;
 
     while (1) {
-        /* Handle overlay flash — copy under mutex */
-        bool do_overlay = false;
-        uint8_t ov_r, ov_g, ov_b;
-        uint16_t ov_ms;
-
-        if (xSemaphoreTake(s_overlay_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-            if (s_overlay_active) {
-                do_overlay = true;
-                ov_r = s_overlay_r;
-                ov_g = s_overlay_g;
-                ov_b = s_overlay_b;
-                ov_ms = s_overlay_duration_ms;
-                s_overlay_active = false;
-            }
-            xSemaphoreGive(s_overlay_mutex);
-        }
-
-        if (do_overlay) {
-            led_set_rgb(ov_r, ov_g, ov_b);
-            vTaskDelay(pdMS_TO_TICKS(ov_ms));
-            step = 0;
-            continue;
-        }
+        int64_t now_ms = esp_timer_get_time() / 1000;
 
         rlc_led_pattern_t pat;
         xSemaphoreTake(s_pattern_mutex, portMAX_DELAY);
@@ -85,86 +198,50 @@ static void led_task(void *arg)
         xSemaphoreGive(s_pattern_mutex);
 
         switch (pat) {
-            case LED_PATTERN_OFF:
-                led_off();
-                vTaskDelay(pdMS_TO_TICKS(100));
-                break;
-
-            case LED_PATTERN_BOOT: {
-                /* Blue slow pulse (2s cycle) */
-                int phase = step % 20;  /* 20 steps × 100ms = 2s */
-                int brightness = (phase < 10) ? (phase * 25) : ((20 - phase) * 25);
-                led_set_rgb(0, 0, (uint8_t)((brightness * 255) / 250));
-                vTaskDelay(pdMS_TO_TICKS(100));
-                step++;
-                break;
-            }
-
-            case LED_PATTERN_IDLE:
-                led_set_rgb(0, 255, 0);
-                vTaskDelay(pdMS_TO_TICKS(200));
-                break;
-
-            case LED_PATTERN_IDLE_ARM_ON:
-                /* Green fast blink 250ms on/off */
-                if (step % 2 == 0) led_set_rgb(0, 255, 0);
-                else led_off();
-                vTaskDelay(pdMS_TO_TICKS(250));
-                step++;
+            case LED_PATTERN_STATUS:
+                led_render_status(now_ms);
                 break;
 
             case LED_PATTERN_ARMED:
                 /* Red slow blink 500ms on/off */
-                if (step % 2 == 0) led_set_rgb(255, 0, 0);
+                if ((now_ms / 500) % 2 == 0) led_fill(0xFF0000, 100);
                 else led_off();
-                vTaskDelay(pdMS_TO_TICKS(500));
-                step++;
                 break;
 
             case LED_PATTERN_PRE_FIRE:
                 /* Red fast blink 100ms on/off */
-                if (step % 2 == 0) led_set_rgb(255, 0, 0);
+                if ((now_ms / 100) % 2 == 0) led_fill(0xFF0000, 100);
                 else led_off();
-                vTaskDelay(pdMS_TO_TICKS(100));
-                step++;
                 break;
 
             case LED_PATTERN_FIRING:
-                led_set_rgb(255, 0, 0);
-                vTaskDelay(pdMS_TO_TICKS(200));
+                led_fill(0xFF0000, 100);
                 break;
 
-            case LED_PATTERN_POST_FIRE:
-                led_set_rgb(255, 180, 0);
-                vTaskDelay(pdMS_TO_TICKS(200));
-                break;
-
-            case LED_PATTERN_LINK_LOST:
-                /* Yellow fast blink 200ms on/off */
-                if (step % 2 == 0) led_set_rgb(255, 180, 0);
-                else led_off();
-                vTaskDelay(pdMS_TO_TICKS(200));
-                step++;
-                break;
-
-            case LED_PATTERN_ERROR:
-                /* Red triple flash: 100on/100off/100on/100off/100on/700off */
-                switch (step % 6) {
-                    case 0: led_set_rgb(255, 0, 0); vTaskDelay(pdMS_TO_TICKS(100)); break;
-                    case 1: led_off(); vTaskDelay(pdMS_TO_TICKS(100)); break;
-                    case 2: led_set_rgb(255, 0, 0); vTaskDelay(pdMS_TO_TICKS(100)); break;
-                    case 3: led_off(); vTaskDelay(pdMS_TO_TICKS(100)); break;
-                    case 4: led_set_rgb(255, 0, 0); vTaskDelay(pdMS_TO_TICKS(100)); break;
-                    case 5: led_off(); vTaskDelay(pdMS_TO_TICKS(700)); break;
+            case LED_PATTERN_ERROR: {
+                /* Red triple flash: 100on/100off/100on/100off/100on/700off.
+                 * The long gap keeps igniter status visible (dimmed) so the
+                 * operator can still read the pad state during a fault. */
+                int64_t phase = now_ms % 1200;
+                if (phase < 500) {
+                    if ((phase / 100) % 2 == 0) led_fill(0xFF0000, 100);
+                    else led_off();
+                } else if (s_channel_bands_valid) {
+                    led_show_channel_map(RLC_STRIP_ERROR_DIM_PCT,
+                                         RLC_STRIP_ERROR_DIM_PCT);
+                } else {
+                    led_off();
                 }
-                step++;
                 break;
+            }
 
+            case LED_PATTERN_OFF:
             default:
                 led_off();
-                vTaskDelay(pdMS_TO_TICKS(100));
                 break;
         }
+
+        vTaskDelay(pdMS_TO_TICKS(RLC_STRIP_FRAME_MS));
     }
 }
 
@@ -172,7 +249,7 @@ int rlc_rgb_led_init(void)
 {
     led_strip_config_t strip_cfg = {
         .strip_gpio_num   = PIN_RGB_LED,
-        .max_leds         = 8,  /* Allocate for max (base unit 8-pixel strip) */
+        .max_leds         = NUM_CHANNELS,  /* 8-pixel strip on both units */
         .led_model        = LED_MODEL_WS2812,
         .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
         .flags.invert_out = false,
@@ -194,7 +271,6 @@ int rlc_rgb_led_init(void)
     led_strip_refresh(s_led_strip);
 
     s_pattern_mutex = xSemaphoreCreateMutex();
-    s_overlay_mutex = xSemaphoreCreateMutex();
 
     /* FSD §9.10: rgb_led_task runs at priority 1 (lowest) */
     xTaskCreate(led_task, "led_task", 2048, NULL, 1, &s_led_task);
@@ -206,8 +282,13 @@ int rlc_rgb_led_init(void)
 void rlc_rgb_led_set_pixel_count(int count)
 {
     if (count < 1) count = 1;
-    if (count > 8) count = 8;
+    if (count > NUM_CHANNELS) count = NUM_CHANNELS;
     s_pixel_count = count;
+}
+
+void rlc_rgb_led_set_brightness(uint8_t brightness)
+{
+    s_brightness = brightness;
 }
 
 void rlc_rgb_led_set_pattern(rlc_led_pattern_t pattern)
@@ -217,48 +298,28 @@ void rlc_rgb_led_set_pattern(rlc_led_pattern_t pattern)
     xSemaphoreGive(s_pattern_mutex);
 }
 
-void rlc_rgb_led_flash_overlay(uint8_t r, uint8_t g, uint8_t b, uint16_t duration_ms)
+void rlc_rgb_led_set_channel_bands(uint16_t bands)
 {
-    if (xSemaphoreTake(s_overlay_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        s_overlay_r = r;
-        s_overlay_g = g;
-        s_overlay_b = b;
-        s_overlay_duration_ms = duration_ms;
-        s_overlay_active = true;
-        xSemaphoreGive(s_overlay_mutex);
-    }
+    s_channel_bands = bands;
+    s_channel_bands_valid = true;
 }
 
-void rlc_rgb_led_set_state(rlc_state_t state)
+void rlc_rgb_led_set_active_channel(uint8_t channel)
 {
-    switch (state) {
-        case STATE_BOOT:
-        case STATE_LINKING:
-            rlc_rgb_led_set_pattern(LED_PATTERN_BOOT);
-            break;
-        case STATE_IDLE:
-            rlc_rgb_led_set_pattern(LED_PATTERN_IDLE);
-            break;
-        case STATE_ARMED:
-            rlc_rgb_led_set_pattern(LED_PATTERN_ARMED);
-            break;
-        case STATE_PRE_FIRE:
-            rlc_rgb_led_set_pattern(LED_PATTERN_PRE_FIRE);
-            break;
-        case STATE_FIRING:
-            rlc_rgb_led_set_pattern(LED_PATTERN_FIRING);
-            break;
-        case STATE_POST_FIRE:
-            rlc_rgb_led_set_pattern(LED_PATTERN_POST_FIRE);
-            break;
-        case STATE_LINK_LOST:
-            rlc_rgb_led_set_pattern(LED_PATTERN_LINK_LOST);
-            break;
-        case STATE_ERROR:
-            rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-            break;
-        default:
-            rlc_rgb_led_set_pattern(LED_PATTERN_OFF);
-            break;
-    }
+    s_active_channel = (channel <= NUM_CHANNELS) ? channel : 0;
+}
+
+void rlc_rgb_led_set_alarms(uint32_t alarms)
+{
+    s_alarms = alarms;
+}
+
+void rlc_rgb_led_set_stale(bool stale)
+{
+    s_stale = stale;
+}
+
+void rlc_rgb_led_set_key_warning(bool warn)
+{
+    s_key_warning = warn;
 }
