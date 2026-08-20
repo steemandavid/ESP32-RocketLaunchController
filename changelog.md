@@ -1,5 +1,72 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-20 — Bug #25: no battery undervoltage cut-off; channel-1 clamp as-built
+
+### Bug #25 — no hardware undervoltage cut-off on either pack
+
+Raised after reviewing the bug #18 protection work. Checking the spec first
+turned this from "not fitted yet" into something worse: **FSD §5.6 never
+specified one.** §5.6.1 and §5.6.2 define chemistry, capacity, connector and
+regulation, but pack protection rests entirely on firmware thresholds.
+
+Three reasons that is insufficient for LiPo:
+
+1. **ERROR does not disconnect the load.** Crossing `*_VBAT_CRITICAL_MV` latches
+   the FSM into ERROR, which halts *operation* — regulators, display backlight
+   (the remote's dominant load), status LEDs, siren driver and MCU all keep
+   drawing afterwards.
+2. **It only works while firmware runs.** A brownout, a halt, or a unit simply
+   left switched on after a launch day discharges the pack unobserved.
+3. **There is no margin.** `BASE_VBAT_CRITICAL_MV` is 9000 mV — *exactly*
+   3.00 V/cell, the level at which permanent capacity loss begins. Below roughly
+   2.5 V/cell a LiPo becomes unsafe to recharge.
+
+Recorded with suggested trip points (base ~9.6 V, remote ~6.8 V) and the
+ordering constraint that matters: **the hardware cut-off must sit above the
+firmware threshold**, or power is removed before the operator ever sees the
+ERROR screen explaining why. Hysteresis or a latch is required, since an
+unloaded LiPo recovers above the threshold after disconnect.
+
+Documented as FSD §5.6.2a (v1.26), in the Open Bugs index, and in the README's
+known-open-items list.
+
+### Numbering collision caught
+
+The entry was first written as #24, but #24 had already been taken by the
+chip #3 rail-float incident committed outside this session (`c1d6c09`).
+Renumbered to **#25** and the index reordered newest-first. Worth noting the
+bug list is now shared across sessions and can move underneath a working copy.
+
+### Channel-1 ADC clamp recorded as-built
+
+Bug #18's channel-1 protection was recorded only as "clamping diodes". Now
+pinned down: **2x 1N5819, one to GND and one to +3.3 V**, on the continuity ADC
+pin. That vagueness is the same doc/hardware gap class that produced #18 and #21.
+
+Assessed the part choice rather than assuming it carried over from the bug #22
+advice against 1N5819: it does not. That warning was about a 6.4 kΩ battery
+divider, where tens of µA become hundreds of mV. The continuity node's impedance
+is dominated by the igniter (~10 Ω when GOOD, ~434 Ω at the MARGINAL limit), so
+leakage shifts nothing across the 0.5 mV / 66 mV / 1.5 V thresholds. The 1 A
+rating is in fact an advantage here, because there is **zero series resistance**
+between the sense node and the ADC pin, so the clamp carries the full fault
+current.
+
+Recommended adding **~1 kΩ between the sense node and the ADC pin** so a 12 V
+fault delivers ~8 mA into the 3.3 V rail instead of amps — without it, the
+3V3-side clamp dumps the whole arc into the rail and can take out everything on
+it. DC reading is unaffected; the ADC input is high-impedance.
+
+### Snubber placement answered
+
+Both relay types: across the switched pair, **NO to COM** — not across the coil,
+which is the flyback diode's job. Arm relay (VBAT+ on NO, fire bus on COM) is
+the priority, since after the bug #18 ordering fix it is the contact that breaks
+the full 6 A and its erosion threatens the primary interlock. Channel relays get
+the same 47 Ω / 100 nF across NO–COM to address the make-arc, which the software
+fix cannot close. Nothing across NC–COM: that path carries ~1 mA of sense current
+and never switches under load.
+
 ## 2026-08-20 (late) — Base chip #3 killed by floating rail; chip #4 is the resurrected remote board (bug #24)
 
 ### The incident

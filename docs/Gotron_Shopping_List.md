@@ -2,8 +2,9 @@
 
 Supplier: **Gotron** (www.gotron.be), Belgian, 3 stores (Aalst / Gent / Hasselt).
 Daily dispatch 14:30, free delivery from €100.
-Compiled 2026-08-19, header strips added 2026-08-20. Prices are the discounted
-web prices at those dates.
+Compiled 2026-08-19. Revised 2026-08-20: female header strips added; R5W/22 and
+R10W/100 promoted to the order; R50W/8E2 dropped to the optional list. Prices
+are the discounted web prices at those dates.
 
 ## Selected items
 
@@ -11,17 +12,19 @@ web prices at those dates.
 |---|---|---|---|---|---|
 | 5 | `BAT85` | Schottky diode 30 V / 0.2 A, DO-35 | €0.21 | €1.05 | ADC/GPIO overvoltage clamp — bug #22 (remote GPIO 1) + spares for the base GPIO 21/42 clamps (bug #18) |
 | 2 | `R10W/10` | 10 Ω 10 W ±5 % wirewound cement, Ø10×49 mm | €0.62 | €1.24 | Igniter substitute — **GOOD** band |
-| 4 | `R50W/8E2` | 8.2 Ω 50 W ±5 % power resistor | €5.37 | €21.48 | Igniter substitute — **GOOD** band, arc-realistic (4 in parallel = 2.05 Ω, 6.1 A) |
+| 2 | `R5W/22` | 22 Ω 5 W ±5 % wirewound | €0.37 | €0.74 | Igniter substitute — **GOOD** band, low-current |
 | 2 | `R11W220` | 220 Ω 11 W wirewound ceramic, SETA RB58, Ø9×46 mm | €1.75 | €3.50 | Igniter substitute — **MARGINAL** band |
+| 2 | `R10W/100` | 100 Ω 10 W ±5 % wirewound cement | €0.50 | €1.00 | Igniter substitute — **MARGINAL**, sits just over the GOOD/MARGINAL edge (threshold + hysteresis test) |
 | 4 | `30PF1` | Rechte connectorrij 1×20 pin, **vrouwelijk**, P 2,54 mm (0.1" female header strip) | €0.79 | €3.16 | Sockets for the test resistors / harness, dev-board mounting |
 
-**Total: €30.43** (5 line items, 17 pieces)
+**Total: €10.69** (6 line items, 17 pieces)
 
 Product URLs:
 
 - BAT85 — https://www.gotron.be/signal-diode-schotky-diode-30v-0-2a-do35.html ([datasheet](https://www.gotron.be/media/files/Downloads/BAT85.pdf))
 - R10W/10 — https://www.gotron.be/10watt-10-ohm-draadgewikkelde-weerstand.html
-- R50W/8E2 — https://www.gotron.be/componenten/passief/weerstanden/25w-50w/50watt-vermogenweerstand-5-8-2-ohm.html
+- R5W/22 — https://www.gotron.be/5watt-22-ohm-draadgewikkelde-weerstand.html
+- R10W/100 — https://www.gotron.be/10watt-100-ohm-draadgewikkelde-weerstand.html
 - R11W220 — https://www.gotron.be/componenten/passief/weerstanden/draad/draadgewikkelde-ceramische-weerstand-220ohm-11w-seta-rb58.html
 - 30PF1 — https://www.gotron.be/rechte-connectorrij-1x20-pin-vrouwelijk-p2-54.html
 
@@ -61,9 +64,17 @@ Where the selected parts land, and what they dissipate on a 1 s fire pulse at
 | Part | Sense reading | Band | Margin | Fire pulse |
 |---|---|---|---|---|
 | R10W/10 (10 Ω) | 9.97 mV | GOOD | 6.6× below the MARGINAL edge, 20× above SHORT | 1.26 A, 15.9 W → 16 J, safe transiently on a 10 W cement body |
-| 4× R50W/8E2 in parallel (2.05 Ω) | 2.0 mV | GOOD | realistic e-match value | 6.1 A total, ~19 W each — well inside 50 W. Reproduces the ~6 A that destroyed two base ESP32s (bug #18), for snubber/clamp validation |
-| 1× R50W/8E2 (8.2 Ω) | 8.2 mV | GOOD | — | 1.54 A, 19.4 W |
+| R5W/22 (22 Ω) | 21.9 mV | GOOD | 3× below the MARGINAL edge, 44× above SHORT | 0.57 A, 7.2 W → 7 J, comfortable on a 5 W body for 1 s |
 | R11W220 (220 Ω) | 206 mV | MARGINAL | 3× above the GOOD edge, 7× below OPEN | 57 mA, 0.72 W |
+| R10W/100 (100 Ω) | 97 mV | MARGINAL | only 1.5× over the GOOD edge — deliberate boundary case | 126 mA, 1.6 W |
+
+**No arc-realistic load in this order.** The 8.2 Ω 50 W `R50W/8E2` (4 in parallel
+= 2.05 Ω, 6.1 A) was considered and dropped — it is the only combination here
+that reproduces the ~6 A a real e-match draws, i.e. the current that destroyed
+two base ESP32s under bug #18. Everything ordered draws 1.26 A or less, so it
+exercises the continuity bands and the fire path but **does not validate the
+channel-1 snubber and clamps at realistic arc energy**. Add it (code retained
+below) before treating a fire test as representative.
 
 **Safety.** Never leave a sub-ohm resistor connected through a fire pulse — 0.1 Ω
 across 12.6 V is 126 A, far beyond the relay contacts and any sane pack
@@ -87,8 +98,7 @@ these when ordering the rest.
 
 | Part code | Description | Price | Reads as | Use |
 |---|---|---|---|---|
-| `R5W/22` | 22 Ω 5 W wirewound | €0.37 | 21.9 mV, GOOD | gentler GOOD substitute (0.57 A, 7.2 W) |
-| `R10W/100` | 100 Ω 10 W wirewound | €0.50 | 97 mV, MARGINAL | sits only 1.5× over the GOOD/MARGINAL edge — hysteresis / threshold test |
+| `R50W/8E2` | 8.2 Ω 50 W power resistor | €5.37 | 8.2 mV, GOOD | 4 in parallel = 2.05 Ω / 6.1 A — arc-realistic fire load, ~19 W each |
 | `R11W1K` | 1 kΩ 11 W SETA RB58 | €1.75 | 761 mV, MARGINAL | near-OPEN edge test |
 | `R25W/3K3` | 3.3 kΩ 25 W | €3.10 | 1.62 V, OPEN | OPEN simulator (only 1 in stock at Aalst) |
 | `1N5711` | Schottky 70 V / 15 mA DO-35, 200 nA leakage | €0.54 | — | lowest-leakage clamp option; only 1 piece in stock |

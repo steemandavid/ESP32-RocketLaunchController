@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.25
+**Version:** 1.26
 **Date:** 2026-08-20
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -39,6 +39,7 @@
 | 1.23 | 2026-08-19 | Battery ADC sampling hardened. Added §5.6.3: each reading is now the **median of a 33-sample burst** before the existing 8-deep moving average, because a sample clipped at ADC full scale can only bias a mean upward and so make a flat pack read as healthy. Measured on the bench: in a burst with 9 of 33 samples clipped the mean read 571 counts high, about +2 V through the base's divider ratio, while the median was exact. Added the burst constants to §14.1 and host tests T-B01…T-B07 to §15.5. Updated the stale "8-sample moving average" wording in §4, §5.4.7 and §7.3.3.
 | 1.24 | 2026-08-19 | Fixed the LINK LOST screen's two dynamic fields, both of which were driven from `missed_pings` — a counter gated behind the LINKED state that stops advancing the moment the link drops, freezing the display at "Last contact: 1 s ago" and "Attempts 3". Added `rlc_link_status_t.ms_since_contact`, a real elapsed time from the last well-formed frame from the peer, and pointed the attempt count at `linkreq_attempts`. Documented the correct field sources in §10.2.5.
 | 1.25 | 2026-08-20 | Arm-sense reporting corrected end to end. `STATUS_UPDATE` previously carried the key switch **twice** (debounced as `base_arm_switch`, raw as `arm_switch_hw`) while the header documented both as arm sense, so the remote could never see the arm relay and the ARMED screen's "SENSE CONFIRMED" was derived from the key switch. Fields renamed to `base_key_switch` / `base_arm_sense` and the second now carries the real debounced arm sense (GPIO 21) — same 14-byte struct, no size change. Main status line reworked to §10.2.2's four-state BASE field (SAFE/READY/ARMED/WELD!, plus ? when stale), with ARMED and WELD! driven by the arm sense rather than the key. ARMED screen now reports the real sense. **Firmware bumped to 1.1.0** — the field's meaning changed while its size did not, so the strict version gate is what prevents a mixed pair from misinterpreting it. Host tests T-M01…T-M07 added to §15.5.
+| 1.26 | 2026-08-20 | Recorded bug #25 as §5.6.2a: **no hardware undervoltage cut-off is fitted on either pack, and none was ever specified.** Pack protection rests entirely on firmware thresholds, which do not disconnect the load — the ERROR state halts operation while regulators, backlight, LEDs and MCU keep drawing — and which only apply while firmware runs. Noted that `BASE_VBAT_CRITICAL_MV` sits exactly at 3.00 V/cell, leaving no margin before permanent capacity loss. Required trip points and the ordering constraint (hardware cut-off must sit above the firmware threshold) documented. Also recorded the channel-1 continuity ADC clamp as-built: 2x 1N5819, one to GND and one to +3.3 V.
 
 ---
 
@@ -1093,6 +1094,18 @@ The remote's map is driven from the continuity bands in the cached STATUS_UPDATE
 | Discharge rating | 30C continuous (66 A) — far exceeds remote unit demand (~300 mA peak) |
 | Connector | T-plug (Deans) (on battery); PCB must mate with T-plug or use T-plug pigtail. |
 | Regulation | 3.3V DC-DC buck converter (e.g., MP1584EN module). LDO not recommended due to large voltage differential (7.4–8.4V → 3.3V) and associated thermal waste. |
+
+#### 5.6.2a Battery Undervoltage Protection — NOT SPECIFIED, NOT FITTED
+
+> **OPEN — bug #25.** Neither unit has a hardware undervoltage cut-off, and this specification does not define one. §5.6.1 and §5.6.2 above give chemistry, capacity, connector and regulation, but pack protection rests entirely on the firmware thresholds in §5.6.3 and §7.3.3.
+>
+> That is insufficient for a LiPo system, for three reasons:
+>
+> 1. **The ERROR state does not disconnect the load.** Crossing `*_VBAT_CRITICAL_MV` latches the FSM into ERROR, which halts *operation*. Regulators, display backlight, status LEDs, siren driver and MCU continue to draw from the pack.
+> 2. **It only protects while firmware runs.** A brownout, a halt, or a unit left switched on after a launch day discharges the pack unobserved.
+> 3. **There is no margin.** `BASE_VBAT_CRITICAL_MV` (9000 mV) is exactly 3.00 V/cell — the level at which permanent capacity loss begins. Below roughly 2.5 V/cell a LiPo becomes unsafe to recharge.
+>
+> **Required:** a hardware cut-off between each pack and the load, set **above** the firmware threshold so the operator still sees the ERROR screen before power is removed. Suggested trip points: base ~9.6 V (3.2 V/cell), remote ~6.8 V (3.4 V/cell). Hysteresis or a latch is required, since an unloaded LiPo recovers above the threshold after disconnect and would otherwise oscillate.
 
 #### 5.6.3 Battery ADC Sampling
 

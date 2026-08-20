@@ -153,6 +153,11 @@ Known open items before any field use:
   Schottky clamps and contact snubber added after two base ESP32s were destroyed
   by relay-arc coupling (tracked as bug #18). The restriction is enforced in
   firmware by `FIRE_PROTECTED_CHANNEL_MASK`, not just by procedure.
+- **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
+  ever specified. Protection is firmware-only, and the ERROR state halts
+  operation without disconnecting the load — so a unit left switched on, or one
+  whose firmware has halted, will discharge a LiPo into the permanently-damaged
+  and then unsafe-to-recharge region.
 - The remote's VBAT sense pin has **no overvoltage clamp** (bug #22). The 3.3 V
   zener that caused bug #21 was removed to restore linearity and not yet
   replaced; a BAT54-class low-leakage Schottky to the 3.3 V rail is required.

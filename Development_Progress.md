@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.25 (2026-08-20)
+**Spec:** RLC-FSPEC-001 v1.26 (2026-08-20)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -32,6 +32,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
+| 25 | No hardware undervoltage cut-off on either battery — firmware thresholds only, and ERROR does not disconnect the load | Hardware | OPEN | Pack protection. A unit left switched on, or one whose firmware has halted, will discharge a LiPo past the point of permanent damage and into the unsafe-to-recharge region. |
 | 24 | Base ESP32 chip #3 destroyed — 3.3 V rail floated to 3.68 V after accidental ground disconnect | Hardware | Chip replaced (chip #4); rail protection OPEN | Nothing functionally. The base has no rail clamp and no secured ground path, so a repeat ground-lift kills chip #4 the same way. |
 | 23 | Remote VBAT divider has no ADC headroom — a full 2S pack sits at 97 % of the ADC's usable ceiling | Hardware | OPEN | Accuracy only. Costs ~0.7 % at full charge; thresholds are unaffected as they sit at 71-78 % of range. |
 | 22 | Remote GPIO 1 has no overvoltage clamp — the bug #21 zener was removed and not replaced | Hardware | OPEN | Protection only. The divider's series impedance is the sole limit on an overvoltage fault. |
@@ -1219,6 +1220,54 @@ last good reading on total ADC failure.
 already a robust median that is sufficient, and making it a median too would
 slow the response to a genuine voltage collapse — a behavioural change in a
 safety path that was not warranted by the evidence.
+
+---
+
+### Bug #25 — No hardware undervoltage cut-off on either battery (2026-08-20, OPEN)
+
+**Gap.** Neither unit has a low-voltage disconnect, and **FSD §5.6 does not
+specify one** — §5.6.1 and §5.6.2 define only chemistry, capacity, connector,
+regulation and the *firmware* thresholds. Protection today is entirely software:
+
+| Unit | Pack | CRITICAL threshold | Per cell |
+|---|---|---|---|
+| Base | 3S LiPo 5000 mAh | `BASE_VBAT_CRITICAL_MV` 9000 | 3.00 V |
+| Remote | 2S LiPo 2200 mAh | `REMOTE_VBAT_CRITICAL_MV` 6400 | 3.20 V |
+
+**Why software alone is not enough.**
+
+1. **ERROR does not disconnect the load.** Hitting the critical threshold puts
+   the FSM into a latched ERROR state, which stops *operation* — it does not cut
+   power. The regulators, display backlight (the remote's dominant load), status
+   LEDs, siren driver and MCU all keep drawing from the pack afterwards.
+2. **It only works while the firmware runs.** A brownout, a halt, a watchdog
+   loop, or a unit simply left switched on after a launch day all discharge the
+   pack with nothing watching.
+3. **The consequences are not recoverable.** Below roughly 3.0 V/cell a LiPo
+   takes permanent capacity loss; below roughly 2.5 V/cell it becomes unsafe to
+   recharge at all — internal shorting on the next charge is a fire risk. The
+   base's own threshold already *sits at* 3.00 V/cell, so there is no margin
+   between "firmware says stop" and "pack is being damaged".
+
+**Fix.** Fit a hardware undervoltage cut-off between each pack and the load, set
+above the firmware threshold so the firmware still gets to report and latch
+ERROR first. Candidate approaches, in rising order of effort:
+
+- A protection-circuit module (PCM/BMS) matched to the pack — simplest, but many
+  hobby modules cut at ~2.5-2.8 V/cell, which is already too late.
+- A discrete comparator (e.g. TL431 or a micropower comparator) driving a
+  P-channel MOSFET or load switch, with hysteresis so it latches off rather than
+  oscillating at the threshold.
+- A dedicated load-switch IC with programmable UVLO.
+
+Suggested cut-out points, leaving the firmware room to act first: **base ~9.6 V
+(3.2 V/cell)**, **remote ~6.8 V (3.4 V/cell)**. Both need hysteresis or a latch,
+because an unloaded LiPo recovers above the threshold after disconnect and would
+otherwise cycle.
+
+**Note the ordering requirement:** the cut-off must be *above* the firmware
+CRITICAL threshold, or the hardware will disconnect before the operator ever
+sees the ERROR screen explaining why.
 
 ---
 
