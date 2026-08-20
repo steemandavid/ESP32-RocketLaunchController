@@ -1,8 +1,28 @@
 /**
  * RLC Rotary Encoder Driver
  *
- * Interrupt-driven quadrature decoder with push button.
+ * Interrupt-driven CYCLE-POSITION quadrature decoder with push button.
  * Long-press detection (500 ms) for ARM confirm (FSD §5.5.1).
+ *
+ * Decoding (FSD §5.5.1). The four quadrature states map to positions in the
+ * CW rotation cycle:
+ *
+ *      state (A<<1)|B :  00    01    11    10
+ *      cycle position :   0     1     2     3
+ *
+ * A transition is accepted only if the position advances by exactly one, in
+ * either direction. Anything else — no movement, or a jump of two — is
+ * discarded as a missed step or noise.
+ *
+ * This replaced a Gray-code level comparison (`if (clk != dt) CW else CCW`)
+ * which sampled B at the instant of an edge on A. That gave two problems the
+ * field reported as oversensitive selection: it has no notion of a legal
+ * transition, so an electrical glitch produced a channel change in a
+ * direction decided by whatever B happened to read; and every accepted edge
+ * became a channel change, because the ENC_DIVIDER the spec requires was
+ * never implemented. Contact bounce is now rejected inherently — bouncing one
+ * line toggles between two adjacent states, so the accumulator oscillates
+ * about zero and nets to nothing.
  */
 
 #include "rlc_encoder.h"
@@ -31,28 +51,79 @@ static bool s_button_debounced_pressed = false;
 static int64_t s_press_start_us = 0;
 static bool s_long_press_fired = false;
 
-#define ENCODER_LOCKOUT_US  5000  /* 5 ms lockout for A/B */
+/* Cycle position for each quadrature state, indexed by (A<<1)|B. */
+static const uint8_t s_cycle_pos[4] = { 0, 1, 3, 2 };
+
+static uint8_t s_last_pos     = 0;      /* previous cycle position */
+static int8_t  s_accum        = 0;      /* raw steps toward ENC_DIVIDER */
+static bool    s_pos_valid    = false;  /* first edge only seeds the state */
+
+/* Diagnostic counters — surfaced by encoder_get_stats() so a noisy input is
+ * visible in the log rather than only felt as bad feel at the knob. */
+static volatile uint32_t s_isr_count   = 0;   /* ISR entries after lockout */
+static volatile uint32_t s_valid_count = 0;   /* legal single-step transitions */
+static volatile uint32_t s_step_count  = 0;   /* channel changes emitted */
+
+/**
+ * Feed one quadrature sample. Returns +1 / -1 when a channel step should be
+ * emitted, 0 otherwise. Pure apart from the module statics, so the host tests
+ * can drive it directly.
+ */
+static int8_t encoder_feed(uint8_t state)
+{
+    uint8_t pos = s_cycle_pos[state & 0x3];
+
+    if (!s_pos_valid) {           /* seed on the first sample; emit nothing */
+        s_last_pos = pos;
+        s_pos_valid = true;
+        return 0;
+    }
+
+    uint8_t delta = (uint8_t)((pos - s_last_pos) & 0x3);
+    s_last_pos = pos;
+
+    int8_t dir;
+    if (delta == 1)      dir = +1;
+    else if (delta == 3) dir = -1;
+    else return 0;                /* 0 = no movement, 2 = illegal — discard */
+
+    s_valid_count++;
+
+    /* Reversal restarts the count, so a step only follows ENC_DIVIDER raw
+     * pulses in the SAME direction (FSD §5.5.1). */
+    if ((s_accum > 0 && dir < 0) || (s_accum < 0 && dir > 0)) s_accum = 0;
+    s_accum += dir;
+
+    if (s_accum >= ENC_DIVIDER)  { s_accum = 0; return +1; }
+    if (s_accum <= -ENC_DIVIDER) { s_accum = 0; return -1; }
+    return 0;
+}
 
 static void IRAM_ATTR encoder_isr(void *arg)
 {
+    (void)arg;
     int64_t now = esp_timer_get_time();
-    if (now - s_last_rotate_us < ENCODER_LOCKOUT_US) return;
+    if (now - s_last_rotate_us < ENC_LOCKOUT_US) return;
     s_last_rotate_us = now;
+    s_isr_count++;
 
-    int clk = gpio_get_level(PIN_ENCODER_CLK);
-    int dt  = gpio_get_level(PIN_ENCODER_DT);
+    uint8_t state = (uint8_t)((gpio_get_level(PIN_ENCODER_CLK) << 1) |
+                               gpio_get_level(PIN_ENCODER_DT));
+    int8_t step = encoder_feed(state);
+    if (step == 0) return;
 
-    if (clk != dt) {
-        /* CW rotation — increment */
-        s_channel = (s_channel % NUM_CHANNELS) + 1;
-    } else {
-        /* CCW rotation — decrement */
-        s_channel = (s_channel == 1) ? NUM_CHANNELS : (s_channel - 1);
-    }
+    s_step_count++;
+    if (step > 0) s_channel = (s_channel % NUM_CHANNELS) + 1;
+    else          s_channel = (s_channel == 1) ? NUM_CHANNELS : (s_channel - 1);
 
-    if (s_rotate_cb) {
-        s_rotate_cb(s_channel);
-    }
+    if (s_rotate_cb) s_rotate_cb(s_channel);
+}
+
+void encoder_get_stats(uint32_t *isr, uint32_t *valid, uint32_t *steps)
+{
+    if (isr)   *isr   = s_isr_count;
+    if (valid) *valid = s_valid_count;
+    if (steps) *steps = s_step_count;
 }
 
 static void button_change_cb(int gpio_num, bool new_state, void *user_data)
@@ -81,7 +152,7 @@ void encoder_init(void)
         .mode         = GPIO_MODE_INPUT,
         .pull_up_en   = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type    = GPIO_INTR_NEGEDGE,
+        .intr_type    = GPIO_INTR_ANYEDGE,
     };
     gpio_config(&ab_cfg);
 
@@ -100,10 +171,14 @@ void encoder_init(void)
 
     /* Install ISR for CLK pin */
     gpio_install_isr_service(0);
+    /* BOTH lines, both edges: the cycle-position decoder needs the full
+     * quadrature sequence. Previously DT was configured to interrupt but had
+     * no handler registered, so three of every four transitions were lost. */
     gpio_isr_handler_add(PIN_ENCODER_CLK, encoder_isr, NULL);
+    gpio_isr_handler_add(PIN_ENCODER_DT,  encoder_isr, NULL);
 
-    ESP_LOGI(TAG, "Encoder initialised (CLK=%d, DT=%d, SW=%d)",
-             PIN_ENCODER_CLK, PIN_ENCODER_DT, PIN_ENCODER_SW);
+    ESP_LOGI(TAG, "Encoder initialised (CLK=%d, DT=%d, SW=%d, divider=%d)",
+             PIN_ENCODER_CLK, PIN_ENCODER_DT, PIN_ENCODER_SW, ENC_DIVIDER);
 }
 
 void encoder_register_rotate_cb(rlc_encoder_rotate_cb_t cb)

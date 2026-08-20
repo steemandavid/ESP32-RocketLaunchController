@@ -264,14 +264,19 @@ void remote_app_main(void)
         if (now - last_log_ms >= 5000) {
             rlc_link_status_t ls;
             rlc_link_get_status(&ls);
+            uint32_t enc_isr = 0, enc_valid = 0, enc_steps = 0;
+            encoder_get_stats(&enc_isr, &enc_valid, &enc_steps);
             ESP_LOGI(TAG, "state=%d armed=%u sel=%u rssi=%d missed=%u contact=%lums "
-                          "attempts=%u vbat=%u mv arm=%d fire=%d",
+                          "attempts=%u vbat=%u mv arm=%d fire=%d "
+                          "enc[isr=%lu valid=%lu step=%lu]",
                      remote_fsm_get_state(), remote_fsm_get_armed_channel(),
                      remote_fsm_get_selected_channel(),
                      ls.rssi_avg_dbm, ls.missed_pings,
                      (unsigned long)ls.ms_since_contact, ls.linkreq_attempts,
                      rlc_battery_get_voltage_mv(), arm_switch_is_armed(),
-                     fire_button_is_pressed());
+                     fire_button_is_pressed(),
+                     (unsigned long)enc_isr, (unsigned long)enc_valid,
+                     (unsigned long)enc_steps);
             last_log_ms = now;
         }
 

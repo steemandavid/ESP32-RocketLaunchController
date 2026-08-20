@@ -49,3 +49,16 @@ uint8_t encoder_get_channel(void);
  * Call at DEBOUNCE_POLL_INTERVAL_MS (10 ms).
  */
 void encoder_poll_button(void);
+
+/**
+ * Diagnostic counters since boot.
+ *
+ * @param isr    ISR entries that passed the lockout
+ * @param valid  legal single-step quadrature transitions
+ * @param steps  channel changes actually emitted
+ *
+ * valid should track the detents turned (x4, one per transition); a much
+ * larger isr count means edges are arriving that are not real rotation —
+ * electrical noise on CLK/DT. steps should be valid / ENC_DIVIDER.
+ */
+void encoder_get_stats(uint32_t *isr, uint32_t *valid, uint32_t *steps);

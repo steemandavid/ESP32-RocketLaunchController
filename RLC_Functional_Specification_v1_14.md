@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.26
+**Version:** 1.27
 **Date:** 2026-08-20
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -40,6 +40,7 @@
 | 1.24 | 2026-08-19 | Fixed the LINK LOST screen's two dynamic fields, both of which were driven from `missed_pings` — a counter gated behind the LINKED state that stops advancing the moment the link drops, freezing the display at "Last contact: 1 s ago" and "Attempts 3". Added `rlc_link_status_t.ms_since_contact`, a real elapsed time from the last well-formed frame from the peer, and pointed the attempt count at `linkreq_attempts`. Documented the correct field sources in §10.2.5.
 | 1.25 | 2026-08-20 | Arm-sense reporting corrected end to end. `STATUS_UPDATE` previously carried the key switch **twice** (debounced as `base_arm_switch`, raw as `arm_switch_hw`) while the header documented both as arm sense, so the remote could never see the arm relay and the ARMED screen's "SENSE CONFIRMED" was derived from the key switch. Fields renamed to `base_key_switch` / `base_arm_sense` and the second now carries the real debounced arm sense (GPIO 21) — same 14-byte struct, no size change. Main status line reworked to §10.2.2's four-state BASE field (SAFE/READY/ARMED/WELD!, plus ? when stale), with ARMED and WELD! driven by the arm sense rather than the key. ARMED screen now reports the real sense. **Firmware bumped to 1.1.0** — the field's meaning changed while its size did not, so the strict version gate is what prevents a mixed pair from misinterpreting it. Host tests T-M01…T-M07 added to §15.5.
 | 1.26 | 2026-08-20 | Recorded bug #25 as §5.6.2a: **no hardware undervoltage cut-off is fitted on either pack, and none was ever specified.** Pack protection rests entirely on firmware thresholds, which do not disconnect the load — the ERROR state halts operation while regulators, backlight, LEDs and MCU keep drawing — and which only apply while firmware runs. Noted that `BASE_VBAT_CRITICAL_MV` sits exactly at 3.00 V/cell, leaving no margin before permanent capacity loss. Required trip points and the ordering constraint (hardware cut-off must sit above the firmware threshold) documented. Also recorded the channel-1 continuity ADC clamp as-built: 2x 1N5819, one to GND and one to +3.3 V.
+| 1.27 | 2026-08-20 | Encoder decoding brought up to what §5.5.1 already specified. The firmware had implemented **neither** the cycle-position decoder nor `ENC_DIVIDER` — it used the Gray-code level comparison the section explicitly rejects, and every accepted edge became a channel change; B also interrupted with no handler attached, losing three of four transitions. This caused the reported oversensitive channel selection and left the input open to electrical noise. Now implemented as specified with `ENC_DIVIDER` **4** (was documented as 3) and `ENC_LOCKOUT_US` 2 ms, both in §14.1. Added host tests T-Q01…T-Q06 and an as-built note to §5.5.1.
 
 ---
 
@@ -535,7 +536,7 @@ All digital inputs (except the rotary encoder A/B pins) shall use a shift-regist
 
 The fire button uses an 8-bit register (80 ms debounce) to minimise latency on release detection, which is safety-critical for the dead-man switch function. All other inputs use 16-bit registers (160 ms debounce).
 
-The rotary encoder A/B pins remain interrupt-driven with a 2 ms lockout (shift-register debounce is not suitable for quadrature decoding). A cycle-position quadrature decoder is used, which gives consistent direction on every transition for half-step encoders (e.g. KY-040), unlike Gray code lookups which alternate direction. The encoder push button uses the shift-register method at 10 ms polling.
+The rotary encoder A/B pins remain interrupt-driven with an `ENC_LOCKOUT_US` (2 ms) lockout (shift-register debounce is not suitable for quadrature decoding). A cycle-position quadrature decoder is used, which gives consistent direction on every transition for half-step encoders (e.g. KY-040), unlike Gray code lookups which alternate direction. The encoder push button uses the shift-register method at 10 ms polling.
 
 The debounce engine shall be implemented as a generic, reusable module in `rlc_common` that accepts a GPIO number, polling interval, register width (8-bit or 16-bit), and callback for state changes.
 
@@ -953,7 +954,7 @@ GPIO      (10k)│
 | Signal type | 2× digital input (A/B quadrature) + 1× digital input (push button) |
 | Quantity | 1 encoder |
 | Inputs | CLK (A), DT (B), SW (push button) — all with internal pull-ups |
-| A/B debounce | Interrupt-driven cycle-position quadrature decoder with 2 ms lockout (not shift-register). Each quadrature state (00, 01, 10, 11) maps to a position in the CW rotation cycle; moving forward (+1) in the cycle is CW, backward (−1) is CCW. This gives consistent direction on every transition, unlike Gray code lookups which alternate on half-step encoders (e.g. KY-040). A configurable pulse divider (ENC_DIVIDER=3) requires multiple raw pulses in the same direction before outputting one counted step, reducing sensitivity to incidental rotation. |
+| A/B debounce | Interrupt-driven cycle-position quadrature decoder with 2 ms lockout (not shift-register). Each quadrature state (00, 01, 10, 11) maps to a position in the CW rotation cycle; moving forward (+1) in the cycle is CW, backward (−1) is CCW. This gives consistent direction on every transition, unlike Gray code lookups which alternate on half-step encoders (e.g. KY-040). A configurable pulse divider (`ENC_DIVIDER`, **4** as of 2026-08-20; the spec previously said 3) requires that many raw transitions **in the same direction** before one counted step is emitted; a direction reversal resets the accumulator, so incidental jitter nets to nothing. Both A and B interrupt on **both edges**, since the cycle-position decoder needs the full quadrature sequence. |
 | Push button debounce | Shift-register, 10 ms polling, 160 ms debounce |
 | Rotation function | Select active channel (1–8), wrapping around |
 | Push button function | Context-dependent: ARM confirm via **500 ms long-press** (in IDLE with arm switch ON), DISARM (in ARMED). Short press in IDLE with arm switch ON shows "Hold to ARM" prompt. **The 500 ms long-press timer starts from the debounced stable-pressed transition (0xFFFF→0x0000), not from the raw physical press. Total operator hold time is approximately 660 ms (160 ms debounce + 500 ms long-press).** |
@@ -961,6 +962,8 @@ GPIO      (10k)│
 The direction of rotation determines increment (+1) or decrement (−1) of the selected channel. Channel selection wraps: incrementing past 8 returns to 1; decrementing past 1 returns to 8. **At boot, the selected channel SHALL default to channel 1.**
 
 **Behaviour while ARMED:** rotating the encoder (channel change) triggers an immediate CMD_DISARM, return to IDLE, and the newly selected channel becomes the cursor position. The operator must re-arm deliberately.
+
+> **AS-BUILT NOTE (2026-08-20).** Until this date the firmware implemented **neither** mechanism specified above. The decoder was a Gray-code level comparison (`if (A != B) CW else CCW`) sampling B at an edge on A — the approach this section explicitly rejects — and `ENC_DIVIDER` did not exist anywhere in the codebase, so every accepted edge became a channel change. Additionally B was configured to interrupt but had no handler attached, so three of every four transitions were lost. Together these produced the reported oversensitivity, and made the input vulnerable to electrical noise: a glitch on A yielded a channel step whose direction depended on whatever B happened to read. Now implemented as specified, with `ENC_DIVIDER` raised to 4. Covered by host tests T-Q01…T-Q06 (§15.5).
 
 #### 5.5.2 Manual Arm/Disarm Switch Input
 
@@ -2535,6 +2538,8 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `CMD_INTEGRITY_KEY` | 16-byte pre-shared key for CRC32 integrity check |
 | `BASE_MAC_ADDR` | 6-byte MAC of the base unit |
 | `REMOTE_MAC_ADDR` | 6-byte MAC of the remote unit |
+| `ENC_DIVIDER` | 4 — raw quadrature transitions per channel step |
+| `ENC_LOCKOUT_US` | 2000 — lockout after an accepted edge |
 | `VBAT_BURST_SAMPLES` | 33 — raw samples per reading, odd so the median is exact |
 | `VBAT_BURST_GAP_MS` | 1 — spacing, to decorrelate from supply ripple |
 | `VBAT_RAIL_COUNTS` | 4093 — at or above this a sample counts as clipped |
@@ -2676,6 +2681,12 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-L08 | LED strip renderer | Key warning breathes the whole map with no active channel (base) and only the cursor with one (remote). |
 | T-L09 | LED strip renderer | Stale dim and cursor pulse compose without either overriding the other. |
 
+| T-Q01 | Encoder decoder | `ENC_DIVIDER` raw transitions are required per emitted channel step, in both directions. |
+| T-Q02 | Encoder decoder | Illegal transitions (a jump of two positions, or no movement) are discarded and not counted valid. |
+| T-Q03 | Encoder decoder | Twenty contact-bounce cycles on one line emit no channel change. |
+| T-Q04 | Encoder decoder | A direction reversal restarts the accumulator, so partial rotation either way nets to nothing. |
+| T-Q05 | Encoder decoder | The first sample after init only seeds the state; it never emits a step. |
+| T-Q06 | Encoder decoder | One full detent (four transitions) moves exactly one channel, never two. |
 | T-M01 | Base arm state | Normal progression SAFE → READY → ARMED across the firing-path states. |
 | T-M02 | Base arm state | Welded relay: arm sense HIGH outside the firing path yields WELD!, including with the key OFF — the case where a key-driven display would wrongly read SAFE. |
 | T-M03 | Base arm state | `ERR_RELAY_FAULT` yields WELD! even when the sense bit is low. |

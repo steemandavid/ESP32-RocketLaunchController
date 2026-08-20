@@ -1,5 +1,51 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-20 — Encoder oversensitivity: the spec was never implemented
+
+**Report.** Channel selection overshoots, and felt worse since the NeoPixel
+strip went in — suspected interference.
+
+**Finding.** FSD §5.5.1 specifies a cycle-position quadrature decoder and an
+`ENC_DIVIDER` pulse divider. **Neither existed.** The decoder was the Gray-code
+level comparison the section explicitly rejects (`if (A != B) CW else CCW`),
+`ENC_DIVIDER` appeared nowhere in the codebase, and B was configured to
+interrupt but had no handler attached — losing three of four transitions.
+
+Every accepted edge became a channel change. And because the decoder had no
+notion of a *legal* transition, an electrical glitch on A was indistinguishable
+from a detent, producing a step in a direction set by whatever B happened to
+read. So the strip is a plausible noise source, but the reason it manifested is
+that the decoder accepted anything.
+
+**Fix.** Implemented as specified — cycle-position decoding that discards any
+transition not exactly one position around the cycle, `ENC_DIVIDER` **4**
+(raised from the spec's 3 by request), reversal resetting the accumulator,
+ISRs on both lines on both edges, lockout back to the spec'd 2 ms. Bounce is
+now rejected inherently: chattering one line toggles between adjacent states,
+so the accumulator oscillates about zero.
+
+**Strip contribution reduced without touching the frame rate.** Slowing it
+would have degraded the ERROR triple-flash and boot chase, so instead
+`rlc_rgb_led.c` keeps a shadow of the last transmitted frame and skips
+`led_strip_refresh()` when nothing changed. A steady map now transmits nothing;
+a pulsing cursor sends twice a second instead of twenty times.
+
+**Measured on target:** counters flat at zero while idle — no phantom counts —
+then `isr=40 valid=35 step=8` after deliberate rotation. `valid/step = 4.4`
+against a divider of 4, with 5 of 40 edges rejected as illegal: bounce the old
+decoder would have turned into channel changes.
+
+**Diagnostics kept:** `encoder_get_stats()` and an `enc[isr= valid= step=]`
+field on the remote's periodic log, so a noisy input is visible in the log
+rather than only felt at the knob.
+
+Host tests T-Q01…T-Q06 cover the divider, illegal transitions, bounce,
+reversal, seeding, and the guarantee that one detent moves exactly one channel.
+The test runner's include path now reaches the remote component, and the
+encoder test compiles to a skip under the base build since the hardware is
+remote-only. FSD **v1.27**, with an as-built note on §5.5.1 recording that the
+section described behaviour the firmware never had.
+
 ## 2026-08-20 — Bug #25: no battery undervoltage cut-off; channel-1 clamp as-built
 
 ### Bug #25 — no hardware undervoltage cut-off on either pack

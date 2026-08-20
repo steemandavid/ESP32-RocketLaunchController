@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.26 (2026-08-20)
+**Spec:** RLC-FSPEC-001 v1.27 (2026-08-20)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -1080,6 +1080,67 @@ channels 4-8 are blocked by bug #19 (dead pixel at channel 4).
 | T-D07 | NACK overlay text + 3 s timeout, screen restored cleanly | TODO |
 | T-D08 | Link-lost screen and recovery back to main status | TODO |
 | T-D09 | Full-screen redraw time and steady-state frame rate | TODO |
+
+---
+
+### Encoder Oversensitivity — Spec Never Implemented (2026-08-20)
+
+**Report.** Channel selection overshoots, and felt worse since the NeoPixel
+strip went in — suspected interference.
+
+**Finding: the firmware implemented neither mechanism FSD §5.5.1 specifies.**
+
+| §5.5.1 requires | Was implemented |
+|---|---|
+| Cycle-position quadrature decoder | Gray-code level comparison `if (A != B) CW else CCW` — the approach the section explicitly rejects for half-step encoders |
+| `ENC_DIVIDER` raw pulses per step | **Did not exist anywhere in the codebase** |
+| 2 ms lockout | 5 ms |
+
+So every accepted edge became a channel change immediately. Worse, B was
+configured `GPIO_INTR_NEGEDGE` but `gpio_isr_handler_add` was only called for
+A — three of every four transitions were lost.
+
+**Why that also explains the interference.** The decoder had no notion of a
+legal transition: it sampled B at the instant of an edge on A. An electrical
+glitch on A was therefore indistinguishable from a detent, and produced a
+channel step whose direction depended on whatever B happened to read —
+effectively random. The strip plausibly supplies the noise (8 pixels of 800 kHz
+data plus current pulses sharing a ground with GPIO 4/5), but the reason it
+*manifested* is that the decoder accepted anything.
+
+**Fix.** Implemented as specified: cycle-position decoder rejecting any
+transition that is not exactly one position around the cycle, `ENC_DIVIDER`
+(**4**, raised from the spec's 3 at the user's request), reversal resetting the
+accumulator, ISRs on both lines on both edges, lockout to the spec'd 2 ms.
+Contact bounce is now rejected inherently — chattering one line toggles between
+two adjacent states, so the accumulator oscillates about zero.
+
+**Also reduced the strip's contribution.** Rather than slowing the frame rate
+(which would degrade the ERROR flash and boot chase), `rlc_rgb_led.c` now keeps
+a shadow of the last transmitted frame and **skips `led_strip_refresh()` when
+nothing changed**. A steady map transmits nothing at all; a pulsing cursor
+sends twice a second instead of twenty times. Same visuals, far less data-line
+and current-pulse activity.
+
+**Diagnostics.** `encoder_get_stats()` exposes ISR entries, legal transitions
+and emitted steps; the remote's periodic log carries them as
+`enc[isr= valid= step=]`. A much larger `isr` than `valid` means edges are
+arriving that are not rotation.
+
+**Measured on target after flashing:**
+
+| | Idle ~15 s | After deliberate rotation |
+|---|---|---|
+| `isr` | 0 | 40 |
+| `valid` | 0 | 35 |
+| `step` | 0 | 8 |
+
+Counters stay at zero when untouched — no phantom counts. `valid/step = 4.4`
+against `ENC_DIVIDER` 4, and 5 of 40 edges were rejected as illegal — bounce
+the old decoder would have turned into channel changes.
+
+Covered by host tests T-Q01…T-Q06 (FSD §15.5), including bounce, reversal and
+the guarantee that one detent moves exactly one channel.
 
 ---
 

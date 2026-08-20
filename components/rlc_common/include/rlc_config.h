@@ -197,6 +197,20 @@
 #define CONT_HYSTERESIS_MARGINAL_UV    5000
 #define CONT_HYSTERESIS_OPEN_UV        50000
 
+/* ── Rotary Encoder (Remote only, FSD §5.5.1) ─────────────────── */
+
+/* Raw quadrature steps required in the same direction before one channel
+ * change is emitted. The spec calls for 3; raised to 4 on 2026-08-20 because
+ * selection was overshooting in the field. Direction reversal resets the
+ * accumulator, so incidental jitter nets to nothing. */
+#define ENC_DIVIDER                    4
+
+/* Lockout after an accepted edge. Short, because the cycle-position decoder
+ * already rejects contact bounce (it produces illegal transitions), so this
+ * only caps the ISR rate under sustained noise. Even a fast 20 detents/s puts
+ * real transitions ~12 ms apart, far outside this window. */
+#define ENC_LOCKOUT_US                 2000
+
 /* ── RGB LED ──────────────────────────────────────────────────── */
 
 #define RGB_LED_GPIO               48

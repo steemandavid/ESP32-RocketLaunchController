@@ -25,6 +25,16 @@ static TaskHandle_t s_led_task = NULL;
 static int s_pixel_count = 1;  /* Default: single pixel until configured */
 static uint8_t s_brightness = RGB_LED_BRIGHTNESS_BASE;
 
+/* Shadow of what was last transmitted, so identical frames are not re-sent.
+ * The renderer runs at RLC_STRIP_FRAME_MS but most frames are unchanged — a
+ * steady map sends nothing, and a pulsing cursor sends twice a second instead
+ * of twenty times. That cuts WS2812 data-line activity and its current pulses
+ * sharply, which matters because the strip shares a ground with the encoder
+ * inputs on the remote (see the 2026-08-20 encoder sensitivity work). */
+static uint32_t s_shadow[NUM_CHANNELS];
+static bool     s_shadow_valid = false;
+static bool     s_dirty = false;
+
 /* Status feeds — published by the units' housekeeping loops. Torn reads are
  * harmless here: the worst case is one frame of stale colour. */
 static volatile uint16_t s_channel_bands = 0;
@@ -61,7 +71,21 @@ static void led_set_pixel(int idx, uint32_t colour, int scale_pct)
         g = g * scale_pct / 100;
         b = b * scale_pct / 100;
     }
+    uint32_t packed = (r << 16) | (g << 8) | b;
+    if (s_shadow_valid && s_shadow[idx] == packed) return;   /* unchanged */
+    s_shadow[idx] = packed;
+    s_dirty = true;
     led_strip_set_pixel(s_led_strip, idx, r, g, b);
+}
+
+/* Transmit only if something actually changed since the last frame. */
+static void led_commit(void)
+{
+    if (!s_led_strip) return;
+    if (!s_shadow_valid) { s_shadow_valid = true; s_dirty = true; }
+    if (!s_dirty) return;
+    led_strip_refresh(s_led_strip);
+    s_dirty = false;
 }
 
 /* Paint every pixel one colour (whole-strip patterns). */
@@ -71,14 +95,21 @@ static void led_fill(uint32_t colour, int scale_pct)
     for (int i = 0; i < s_pixel_count; i++) {
         led_set_pixel(i, colour, scale_pct);
     }
-    led_strip_refresh(s_led_strip);
+    led_commit();
 }
 
 static void led_off(void)
 {
     if (!s_led_strip) return;
+    bool was_lit = !s_shadow_valid;
+    for (int i = 0; i < s_pixel_count; i++) {
+        if (!s_shadow_valid || s_shadow[i] != 0) { s_shadow[i] = 0; was_lit = true; }
+    }
+    s_shadow_valid = true;
+    if (!was_lit) return;                 /* already dark — nothing to send */
     led_strip_clear(s_led_strip);
     led_strip_refresh(s_led_strip);
+    s_dirty = false;
 }
 
 static uint32_t band_colour(uint8_t band)
@@ -106,7 +137,7 @@ static void led_show_channel_map(int base_pct, int active_pct)
         int pct = (active && (i == active - 1)) ? active_pct : base_pct;
         led_set_pixel(pixel_for_channel(i), band_colour(band), pct);
     }
-    led_strip_refresh(s_led_strip);
+    led_commit();
 }
 
 /* Shown until the first continuity data arrives: a cyan chase in channel
@@ -119,7 +150,7 @@ static void led_show_boot_chase(int64_t now_ms)
         led_set_pixel(pixel_for_channel(i),
                       (i == lit) ? RLC_COLOR_STRIP_BOOT : 0x000000, 100);
     }
-    led_strip_refresh(s_led_strip);
+    led_commit();
 }
 
 /* ── Layer 3: the alarm wink ──────────────────────────────────── */
