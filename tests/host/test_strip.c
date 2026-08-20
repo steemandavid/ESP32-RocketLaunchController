@@ -47,6 +47,14 @@ static uint32_t scaled(uint32_t colour, int pct)
 static void reset(void)
 {
     memset(g_pix, 0, sizeof(g_pix));
+    /* The driver skips re-sending pixels that already match its shadow of the
+     * last transmitted frame. Zeroing the mock's output without clearing that
+     * shadow would leave the driver believing the strip is already correct, so
+     * it must be reset alongside. Firmware never hits this: nothing clears the
+     * strip behind the driver's back. */
+    memset((void *)s_shadow, 0, sizeof(s_shadow));
+    s_shadow_valid = false;
+    s_dirty = false;
     s_led_strip = (void*)1;
     s_pixel_count = NUM_CHANNELS;
     s_brightness = RGB_LED_BRIGHTNESS_BASE;

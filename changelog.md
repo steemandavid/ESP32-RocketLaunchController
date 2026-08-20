@@ -1,5 +1,36 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-20 — Encoder rotation sense; strip tests were committed red
+
+### Rotation reversed
+
+The v1.27 decoder moved the channel selection opposite to the knob. Which way a
+KY-040 counts depends on how A and B are wired to the MCU, so this is a board
+property rather than a decoder property — added **`ENC_REVERSED`** (1 as built),
+the same treatment `RLC_STRIP_REVERSED` gets. Applied by negating the direction
+before the divider accumulator, so the divider and reversal logic are untouched.
+Host test **T-Q07** pins the sense in both directions, so a rewire has to update
+the constant rather than silently inverting the operator's controls.
+
+### Two strip tests had been failing since the previous commit
+
+Found while running the suite untruncated. The dirty-frame optimisation gave the
+driver hidden state — a shadow of the last transmitted frame — and
+`test_strip.c`'s `reset()` did not clear it, so the driver correctly skipped
+writing pixels it believed were already correct while the mock's output buffer
+had been zeroed underneath it.
+
+A harness gap rather than a firmware defect: nothing in firmware clears the
+strip behind the driver's back, and the shadow starts invalid at boot so the
+first frame is always transmitted.
+
+**They were committed red, and the reason is worth recording:** the test output
+was filtered through `| head -16`, which cut off exactly the two binaries that
+broke. Run the suite untruncated before committing.
+
+Full suite now green: **186 checks across 10 binaries** (5 test files x 2 unit
+builds). FSD **v1.28**.
+
 ## 2026-08-20 — Encoder oversensitivity: the spec was never implemented
 
 **Report.** Channel selection overshoots, and felt worse since the NeoPixel

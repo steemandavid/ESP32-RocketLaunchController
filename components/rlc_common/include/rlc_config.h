@@ -211,6 +211,12 @@
  * real transitions ~12 ms apart, far outside this window. */
 #define ENC_LOCKOUT_US                 2000
 
+/* Rotation sense. Which way a KY-040 counts depends on how A and B are wired
+ * to the MCU, so this is a board property, not a decoder property — same
+ * reasoning as RLC_STRIP_REVERSED. Set to 1 as built (2026-08-20): without it
+ * the channel selection moved opposite to the knob. */
+#define ENC_REVERSED                   1
+
 /* ── RGB LED ──────────────────────────────────────────────────── */
 
 #define RGB_LED_GPIO               48

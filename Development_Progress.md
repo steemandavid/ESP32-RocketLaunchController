@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.27 (2026-08-20)
+**Spec:** RLC-FSPEC-001 v1.28 (2026-08-20)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -1141,6 +1141,29 @@ the old decoder would have turned into channel changes.
 
 Covered by host tests T-Q01…T-Q06 (FSD §15.5), including bounce, reversal and
 the guarantee that one detent moves exactly one channel.
+
+---
+
+### Encoder Rotation Sense Reversed (2026-08-20)
+
+The v1.27 decoder moved the channel selection **opposite to the knob**. Which
+way a KY-040 counts depends on how A and B are wired to the MCU, so this is a
+board property, not a decoder property — added `ENC_REVERSED` (default 1, as
+built) alongside `ENC_DIVIDER`, the same treatment `RLC_STRIP_REVERSED` gets.
+Applied by negating the direction before the divider accumulator, so the
+divider and reversal logic are unaffected. Host test T-Q07 pins the sense in
+both directions, so a future rewire has to update the constant rather than
+silently inverting the operator's controls.
+
+**Caught while verifying: two strip tests had been failing since the
+dirty-frame optimisation**, and truncated test output (`| head -16`) hid it —
+they were committed red. The optimisation gave the driver hidden state (a
+shadow of the last transmitted frame) that `test_strip.c`'s `reset()` did not
+clear, so the driver correctly skipped writing pixels it believed were already
+correct while the mock's buffer had been zeroed underneath it. A harness gap,
+not a firmware defect: nothing in firmware clears the strip behind the driver's
+back. `reset()` now clears the shadow, and the full suite is green — 186 checks
+across 10 binaries.
 
 ---
 

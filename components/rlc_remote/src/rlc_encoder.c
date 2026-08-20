@@ -23,6 +23,8 @@
  * never implemented. Contact bounce is now rejected inherently — bouncing one
  * line toggles between two adjacent states, so the accumulator oscillates
  * about zero and nets to nothing.
+ *
+ * ENC_REVERSED flips the sense to match how A and B are wired on this board.
  */
 
 #include "rlc_encoder.h"
@@ -86,6 +88,10 @@ static int8_t encoder_feed(uint8_t state)
     if (delta == 1)      dir = +1;
     else if (delta == 3) dir = -1;
     else return 0;                /* 0 = no movement, 2 = illegal — discard */
+
+#if ENC_REVERSED
+    dir = (int8_t)-dir;           /* board wiring, see ENC_REVERSED */
+#endif
 
     s_valid_count++;
 

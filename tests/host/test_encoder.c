@@ -42,6 +42,15 @@ static void reset_decoder(void)
 /* Quadrature states in CW order: 00, 01, 11, 10 */
 static const uint8_t CW[4] = { 0, 1, 3, 2 };
 
+/* Sign a CW rotation should produce, given the board's wiring sense. */
+#if ENC_REVERSED
+#define STEP_CW   (-1)
+#define STEP_CCW  (+1)
+#else
+#define STEP_CW   (+1)
+#define STEP_CCW  (-1)
+#endif
+
 /* Feed `transitions` steps around the cycle; returns net channel steps. */
 static int spin(int transitions, int dir)
 {
@@ -62,11 +71,11 @@ int main(void)
     reset_decoder(); encoder_feed(CW[0]);          /* seed */
     expect_int("3 CW transitions emit nothing", spin(3, +1), 0);
     reset_decoder(); encoder_feed(CW[0]);
-    expect_int("4 CW transitions emit one step",  spin(4, +1), 1);
+    expect_int("4 CW transitions emit one step",  spin(4, +1), STEP_CW);
     reset_decoder(); encoder_feed(CW[0]);
-    expect_int("8 CW transitions emit two steps", spin(8, +1), 2);
+    expect_int("8 CW transitions emit two steps", spin(8, +1), 2 * STEP_CW);
     reset_decoder(); encoder_feed(CW[0]);
-    expect_int("4 CCW transitions emit one back", spin(4, -1), -1);
+    expect_int("4 CCW transitions emit one back", spin(4, -1), STEP_CCW);
 
     printf("T-Q02 illegal transitions are discarded\n");
     reset_decoder();
@@ -93,7 +102,7 @@ int main(void)
     spin(3, +1);                                    /* 3 CW, no step yet */
     expect_int("3 CW then 3 CCW emits nothing", spin(3, -1), 0);
     /* Having reversed, a further full divider CCW does step. */
-    expect_int("then 4 more CCW emits one step", spin(4, -1), -1);
+    expect_int("then 4 more CCW emits one step", spin(4, -1), STEP_CCW);
 
     printf("T-Q05 first sample only seeds, never steps\n");
     reset_decoder();
@@ -103,7 +112,24 @@ int main(void)
     /* A KY-040 detent is one full quadrature cycle = 4 transitions. With
      * ENC_DIVIDER 4 that is exactly one channel, never two. */
     reset_decoder(); encoder_feed(CW[0]);
-    expect_int("one detent = exactly one channel", spin(4, +1), 1);
+    expect_int("one detent = exactly one channel", spin(4, +1), STEP_CW);
+
+    printf("T-Q07 rotation sense matches the board wiring\n");
+    /* Pins the direction explicitly, so a future wiring change has to update
+     * ENC_REVERSED rather than silently inverting the operator's controls. */
+    reset_decoder(); encoder_feed(CW[0]);
+    int cw = spin(4, +1);
+    checks++;
+    if (cw != STEP_CW) {
+        printf("  FAIL clockwise gave %d, expected %d for ENC_REVERSED=%d\n",
+               cw, STEP_CW, ENC_REVERSED);
+        fails++;
+    }
+    reset_decoder(); encoder_feed(CW[0]);
+    checks++;
+    if (spin(4, -1) != STEP_CCW) {
+        printf("  FAIL counter-clockwise direction wrong\n"); fails++;
+    }
 
     printf("\n%d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;
