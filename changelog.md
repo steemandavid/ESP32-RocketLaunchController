@@ -1,5 +1,62 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-20 (late) — Base chip #3 killed by floating rail; chip #4 is the resurrected remote board (bug #24)
+
+### The incident
+
+An accidental ground disconnect during bench work let the base's 3.3 V rail
+float to **3.68 V** — above the ESP32-S3 absolute maximum of 3.6 V — killing
+chip #3 (`44:1B:F6:D4:0D:68`). Diagnosis path: the CH340 COM bridge still
+enumerated but esptool got "no serial data received" (chip TX never moved)
+across every reset mode *and* manual BOOT entry; native USB JTAG absent from
+the bus entirely; 3.68 V measured at both 3.3 V pins. Powered + in-bootloader
++ silent = dead chip. The regulator was replaced and the rail verified at
+**3.29 V** before any new silicon was wired in.
+
+### The "new" board wasn't new
+
+The replacement board inserted turned out to be the **retired old remote
+board** (`5B5E042156`, MAC `44:1B:F6:81:F1:70`), pulled from service in July
+with a "SPI flash damaged" diagnosis (suspected reverse-polarity battery).
+Bench retest disproved that: bootloader, flash ID (16 MB), flash read, and a
+write+verify+erase cycle on a scratch sector at `0xFF0000` all passed. The
+board is healthy and was enrolled as **base chip #4**.
+
+### Changes
+
+- `rlc_config.h`: `BASE_MAC_ADDR` → `44:1B:F6:81:F1:70` (chip genealogy in the comment)
+- `build_base.sh`: default port → `usb-1a86_USB_Single_Serial_5B5E042156-if00`
+- `Development_Progress.md`: bug #24 logged (open-bugs table + full entry with
+  rail-protection recommendations); Hardware Reference table updated
+- Both units rebuilt and reflashed
+- Commit `c1d6c09`
+
+### Link verification
+
+```
+[BASE]   rlc_espnow: ESP-NOW init ch 11, MAC 44:1b:f6:81:f1:70
+[BASE]   rlc_link: LINK_REQUEST from remote fw 1.1.0 → LINK_ACK sent, token=0x9f673ef9
+[BASE]   rlc_bfsm: BOOT -> IDLE (link established)
+[REMOTE] rlc_link: LINK_ACK accepted → rlc_rfsm: LINKING -> IDLE
+         rssi −44/−52, base vbat 12.0 V, cont=0x0003, bug #18 gate active
+```
+
+### Notes and follow-ups
+
+- **Rail protection still OPEN** (bug #24): secure the ground path (screw
+  terminals / keyed connectors), 3.6 V zener clamp across the 3.3 V rail, and
+  ideally an input eFuse — that last would have prevented all three base chip
+  deaths. The base is 4-for-4 on ESP32s consumed.
+- **Remote was left in ERROR: `CRITICAL battery: 0 mV`.** If its battery was
+  simply unplugged during bench work, reconnecting it clears it; if the
+  battery was connected, the remote's sense path (GPIO 4/5 ADC) needs
+  investigating.
+- **`task_wdt: esp_task_wdt_reset(): task not found`** bursts for ~100 ms
+  after boot on *both* units, then clean — pre-existing firmware quirk,
+  untracked, low priority.
+- July's remote "flash damaged" diagnosis is now suspect (that board benches
+  healthy) — record stands unless chip #4 misbehaves in service.
+
 ## 2026-08-20 — Arm sense reporting corrected end to end (firmware 1.1.0)
 
 Started as a question about what "HW OFF" meant on the remote's status line.
