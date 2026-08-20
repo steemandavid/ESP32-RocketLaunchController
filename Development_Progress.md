@@ -1162,7 +1162,7 @@ shadow of the last transmitted frame) that `test_strip.c`'s `reset()` did not
 clear, so the driver correctly skipped writing pixels it believed were already
 correct while the mock's buffer had been zeroed underneath it. A harness gap,
 not a firmware defect: nothing in firmware clears the strip behind the driver's
-back. `reset()` now clears the shadow, and the full suite is green — 186 checks
+back. `reset()` now clears the shadow, and the full suite is green — 217 checks
 across 10 binaries.
 
 ---

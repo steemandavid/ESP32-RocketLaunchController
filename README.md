@@ -94,9 +94,12 @@ Requires **ESP-IDF v5.4.1** and an ESP32-S3 (16 MB flash, 8 MB OCT PSRAM).
 ./tests/host/run.sh             # host-compiled unit tests, no hardware needed
 ```
 
-The host tests compile the real rendering code against mock ESP-IDF headers and
-assert its output directly. They run once per unit, because the two units are
-not configured identically.
+The host tests compile the **real firmware sources** against mock ESP-IDF
+headers and assert their behaviour directly — currently the LED strip renderer,
+battery ADC sampling, error-flag naming, the base arm-state derivation, and the
+rotary encoder's quadrature decoder. They run once per unit, because the two
+units are not configured identically; a test whose hardware exists on only one
+unit compiles to a skip on the other.
 
 Serial ports are referenced by stable `/dev/serial/by-id/` paths rather than
 `/dev/ttyACMx`, which reorders between plug-ins. Current port and MAC

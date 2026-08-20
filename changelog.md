@@ -28,8 +28,21 @@ first frame is always transmitted.
 was filtered through `| head -16`, which cut off exactly the two binaries that
 broke. Run the suite untruncated before committing.
 
-Full suite now green: **186 checks across 10 binaries** (5 test files x 2 unit
+Full suite now green: **217 checks across 10 binaries** (5 test files x 2 unit
 builds). FSD **v1.28**.
+
+*(Correction: this was first recorded, and committed in `d09e228`'s message, as
+186 checks. The arithmetic was wrong — the actual total is 217. The commit
+message stands as history; the figure is corrected here and in
+Development_Progress.)*
+
+### Documentation audit
+
+- README's description of the host tests still said they "compile the real
+  rendering code" — accurate when the strip renderer was the only test file,
+  now four files out of date. It lists what the suite actually covers, and
+  notes that a test whose hardware exists on only one unit compiles to a skip
+  on the other.
 
 ## 2026-08-20 — Encoder oversensitivity: the spec was never implemented
 
