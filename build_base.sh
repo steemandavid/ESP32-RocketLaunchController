@@ -15,7 +15,7 @@ SDKCONFIG_REMOTE="$SCRIPT_DIR/sdkconfig.remote"
 BUILD_DIR="$SCRIPT_DIR/build_base"
 
 # Default flash port (base unit)
-PORT="/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E044219-if00"   # base COM port — stable board serial (survives chip swaps). Find yours: ls /dev/serial/by-id/
+PORT="/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00"   # base COM port — stable board serial (survives chip swaps). Find yours: ls /dev/serial/by-id/
 
 # Parse args
 DO_FLASH=false

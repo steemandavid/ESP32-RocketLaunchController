@@ -32,6 +32,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
+| 24 | Base ESP32 chip #3 destroyed — 3.3 V rail floated to 3.68 V after accidental ground disconnect | Hardware | Chip replaced (chip #4); rail protection OPEN | Nothing functionally. The base has no rail clamp and no secured ground path, so a repeat ground-lift kills chip #4 the same way. |
 | 23 | Remote VBAT divider has no ADC headroom — a full 2S pack sits at 97 % of the ADC's usable ceiling | Hardware | OPEN | Accuracy only. Costs ~0.7 % at full charge; thresholds are unaffected as they sit at 71-78 % of range. |
 | 22 | Remote GPIO 1 has no overvoltage clamp — the bug #21 zener was removed and not replaced | Hardware | OPEN | Protection only. The divider's series impedance is the sole limit on an overvoltage fault. |
 | 21 | Remote VBAT sense was non-linear — 3.3 V zener leakage into a 6.4 kΩ divider | Hardware | **Zener removed 2026-08-19, sense verified and calibrated. PARTIAL — no replacement clamp fitted, so GPIO 1 is unprotected.** | Nothing functionally. Production thresholds restored. Remaining risk is overvoltage exposure on GPIO 1 until a BAT54-class clamp is fitted. |
@@ -1425,6 +1426,60 @@ is public the moment it is pushed.
 
 ---
 
+### Bug #24 — Base ESP32 chip #3 destroyed by floating 3.3 V rail (2026-08-20, chip replaced / protection OPEN)
+
+**Incident.** During bench work the base's ground connection was accidentally
+disconnected. With no ground return the 3.3 V regulator lost its reference and
+the rail floated to **3.68 V** — above the ESP32-S3 absolute maximum VDD of
+3.6 V. Chip #3 (`44:1B:F6:D4:0D:68`) died: silent on the UART bootloader and
+on native USB despite confirmed power and manual BOOT entry, while the CH340
+COM bridge still enumerated fine (i.e. "no serial data received", not a sync
+error — the chip's TX never moved).
+
+**Diagnosis path.** Rail measured 3.68 V at both 3.3 V pins; manual
+bootloader entry produced no response; native USB JTAG absent from the bus.
+3.3 V present + over-spec + silent = dead chip, not dead regulator in the
+no-output sense — the regulator was replaced and the rail verified at
+**3.29 V** afterwards.
+
+**Repair (2026-08-20).** The replacement board inserted turned out to be the
+"retired" old remote board `5B5E042156` / MAC `44:1B:F6:81:F1:70`, retired in
+July with a "SPI flash damaged" diagnosis (suspected reverse-polarity
+battery). Bench retest disproved that: bootloader, flash ID (16 MB), flash
+read, and a write+verify+erase cycle on a scratch sector at 0xFF0000 all
+passed. The board was enrolled as **base chip #4**: `BASE_MAC_ADDR` updated
+in `rlc_config.h`, `build_base.sh` default port updated, both units
+reflashed, link verified (LINK_ACK token `0x9f673ef9`, both IDLE, rssi
+−44/−52, base vbat 12.0 V, cont 0x0003, bug #18 gate active). This is the
+third base ESP32 destroyed electrically (chip #1, #2 bug #18, #3 this bug) —
+the base is 4-for-4 on chips consumed.
+
+**Still open — protect the rail.** The chip swap fixes the symptom, not the
+failure mode. Recommended, cheapest first:
+
+1. **Secure the ground path** — screw terminals or keyed/locking connectors
+   for power and ground so an accidental disconnect becomes physically hard.
+2. **3.6 V zener clamp (or crowbar) across the 3.3 V rail** — a future rail
+   float dumps into the clamp instead of the ESP32.
+3. **eFuse on the input** (e.g. TPS2596 class: OVP + reverse polarity +
+   current limit) — would have prevented all three base chip deaths, and
+   covers the remote too if fitted there.
+
+Note the remote's July "reverse-polarity battery" flash-damage diagnosis is
+now also suspect (that board's flash benches healthy, bug #24 retest) — but
+it was replaced under that diagnosis, so the record stands unless the board
+misbehaves in service as chip #4.
+
+**Also observed post-reflash (untracked):** both units emit a ~100 ms burst
+of `task_wdt: esp_task_wdt_reset(): task not found` errors immediately after
+boot, then run clean. Identical on both units, so pre-existing firmware
+behaviour rather than hardware — worth a low-priority look.
+
+---
+
+
+---
+
 ## Phase 5 — Hardening and Final Testing
 
 **FSD ref:** §4.3 Phase 5, §15 (Test Requirements)
@@ -1473,9 +1528,9 @@ is public the moment it is pushed.
 
 | Item | Value |
 |------|-------|
-| Base MAC | `44:1B:F6:D4:0D:68` (chip #3; #2 `44:1B:F6:81:FA:F8` & #1 `94:A9:90:31:18:38` destroyed) |
-| Remote MAC | `AC:A7:04:E2:F2:8C` (chip #2; #1 `44:1B:F6:81:F1:70` flash-damaged) |
-| Base serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E044219-if00` (stable board serial) |
+| Base MAC | `44:1B:F6:81:F1:70` (chip #4, 2026-08-20 — ex-remote #1 board, flash damage diagnosis disproved; #3 `44:1B:F6:D4:0D:68` destroyed by 3.68 V rail bug #24; #2 `44:1B:F6:81:FA:F8` & #1 `94:A9:90:31:18:38` destroyed) |
+| Remote MAC | `AC:A7:04:E2:F2:8C` (chip #2; #1 `44:1B:F6:81:F1:70` now serving as base chip #4) |
+| Base serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00` (chip #4 board, 2026-08-20; the `5B5E044219` adapter belonged to the dead chip #3 board) |
 | Remote serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E043219-if00` (verified 2026-08-19 by `read_mac` → `ac:a7:04:e2:f2:8c`; was `...5B5E042156` before the board swap) |
 | ESP-IDF version | v5.4.1 |
 | Target | ESP32-S3 (xtensa) |
