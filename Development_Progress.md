@@ -703,7 +703,7 @@ fix and added a firmware gate against firing unprotected channels.
 **Test tooling.** Run these in two terminals throughout the session:
 ```bash
 # Terminal 1 — base log
-idf.py -B build_base -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E044219-if00 monitor   # base COM
+idf.py -B build_base -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00 monitor   # base COM
 # Terminal 2 — remote log
 ./build_remote.sh && idf.py -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E043219-if00 monitor   # remote COM
 ```
@@ -1580,6 +1580,8 @@ behaviour rather than hardware — worth a low-priority look.
 | Base MAC | `44:1B:F6:81:F1:70` (chip #4, 2026-08-20 — ex-remote #1 board, flash damage diagnosis disproved; #3 `44:1B:F6:D4:0D:68` destroyed by 3.68 V rail bug #24; #2 `44:1B:F6:81:FA:F8` & #1 `94:A9:90:31:18:38` destroyed) |
 | Remote MAC | `AC:A7:04:E2:F2:8C` (chip #2; #1 `44:1B:F6:81:F1:70` now serving as base chip #4) |
 | Base serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00` (chip #4 board, 2026-08-20; the `5B5E044219` adapter belonged to the dead chip #3 board) |
+
+> **By-id caveat.** A COM-port by-id identifies the **CH340 adapter on that board**, so it survives swapping the ESP32 *chip* — which is why it was chosen — but **not** swapping the whole board. Chip #4 is the ex-remote #1 board, so the base moved from `5B5E044219` to `5B5E042156` on 2026-08-20. Check `ls /dev/serial/by-id/` after any board change; flashing the wrong unit is otherwise silent.
 | Remote serial (COM port) | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E043219-if00` (verified 2026-08-19 by `read_mac` → `ac:a7:04:e2:f2:8c`; was `...5B5E042156` before the board swap) |
 | ESP-IDF version | v5.4.1 |
 | Target | ESP32-S3 (xtensa) |

@@ -57,6 +57,23 @@ fault delivers ~8 mA into the 3.3 V rail instead of amps — without it, the
 3V3-side clamp dumps the whole arc into the rail and can take out everything on
 it. DC reading is unaffected; the ADC input is high-impedance.
 
+### Stale base-port commands found and fixed
+
+The chip #4 board swap (committed outside this session) moved the base's COM
+port from `5B5E044219` to `5B5E042156`. `build_base.sh` had been updated, but
+two **runnable commands** still named the old adapter and would have flashed or
+monitored nothing:
+
+- the bug #18 test-tooling block in `Development_Progress.md`
+- the flash command in `rlc-hw-test-base/RLC_Base_Hardware_Test_Specification.md`
+
+Added a caveat next to the port table, because the original reasoning has a
+limit worth stating: a COM-port by-id identifies **the CH340 adapter on that
+board**. It survives swapping the ESP32 *chip* — three times, as intended — but
+not swapping the whole board. Chip #4 is the ex-remote #1 board, hence a
+different adapter. Historical port references in this changelog were left
+alone; they record what was true when written.
+
 ### Snubber placement answered
 
 Both relay types: across the switched pair, **NO to COM** — not across the coil,
