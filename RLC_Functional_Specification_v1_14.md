@@ -1262,8 +1262,8 @@ Total header size: 12 bytes.
 | 0 | 2 | `continuity_bands` | 2 bits per channel (ch1 in bits 1:0, ch2 in bits 3:2, ... ch8 in bits 15:14). Values: 00 = OPEN, 01 = GOOD, 10 = MARGINAL, 11 = SHORT. Enum values match wire encoding directly (CONT_OPEN=0, CONT_GOOD=1, CONT_MARGINAL=2, CONT_SHORT=3). |
 | 2 | 2 | `channel_armed_bitmask` | Bits 0–7: armed state per channel (1 = armed). Bits 8–15: reserved. |
 | 4 | 2 | `channel_firing_bitmask` | Bits 0–7: currently firing per channel (1 = firing). Bits 8–15: reserved. |
-| 6 | 1 | `base_arm_switch` | 0 = disarmed, 1 = armed (debounced key switch sense input, §5.4.3b) |
-| 7 | 1 | `arm_switch_hw` | 0 = arm relay open / no VBAT on fire path, 1 = arm relay closed / VBAT detected on ARM SENSE node. Raw (non-debounced) reading of the arm sense GPIO (§5.4.3). Provides the remote with an independent view of the hardware state. In normal operation, this matches `base_arm_switch`. A mismatch (debounced says armed, raw says not) indicates a transient or fault. |
+| 6 | 1 | `base_key_switch` | 0 = key SAFE, 1 = key ARM. Debounced key switch position (GPIO 42, §5.4.3b). A **precondition** only — the fire path may still be dead. |
+| 7 | 1 | `base_arm_sense` | 0 = arm relay open / no VBAT on the fire path, 1 = arm relay contacts closed **and VBAT live on the ARM SENSE node**. Debounced reading of GPIO 21 (§5.4.3). This is the hazard signal and the welded-contact evidence; it is what drives the remote's ARMED and WELD! states (§10.2.2). Prior to firmware 1.1.0 this field wrongly carried a raw copy of the key switch. |
 | 8 | 2 | `battery_voltage_mv` | Base battery voltage in millivolts (uint16) |
 | 10 | 1 | `base_state` | Current base FSM state enum |
 | 11 | 1 | `error_flags` | Bit field of active errors (see §13) |
@@ -2132,11 +2132,9 @@ If a firmware version mismatch is detected:
 │                            SHORT                 │
 │   ● = good  ▲ = marginal  ○ = open  ◆ = short   │
 │                                                  │
-│  ►[ CH 1 ]◄     SEL CH 1  BASE SAFE  REMOTE ARMED│
-│                  Remote switch: SAFE             │
-│                  Arm sense: OFF                   │
+│  SEL CH 1   BASE SAFE   REMOTE ARMED             │
 │                                                  │
-│         Turn ARM key to arm channel 1            │
+│        TURN ARM KEY TO ARM CH 1                  │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -2183,14 +2181,13 @@ Covered by host tests T-M01…T-M07 (§15.5).
 │            ╔══════════════════════╗               │
 │            ║   CHANNEL 3 ARMED   ║               │
 │            ║                     ║               │
-│            ║   Continuity: OK    ║               │
+│            ║  CONTINUITY GOOD    ║               │
 │            ║                     ║               │
-│            ║   PRESS AND HOLD    ║               │
-│            ║   FIRE TO LAUNCH    ║               │
+│            ║                     ║               │
+│            ║ HOLD FIRE TO LAUNCH ║               │
 │            ╚══════════════════════╝               │
 │                                                  │
 │     ARM SENSE OK   REMOTE ARMED                  │
-│     Arm sense: CONFIRMED                         │
 │                                                  │
 └──────────────────────────────────────────────────┘
 ```
@@ -2784,8 +2781,8 @@ typedef struct __attribute__((packed)) {
                                         // ch8=bits 15:14. Values: 00=OPEN, 01=GOOD, 10=MARGINAL, 11=SHORT
     uint16_t channel_armed_bitmask;    // bits 0-7: channels 1-8, bits 8-15: reserved
     uint16_t channel_firing_bitmask;   // bits 0-7: channels 1-8, bits 8-15: reserved
-    uint8_t  base_arm_switch;
-    uint8_t  arm_switch_hw;            // hardware key switch sense (0=OFF, 1=ON via §5.4.3b)
+    uint8_t  base_key_switch;         // key switch position, debounced (GPIO 42, §5.4.3b)
+    uint8_t  base_arm_sense;          // arm relay COM output, debounced (GPIO 21, §5.4.3)
     uint16_t battery_voltage_mv;
     uint8_t  base_state;
     uint8_t  error_flags;

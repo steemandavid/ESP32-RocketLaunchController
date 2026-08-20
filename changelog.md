@@ -67,6 +67,32 @@ Both units rebuilt, flashed **together** (the version gate requires it) and
 confirmed linked at v1.1.0, IDLE, no errors. FSD **v1.25** documents the
 four-state derivation in §10.2.2 and the corrected protocol fields.
 
+### Documentation audit afterwards
+
+The first pass at the FSD missed more than it caught, so a second sweep:
+
+- **The §6 protocol field table still described the old fields.** Rows 6 and 7
+  now document `base_key_switch` (a precondition only) and `base_arm_sense`
+  (the hazard signal), including a note that pre-1.1.0 firmware wrongly carried
+  a raw key copy there. The appendix C struct listing was corrected too.
+- **Both screen mock-ups had orphaned lines.** Replacing one line each in
+  §10.2.2 and §10.2.3 left behind "Remote switch: SAFE", "Arm sense: OFF" and
+  "Arm sense: CONFIRMED", which then duplicated or contradicted the new
+  combined lines. Removed, and box widths re-checked by character count rather
+  than by eye — byte length is misleading here because the art uses multi-byte
+  box-drawing glyphs.
+- **The ARMED mock-up's inner text was stale** from the earlier scale-2
+  legibility pass: "PRESS AND HOLD / FIRE TO LAUNCH" is one string in the code
+  ("HOLD FIRE TO LAUNCH"), and "Continuity: OK" is rendered "CONTINUITY GOOD".
+- **Test B2-A04 was obsolete, not merely reworded.** It verified
+  `arm_switch_hw` matched the raw key GPIO — a property that no longer exists.
+  Rewritten to verify `base_arm_sense` follows the arm relay and that the
+  remote shows BASE ARMED only while it is HIGH.
+- Version reference in the Phase 1 task table updated to v1.1.0.
+
+Archive revisions and historical review documents were deliberately left
+untouched; they correctly record what was true when written.
+
 ## 2026-08-19 (late) — LINK LOST screen counter stuck at 1 s
 
 **Symptom.** The link-lost screen showed "Last contact: 1 s ago" and never

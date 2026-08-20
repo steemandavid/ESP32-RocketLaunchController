@@ -205,7 +205,7 @@ Test specs: `rlc-hw-test-base/RLC_Base_Hardware_Test_Specification.md` and
 | 24 | Battery ADC driver (ADC1, median-of-33 burst + 8-deep average, calibration) | §5.4.7 | DONE | `rlc_battery.c` |
 | 25 | Battery 3-threshold check (OK/WARNING/LOW/CRITICAL) | §8.3.4 | DONE | `rlc_battery_check()` with `min_operate_mv` |
 | 26 | Debounce engine (8-bit / 16-bit shift register) | §5.3 | DONE | `rlc_debounce.c/h` |
-| 27 | Version header | §4.3 | DONE | `rlc_version.h` — v1.0.0 |
+| 27 | Version header | §4.3 | DONE | `rlc_version.h` — now v1.1.0 (bumped 2026-08-20 with the arm-sense field change) |
 | 28 | Kconfig serial debug logging option | §9.11 | DONE | `CONFIG_RLC_SERIAL_DEBUG_LOGGING` |
 | 29 | Boot self-tests (7 suites) | §9.9, §15.5 | DONE | `rlc_selftest.c/h` |
 | 30 | Relay control (safe state on boot) | §9.7 | DONE | `rlc_relay.c` — stubs for Phase 2 |
@@ -456,7 +456,7 @@ They should be verified before Phase 3 work begins, or during Phase 5 hardening.
 | ID | Test | Notes |
 |----|------|-------|
 | B2-A03 | Disconnected wire fail-safe | Disconnect arm sense GPIO — should report DISARMED |
-| B2-A04 | Raw vs debounced in STATUS_UPDATE | Verify `arm_switch_hw` field matches raw GPIO |
+| B2-A04 | Arm sense reaches the remote | **Rewritten 2026-08-20.** The old test verified `arm_switch_hw` matched the raw key GPIO; that field now carries the debounced **arm sense** (GPIO 21). Verify `base_arm_sense` follows the arm relay and that the remote shows BASE ARMED only while it is HIGH. |
 
 #### Base Unit — Battery Thresholds
 
@@ -516,7 +516,7 @@ Command forwarding pattern: `link_task` continues to own ESP-NOW receive queue. 
 | `components/rlc_base/include/rlc_base_state.h` | Added `base_state_get_firing_channel()`, `base_state_is_busy()` |
 | `components/rlc_base/src/rlc_siren.c` | Added `siren_start_error()` (3 short blasts 200ms on/off) |
 | `components/rlc_base/include/rlc_siren.h` | Declared `siren_start_error()` |
-| `components/rlc_base/src/rlc_status_update.c` | Populates `channel_armed_bitmask` and `channel_firing_bitmask` from FSM state. `base_arm_switch` reads from `key_sense_get_debounced()` |
+| `components/rlc_base/src/rlc_status_update.c` | Populates `channel_armed_bitmask` and `channel_firing_bitmask` from FSM state, `base_key_switch` from `key_sense_get_debounced()` (GPIO 42) and `base_arm_sense` from `arm_sense_get_debounced()` (GPIO 21) |
 | `components/rlc_base/src/rlc_base_main.c` | Starts FSM task, wires arm sense/fault/key callbacks to FSM, sets link guard callback. Housekeeping log includes `key=` field |
 | `components/rlc_base/src/rlc_arm_sense.c` | Arm sense + key sense monitoring. Second debounce engine for GPIO 42 (key_sense). API: `key_sense_get_debounced()`, `key_sense_get_raw()`, `key_sense_register_cb()` |
 | `components/rlc_base/include/rlc_arm_sense.h` | Added key_sense API declarations. Updated module doxygen for dual-input monitoring |
