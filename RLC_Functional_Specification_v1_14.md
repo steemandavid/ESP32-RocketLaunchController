@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.24
-**Date:** 2026-08-19
+**Version:** 1.25
+**Date:** 2026-08-20
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -38,6 +38,7 @@
 | 1.22 | 2026-08-19 | Recorded bug #21 as an as-built deviation in §5.5: an undocumented 3.3 V zener on the remote's VBAT ADC node leaks 27-144 µA into the 6429 Ω divider, making the sense non-linear and under-reading by up to 30 %. Noted that the specified 0-3.0 V range already puts a full 2S pack at 95 % of the ADC's usable ceiling. Base divider calibrated (4.3 → 4.3148); remote calibration blocked.
 | 1.23 | 2026-08-19 | Battery ADC sampling hardened. Added §5.6.3: each reading is now the **median of a 33-sample burst** before the existing 8-deep moving average, because a sample clipped at ADC full scale can only bias a mean upward and so make a flat pack read as healthy. Measured on the bench: in a burst with 9 of 33 samples clipped the mean read 571 counts high, about +2 V through the base's divider ratio, while the median was exact. Added the burst constants to §14.1 and host tests T-B01…T-B07 to §15.5. Updated the stale "8-sample moving average" wording in §4, §5.4.7 and §7.3.3.
 | 1.24 | 2026-08-19 | Fixed the LINK LOST screen's two dynamic fields, both of which were driven from `missed_pings` — a counter gated behind the LINKED state that stops advancing the moment the link drops, freezing the display at "Last contact: 1 s ago" and "Attempts 3". Added `rlc_link_status_t.ms_since_contact`, a real elapsed time from the last well-formed frame from the peer, and pointed the attempt count at `linkreq_attempts`. Documented the correct field sources in §10.2.5.
+| 1.25 | 2026-08-20 | Arm-sense reporting corrected end to end. `STATUS_UPDATE` previously carried the key switch **twice** (debounced as `base_arm_switch`, raw as `arm_switch_hw`) while the header documented both as arm sense, so the remote could never see the arm relay and the ARMED screen's "SENSE CONFIRMED" was derived from the key switch. Fields renamed to `base_key_switch` / `base_arm_sense` and the second now carries the real debounced arm sense (GPIO 21) — same 14-byte struct, no size change. Main status line reworked to §10.2.2's four-state BASE field (SAFE/READY/ARMED/WELD!, plus ? when stale), with ARMED and WELD! driven by the arm sense rather than the key. ARMED screen now reports the real sense. **Firmware bumped to 1.1.0** — the field's meaning changed while its size did not, so the strict version gate is what prevents a mixed pair from misinterpreting it. Host tests T-M01…T-M07 added to §15.5.
 
 ---
 
@@ -2131,7 +2132,7 @@ If a firmware version mismatch is detected:
 │                            SHORT                 │
 │   ● = good  ▲ = marginal  ○ = open  ◆ = short   │
 │                                                  │
-│  ►[ CH 1 ]◄     Base switch: SAFE               │
+│  ►[ CH 1 ]◄     SEL CH 1  BASE SAFE  REMOTE ARMED│
 │                  Remote switch: SAFE             │
 │                  Arm sense: OFF                   │
 │                                                  │
@@ -2155,6 +2156,22 @@ Colour coding:
 - Warning text: yellow.
 - Error text: red.
 
+**Base arm state (four states).** The status line's `BASE` field is derived from *two* distinct signals — the key switch (§5.4.3b, GPIO 42) and the arm sense (§5.4.3, GPIO 21) — because they answer different questions and collapsing them loses the one that matters.
+
+| Key sense | Arm sense | Shown | Colour | Meaning |
+|---|---|---|---|---|
+| OFF | LOW | `SAFE` | green | Key off, fire path dead |
+| ON | LOW | `READY` | amber | Key turned, path still dead — arming permitted |
+| any | HIGH, in ARMED/PRE_FIRE/FIRING | `ARMED` | red | Arm relay closed, VBAT live on the fire path |
+| any | HIGH, in any other state, **or** `ERR_RELAY_FAULT` | `WELD!` | flashing red/yellow | Contacts closed when they should not be |
+| — | no fresh STATUS_UPDATE | `?` | grey | Unknown — never displayed as SAFE |
+
+**`ARMED` and `WELD!` are driven by the arm sense, never by the key switch.** A welded arm relay leaves the fire path live with the key turned OFF; a display keyed off the key switch would print `SAFE` over an energised igniter circuit. The `WELD!` case is additionally checked against `base_state` rather than waiting for the base's own weld confirm count, so the warning appears earlier than `ERR_RELAY_FAULT`.
+
+`REMOTE` reflects the remote's own arm switch and is local, so it stays valid even with the link down.
+
+Covered by host tests T-M01…T-M07 (§15.5).
+
 #### 10.2.3 Armed Screen (ARMED)
 
 ```
@@ -2172,7 +2189,7 @@ Colour coding:
 │            ║   FIRE TO LAUNCH    ║               │
 │            ╚══════════════════════╝               │
 │                                                  │
-│     Base switch: ARMED   Remote switch: ARMED    │
+│     ARM SENSE OK   REMOTE ARMED                  │
 │     Arm sense: CONFIRMED                         │
 │                                                  │
 └──────────────────────────────────────────────────┘
@@ -2649,6 +2666,13 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-L08 | LED strip renderer | Key warning breathes the whole map with no active channel (base) and only the cursor with one (remote). |
 | T-L09 | LED strip renderer | Stale dim and cursor pulse compose without either overriding the other. |
 
+| T-M01 | Base arm state | Normal progression SAFE → READY → ARMED across the firing-path states. |
+| T-M02 | Base arm state | Welded relay: arm sense HIGH outside the firing path yields WELD!, including with the key OFF — the case where a key-driven display would wrongly read SAFE. |
+| T-M03 | Base arm state | `ERR_RELAY_FAULT` yields WELD! even when the sense bit is low. |
+| T-M04 | Base arm state | Stale STATUS_UPDATE yields UNKNOWN, never SAFE. |
+| T-M05 | Base arm state | The key switch alone can never produce ARMED or WELD!, in any base state. |
+| T-M06 | Base arm state | The rendered status line fits the 40-character scale-2 budget for every state. |
+| T-M07 | Base arm state | STATUS_UPDATE remains 14 bytes — a size change would require reflashing both units. |
 | T-B01 | Battery sampling | Insertion-sort helper orders correctly. |
 | T-B02 | Battery sampling | Median of a constant burst returns that value. |
 | T-B03 | Battery sampling | Samples clipped at full scale do not move the median, and are counted. Contrasted against the mean, which is biased upward by the same data. |

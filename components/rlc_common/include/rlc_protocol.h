@@ -148,8 +148,16 @@ typedef struct __attribute__((packed)) {
     uint16_t continuity_bands;          /* 2 bits/ch: 00=OPEN,01=GOOD,10=MARGINAL,11=SHORT */
     uint16_t channel_armed_bitmask;     /* bits 0-7: armed channels */
     uint16_t channel_firing_bitmask;    /* bits 0-7: firing channels */
-    uint8_t  base_arm_switch;           /* debounced arm sense */
-    uint8_t  arm_switch_hw;             /* raw arm sense GPIO (arm relay COM output) */
+    /* Two DIFFERENT signals — see FSD §5.4.3 / §5.4.3b. Historically both
+     * carried the key switch (debounced and raw), which made the raw copy
+     * useless and left the remote unable to see the arm relay at all. */
+    uint8_t  base_key_switch;           /* GPIO 42, debounced: key switch position.
+                                         * 1 = key turned to ARM. A precondition
+                                         * only — the fire path may still be dead. */
+    uint8_t  base_arm_sense;            /* GPIO 21, debounced: arm relay COM output.
+                                         * 1 = relay contacts closed AND VBAT live on
+                                         * the fire path. This is the hazard signal
+                                         * and the welded-contact evidence. */
     uint16_t battery_voltage_mv;
     uint8_t  base_state;
     uint8_t  error_flags;

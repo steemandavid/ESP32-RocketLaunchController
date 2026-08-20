@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.24 (2026-08-19)
+**Spec:** RLC-FSPEC-001 v1.25 (2026-08-20)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -1078,6 +1078,67 @@ channels 4-8 are blocked by bug #19 (dead pixel at channel 4).
 | T-D07 | NACK overlay text + 3 s timeout, screen restored cleanly | TODO |
 | T-D08 | Link-lost screen and recovery back to main status | TODO |
 | T-D09 | Full-screen redraw time and steady-state frame rate | TODO |
+
+---
+
+### Arm Sense Reporting Corrected End to End (2026-08-20)
+
+**Trigger.** A question about what "HW OFF" meant on the remote's status line.
+Reviewing the chain turned up that the field meant nothing useful and that a
+second field was making a false safety claim.
+
+**What was wrong.**
+
+1. `STATUS_UPDATE` carried the **key switch twice** — `base_arm_switch` =
+   `key_sense_get_debounced()`, `arm_switch_hw` = `key_sense_get_raw()`. One bit
+   of information in two fields; the raw copy had no operational use.
+2. The protocol header documented both as *arm sense* ("raw arm sense GPIO (arm
+   relay COM output)"), which is a different signal on a different pin. The
+   display labels were written from those comments.
+3. **The arm relay feedback (GPIO 21) was never transmitted at all.**
+   `arm_sense_get_debounced()` appeared only in three FSM guards and the base's
+   own log.
+4. **The ARMED screen showed "SENSE CONFIRMED" derived from the key switch** —
+   asserting arm-relay confirmation the remote had never received. The base's
+   own interlock was sound (it checks arm sense before entering ARMED), but the
+   display's claim was not derived from it and would have read CONFIRMED with a
+   dead arm-sense circuit.
+5. Stale status rendered identically to "key off" — absence of data displayed as
+   a safety guarantee.
+
+**Fix.** Fields renamed to `base_key_switch` (GPIO 42) and `base_arm_sense`
+(GPIO 21), with the second now carrying the real debounced arm sense. **The
+struct stays 14 bytes** — the redundant raw copy was simply repurposed into the
+field its name already claimed — so `_Static_assert` and the offset self-test are
+unchanged.
+
+**Firmware bumped 1.0.0 → 1.1.0.** The field's *meaning* changed while its size
+did not, so nothing structural would stop a mixed pair from misinterpreting it;
+the strict version gate is the only thing that does, and only if the version
+actually moves.
+
+**Four-state BASE field** on the main status line, per FSD §10.2.2:
+
+| Key | Arm sense | Shown | Colour |
+|---|---|---|---|
+| OFF | LOW | `SAFE` | green |
+| ON | LOW | `READY` | amber |
+| any | HIGH, in ARMED/PRE_FIRE/FIRING | `ARMED` | red |
+| any | HIGH elsewhere, or `ERR_RELAY_FAULT` | `WELD!` | flashing |
+| — | stale | `?` | grey |
+
+`ARMED` and `WELD!` come from the arm sense, never the key. The reasoning: a
+welded relay leaves the fire path live with the key OFF, so a key-driven display
+would print SAFE over an energised igniter circuit. The `WELD!` check also tests
+`base_state` rather than waiting on the base's weld confirm count, so it warns
+earlier than `ERR_RELAY_FAULT` does.
+
+Line renders as `SEL CH 1   BASE READY   REMOTE ARMED` — 36 of the 40 characters
+available at the scale-2 font floor.
+
+**Verified:** host tests T-M01…T-M07 (27 checks), including the welded-relay case
+and a sweep proving the key switch alone can never produce ARMED or WELD! in any
+base state. Both units rebuilt, flashed together and confirmed linked at v1.1.0.
 
 ---
 

@@ -44,7 +44,8 @@ bool arm_sense_get_debounced(void);
 
 /**
  * Get the raw (undebounced) GPIO level.
- * Used for STATUS_UPDATE arm_switch_hw field.
+ * Raw (undebounced) read. Not transmitted; STATUS_UPDATE carries the
+ * debounced value in base_arm_sense.
  *
  * @return true if GPIO reads HIGH, false if LOW
  */

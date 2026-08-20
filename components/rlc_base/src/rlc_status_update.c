@@ -46,17 +46,19 @@ static void send_update(void)
     p.channel_armed_bitmask  = (armed_ch > 0)  ? (1U << (armed_ch - 1))  : 0;
     p.channel_firing_bitmask = (firing_ch > 0) ? (1U << (firing_ch - 1)) : 0;
 
-    /* Key switch state (direct read of key position) */
-    p.base_arm_switch = key_sense_get_debounced() ? 1 : 0;
-    p.arm_switch_hw   = key_sense_get_raw() ? 1 : 0;
+    /* Two distinct signals. Previously both carried the key switch (debounced
+     * and raw), so the remote could never see the arm relay — and the ARMED
+     * screen's "SENSE CONFIRMED" was derived from the key, not the sense. */
+    p.base_key_switch = key_sense_get_debounced() ? 1 : 0;   /* GPIO 42 */
+    p.base_arm_sense  = arm_sense_get_debounced() ? 1 : 0;   /* GPIO 21 */
 
     /* Battery voltage */
     p.battery_voltage_mv = rlc_battery_get_voltage_mv();
 
-    /* State machine state (Phase 2: always IDLE when linked) */
+    /* State machine state */
     p.base_state = base_state_get();
 
-    /* Error flags (Phase 3 will populate real errors) */
+    /* Error flags from the FSM */
     p.error_flags = base_state_get_error_flags();
 
     /* update_sequence is managed by the link manager */

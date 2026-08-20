@@ -496,6 +496,67 @@ static void snapshot(disp_data_t *d)
     rlc_link_get_status(&d->link);
 }
 
+/* ── Base arm state, derived from two distinct signals ────────────
+ *
+ * The key switch (a precondition the operator controls) and the arm sense
+ * (the arm relay COM output — the actual hazard) answer different questions,
+ * so collapsing them into ARMED/SAFE loses the one that matters. In
+ * particular, a welded arm relay leaves the fire path live with the key
+ * turned OFF: keying off the display would print SAFE over an energised
+ * igniter circuit. ARMED is therefore driven by the arm sense, never the key.
+ */
+typedef enum {
+    BASE_ARM_UNKNOWN = 0,   /* no fresh status — never claim SAFE */
+    BASE_ARM_SAFE,          /* key off, fire path dead */
+    BASE_ARM_READY,         /* key turned, path still dead — arming permitted */
+    BASE_ARM_ARMED,         /* arm relay closed, VBAT live on the fire path */
+    BASE_ARM_WELD,          /* sense HIGH while the relay should be de-energised */
+} base_arm_state_t;
+
+static base_arm_state_t base_arm_state(const disp_data_t *d)
+{
+    if (!d->status_fresh) return BASE_ARM_UNKNOWN;
+
+    bool sense = d->status.base_arm_sense != 0;
+    bool key   = d->status.base_key_switch != 0;
+
+    /* The relay is only meant to be energised in the firing path states. Sense
+     * HIGH anywhere else means the contacts are closed when they should not be.
+     * Checked here as well as via ERR_RELAY_FAULT so the warning appears before
+     * the base's own weld confirm count elapses. */
+    uint8_t st = d->status.base_state;
+    bool relay_expected_on = (st == STATE_ARMED || st == STATE_PRE_FIRE ||
+                              st == STATE_FIRING);
+
+    if (d->status.error_flags & ERR_RELAY_FAULT) return BASE_ARM_WELD;
+    if (sense && !relay_expected_on)             return BASE_ARM_WELD;
+    if (sense)                                   return BASE_ARM_ARMED;
+    if (key)                                     return BASE_ARM_READY;
+    return BASE_ARM_SAFE;
+}
+
+static const char *base_arm_label(base_arm_state_t s)
+{
+    switch (s) {
+        case BASE_ARM_SAFE:  return "SAFE";
+        case BASE_ARM_READY: return "READY";
+        case BASE_ARM_ARMED: return "ARMED";
+        case BASE_ARM_WELD:  return "WELD!";
+        default:             return "?";
+    }
+}
+
+static uint32_t base_arm_colour(base_arm_state_t s, bool blink_on)
+{
+    switch (s) {
+        case BASE_ARM_SAFE:  return C_GREEN;
+        case BASE_ARM_READY: return C_AMBER;
+        case BASE_ARM_ARMED: return C_FAULT;
+        case BASE_ARM_WELD:  return blink_on ? C_FAULT : C_WARN;  /* flashing */
+        default:             return C_GREY;
+    }
+}
+
 /* ── Screen: top status bar (shared by MAIN / ARMED / FIRING) ── */
 
 #define BAR_H       50
@@ -656,11 +717,15 @@ static void draw_main_dynamic(const disp_data_t *d)
     snprintf(buf, sizeof(buf), "SEL CH %u", d->selected);
     draw_field(6, y, 8 * CHAR_W(2), buf, 2, C_SELECTED, C_BLACK);
 
-    snprintf(buf, sizeof(buf), "ARM %s  HW %s  KEY %s",
-             (d->status_fresh && d->status.base_arm_switch) ? "ON " : "OFF",
-             (d->status_fresh && d->status.arm_switch_hw)   ? "ON " : "OFF",
-             d->remote_key_armed ? "ARM " : "SAFE");
-    draw_field(120, y, DW - 126, buf, 2, C_WHITE, C_BLACK);
+    /* BASE reflects the fire path, REMOTE the operator's own switch.
+     * "SEL CH 1   BASE READY   REMOTE ARMED" is 36 of the 40 characters
+     * available at the scale-2 font floor. */
+    base_arm_state_t bs = base_arm_state(d);
+    bool weld_blink = ((now_ms() / 400) % 2) == 0;
+    snprintf(buf, sizeof(buf), "BASE %s   REMOTE %s",
+             base_arm_label(bs),
+             d->remote_key_armed ? "ARMED" : "SAFE");
+    draw_field(120, y, DW - 126, buf, 2, base_arm_colour(bs, weld_blink), C_BLACK);
 
     if (d->status_fresh && d->status.error_flags) {
         /* Name the fault rather than making the operator decode a bitmask.
@@ -722,10 +787,14 @@ static void draw_armed_dynamic(const disp_data_t *d, bool blink_on)
 
     draw_text_centred(BOX_Y + 140, "HOLD FIRE TO LAUNCH", 2, C_WHITE);
 
-    snprintf(buf, sizeof(buf), "SENSE %s  KEY %s",
-             (d->status_fresh && d->status.base_arm_switch) ? "CONFIRMED" : "OFF",
+    /* This line used to read "SENSE CONFIRMED" from the KEY switch, asserting
+     * arm-relay confirmation the remote had never been sent. It now comes from
+     * the real arm sense, so NOT CONFIRMED means the relay has not verified. */
+    bool sense_ok = d->status_fresh && d->status.base_arm_sense;
+    snprintf(buf, sizeof(buf), "ARM SENSE %s   REMOTE %s",
+             sense_ok ? "OK" : (d->status_fresh ? "NOT OK" : "?"),
              d->remote_key_armed ? "ARMED" : "SAFE");
-    draw_text_centred_bg(DH - 26, buf, 2, C_WHITE, C_BLACK);
+    draw_text_centred_bg(DH - 26, buf, 2, sense_ok ? C_GREEN : C_FAULT, C_BLACK);
 }
 
 /* ── Screen: PRE_FIRE / FIRING — FSD §10.2.4 ──────────────────── */
