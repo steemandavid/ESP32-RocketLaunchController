@@ -301,10 +301,20 @@ int rlc_rgb_led_init(void)
     led_strip_clear(s_led_strip);
     led_strip_refresh(s_led_strip);
 
+    /* 5.14: allocation failures are fatal for the LED — surface them instead
+     * of returning success with a NULL mutex (later set_pattern calls would
+     * block forever) and no render task. */
     s_pattern_mutex = xSemaphoreCreateMutex();
+    if (!s_pattern_mutex) {
+        ESP_LOGE(TAG, "pattern mutex alloc failed");
+        return -1;
+    }
 
     /* FSD §9.10: rgb_led_task runs at priority 1 (lowest) */
-    xTaskCreate(led_task, "led_task", 2048, NULL, 1, &s_led_task);
+    if (xTaskCreate(led_task, "led_task", 2048, NULL, 1, &s_led_task) != pdPASS) {
+        ESP_LOGE(TAG, "led task create failed");
+        return -1;
+    }
 
     ESP_LOGI(TAG, "RGB LED initialised on GPIO %d (%d pixels)", PIN_RGB_LED, s_pixel_count);
     return 0;

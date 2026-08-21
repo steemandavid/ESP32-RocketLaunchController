@@ -38,30 +38,41 @@ bool rlc_debounce_update(rlc_debounce_t *db, int raw_level,
     }
 
     uint16_t masked = db->shift_reg & mask;
-    bool changed = false;
+    bool changed  = false;
+    bool initial  = false;
 
     if (masked == all_low) {
         /* Stably LOW = active (pressed / continuity OK / armed) */
-        if (!db->stable_state || !db->initialised) {
+        if (!db->initialised) {
             db->stable_state = true;
             db->initialised  = true;
+            initial = true;
+        } else if (!db->stable_state) {
+            db->stable_state = true;
             changed = true;
         }
     } else if (masked == all_high) {
         /* Stably HIGH = inactive (released / no continuity / disarmed) */
-        if (db->stable_state || !db->initialised) {
+        if (!db->initialised) {
             db->stable_state = false;
             db->initialised  = true;
+            initial = true;
+        } else if (db->stable_state) {
+            db->stable_state = false;
             changed = true;
         }
     }
     /* Else: in transition — retain previous state */
 
+    /* The first stable reading establishes the starting state — it is not a
+     * transition. Without this guard every input produced a spurious
+     * "released" callback on the very first poll, because the register is
+     * seeded all-HIGH in rlc_debounce_init. */
     if (changed && cb) {
         cb(db->gpio_num, db->stable_state, user_data);
     }
 
-    return changed;
+    return changed || initial;
 }
 
 bool rlc_debounce_get_state(const rlc_debounce_t *db)

@@ -12,6 +12,10 @@
 /**
  * Callback for encoder rotation.
  *
+ * Called in INTERRUPT context from the quadrature ISR (encoder_isr in
+ * rlc_encoder.c): keep it short, IRAM-safe, and never block. The registered
+ * application handler posts to the FSM queue with xQueueSendFromISR.
+ *
  * @param channel  New selected channel (1–8)
  */
 typedef void (*rlc_encoder_rotate_cb_t)(uint8_t channel);

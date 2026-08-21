@@ -11,6 +11,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 
 static const char *TAG = "rlc_buzzer";
 
@@ -44,6 +45,10 @@ static void play_steps(const buzzer_step_t *steps, int count, bool repeat)
                 return;
             }
         }
+        /* 5.10: repeating alarms (LINK_LOST/CRITICAL) loop here until a new
+         * pattern arrives — feed the TWDT each cycle so a hung buzzer task
+         * is still caught while a working one is not. */
+        esp_task_wdt_reset();
     } while (repeat);
 
     buzzer_drive(false);
@@ -52,10 +57,13 @@ static void play_steps(const buzzer_step_t *steps, int count, bool repeat)
 static void buzzer_task(void *arg)
 {
     (void)arg;
+    /* 5.10: TWDT coverage — a hung buzzer task previously went undetected.
+     * Timed (not portMAX_DELAY) queue wait so the idle task still feeds. */
+    esp_task_wdt_add(NULL);
     rlc_buzzer_pattern_t pattern;
 
     while (1) {
-        if (xQueueReceive(s_pattern_queue, &pattern, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(s_pattern_queue, &pattern, pdMS_TO_TICKS(1000)) == pdTRUE) {
             switch (pattern) {
                 case BUZZER_BEEP_SHORT: {
                     buzzer_step_t steps[] = {{100, true}};
@@ -110,6 +118,7 @@ static void buzzer_task(void *arg)
                     break;
             }
         }
+        esp_task_wdt_reset();
     }
 }
 
@@ -126,7 +135,14 @@ void buzzer_init(void)
     buzzer_drive(false);
 
     s_pattern_queue = xQueueCreate(4, sizeof(rlc_buzzer_pattern_t));
-    xTaskCreate(buzzer_task, "buzzer_task", 2048, NULL, 5, &s_buzzer_task);
+    if (!s_pattern_queue) {
+        ESP_LOGE(TAG, "pattern queue alloc failed");
+        return;
+    }
+    if (xTaskCreate(buzzer_task, "buzzer_task", 2048, NULL, 5,
+                    &s_buzzer_task) != pdPASS) {
+        ESP_LOGE(TAG, "buzzer task create failed");
+    }
 
     ESP_LOGI(TAG, "Buzzer initialised on GPIO %d", PIN_BUZZER);
 }

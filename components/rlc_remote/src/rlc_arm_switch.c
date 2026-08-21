@@ -68,6 +68,8 @@ static void arm_switch_task(void *arg)
 {
     (void)arg;
 
+    esp_task_wdt_add(NULL);   /* 5.11: self-register (see rlc_base_battery.c) */
+
     ESP_LOGI(TAG, "task started");
 
     while (1) {
@@ -108,7 +110,8 @@ void arm_switch_init(void)
     /* Initialise debounce engine — 16-bit (160 ms at 10 ms polling) */
     rlc_debounce_init(&s_db, PIN_ARM_SWITCH, DEBOUNCE_16BIT);
 
-    /* Pre-read the GPIO so the LED reflects the current state on first poll */
+    /* LED off until the debouncer establishes the initial state (first poll);
+     * the initial determination fires no callback (see rlc_debounce.c). */
     s_armed = false;
     set_arm_led(false);
 
@@ -127,8 +130,6 @@ void arm_switch_start_task(void)
         0   /* Core 0 */
     );
 
-    /* Register with the task watchdog */
-    rlc_watchdog_add_task(s_task_handle);
 }
 
 bool arm_switch_is_armed(void)

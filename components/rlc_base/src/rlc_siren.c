@@ -10,11 +10,30 @@
 #include "esp_timer.h"
 #include "esp_log.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 static const char *TAG = "rlc_siren";
 
 static esp_timer_handle_t s_siren_timer = NULL;
 static bool s_siren_on = false;
 static int s_pulse_count = 0;   /* -1 = infinite, >0 = remaining cycles */
+
+/* 5.4: the esp_timer callback (esp_timer task context) races the FSM-task
+ * start/stop calls on s_siren_on/s_pulse_count — a toggle interleaved with
+ * siren_off() leaves the siren stuck ON. All pattern state is mutated under
+ * this mutex. A mutex (not a critical section) because the guarded sections
+ * call esp_timer_start/stop, which may not run with interrupts disabled. */
+static SemaphoreHandle_t s_siren_mu = NULL;
+
+static void siren_lock(void)
+{
+    if (s_siren_mu) xSemaphoreTake(s_siren_mu, portMAX_DELAY);
+}
+static void siren_unlock(void)
+{
+    if (s_siren_mu) xSemaphoreGive(s_siren_mu);
+}
 
 static inline void siren_drive(bool on)
 {
@@ -25,9 +44,11 @@ static inline void siren_drive(bool on)
 
 static void siren_timer_cb(void *arg)
 {
+    siren_lock();
     if (s_pulse_count == 0) {
         siren_drive(false);
         esp_timer_stop(s_siren_timer);
+        siren_unlock();
         return;
     }
 
@@ -38,6 +59,7 @@ static void siren_timer_cb(void *arg)
         /* Just turned off — count one complete cycle */
         s_pulse_count--;
     }
+    siren_unlock();
 }
 
 void siren_init(void)
@@ -52,6 +74,8 @@ void siren_init(void)
     gpio_config(&cfg);
     siren_drive(false);
 
+    s_siren_mu = xSemaphoreCreateMutex();
+
     esp_timer_create_args_t timer_args = {
         .callback = siren_timer_cb,
         .name     = "siren_pulse",
@@ -63,37 +87,47 @@ void siren_init(void)
 
 void siren_start_pulse(void)
 {
+    siren_lock();
     esp_timer_stop(s_siren_timer);
     s_pulse_count = -1;  /* Infinite */
     siren_drive(true);
     esp_timer_start_periodic(s_siren_timer, 500 * 1000);  /* 500 ms */
+    siren_unlock();
 }
 
 void siren_start_continuous(void)
 {
+    siren_lock();
     esp_timer_stop(s_siren_timer);
     s_pulse_count = 0;
     siren_drive(true);
+    siren_unlock();
 }
 
 void siren_start_link_lost(void)
 {
+    siren_lock();
     esp_timer_stop(s_siren_timer);
     s_pulse_count = 4;  /* 4 cycles */
     siren_drive(true);
     esp_timer_start_periodic(s_siren_timer, 500 * 1000);  /* 500 ms on/off */
+    siren_unlock();
 }
 
 void siren_off(void)
 {
+    siren_lock();
     esp_timer_stop(s_siren_timer);
     siren_drive(false);
+    siren_unlock();
 }
 
 void siren_start_error(void)
 {
+    siren_lock();
     esp_timer_stop(s_siren_timer);
     s_pulse_count = 3;  /* 3 short blasts */
     siren_drive(true);
     esp_timer_start_periodic(s_siren_timer, 200 * 1000);  /* 200 ms on/off */
+    siren_unlock();
 }

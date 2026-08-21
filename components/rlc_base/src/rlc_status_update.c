@@ -68,6 +68,7 @@ static void send_update(void)
 static void status_update_task(void *arg)
 {
     (void)arg;
+    esp_task_wdt_add(NULL);   /* 5.11: self-register (see rlc_base_battery.c) */
     int64_t last_send_ms = 0;
 
     while (1) {
@@ -95,8 +96,6 @@ void status_update_init(void)
 
 void status_update_start_task(void)
 {
-    TaskHandle_t handle;
-    xTaskCreatePinnedToCore(status_update_task, "stupd_task", 4096, NULL, 3, &handle, 0);
-    rlc_watchdog_add_task(handle);
+    xTaskCreatePinnedToCore(status_update_task, "stupd_task", 4096, NULL, 3, NULL, 0);
     ESP_LOGI(TAG, "status update task started (prio 3, core 0)");
 }

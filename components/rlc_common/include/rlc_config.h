@@ -33,6 +33,9 @@
 
 #define PRE_FIRE_DELAY_MS              2000
 #define FIRE_PULSE_DURATION_MS         1000
+/* 4.5: grace beyond the pulse duration before the FSM's max-duration
+ * backstop fires (GPTimer notification normally arrives within ms). */
+#define FIRE_PULSE_BACKSTOP_MARGIN_MS  250
 #define POST_FIRE_COOLDOWN_MS          2000
 
 #define ARM_TIMEOUT_MS                 10000
@@ -218,7 +221,7 @@
  * and a 1.5-1.9 ohm igniter differ by 1-1.6 mV, and three experiments on one
  * fixed igniter returned 0.77 / 1.15 / 1.77 ohm. */
 #define CONT_SHORT_UV                  500     /* unused */
-#define CONT_MARGINAL_UV               66000   /* Above = MARGINAL (> ~20 Ω) */
+#define CONT_MARGINAL_UV               66000   /* Above = MARGINAL (> ~67 Ω at 1 mA) */
 /* 432000 uV is what 500 ohm produces through the 3.3k/100k divider, so this is
  * the ">500 ohm" boundary FSD §5.4.2 documents. It previously sat at 1500000
  * uV — ~2828 ohm, not 500 — and is unreachable at 0 dB attenuation anyway.

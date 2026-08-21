@@ -19,12 +19,6 @@ uint8_t base_state_get_armed_channel(void)
     return base_fsm_get_armed_channel();
 }
 
-uint16_t base_state_get_continuity(void)
-{
-    /* Continuity is managed by rlc_continuity module, not FSM */
-    return 0;  /* Caller should use continuity_get_bands() directly */
-}
-
 uint8_t base_state_get_error_flags(void)
 {
     return base_fsm_get_error_flags();

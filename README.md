@@ -69,7 +69,7 @@ link is refused.
 | Path | Contents |
 |---|---|
 | `main/` | Entry point; dispatches to base or remote `app_main` by Kconfig |
-| `components/rlc_common/` | ESP-NOW wrapper, link manager, message/CRC layer, battery ADC, debounce, RGB LED, watchdog, self-tests |
+| `components/rlc_common/` | ESP-NOW wrapper, link manager, message/CRC layer, battery ADC, debounce, continuity classifier, base arm-state derivation, RGB LED, watchdog, self-tests |
 | `components/rlc_base/` | Base FSM, relays, continuity, key/arm sense, siren |
 | `components/rlc_remote/` | Remote FSM, encoder, fire button, arm switch, buzzer, ILI9488 display |
 | `rlc-hw-test-base/`, `rlc-hw-test-remote/` | Standalone hardware bring-up firmware with a serial CLI |

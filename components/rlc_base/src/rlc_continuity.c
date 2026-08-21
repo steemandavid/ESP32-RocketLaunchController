@@ -2,7 +2,7 @@
  * RLC Continuity Sensing Module (Base Unit)
  *
  * 8-channel ADC1 continuity monitoring with 64-sample burst oversampling,
- * 4-band classification (SHORT/GOOD/MARGINAL/OPEN) with hysteresis.
+ * three-band classification (CONNECTED/MARGINAL/OPEN) with hysteresis.
  *
  * FSD §5.4.2: Each channel uses the SPDT relay NC contact to route the
  * igniter to the sense circuit when de-energised. ADC pins: GPIO 2,10,4-9.
@@ -12,6 +12,7 @@
  */
 
 #include "rlc_continuity.h"
+#include "rlc_continuity_class.h"
 #include "rlc_battery.h"
 #include "rlc_config.h"
 #include "rlc_watchdog.h"
@@ -36,6 +37,11 @@ static const int s_gpio[NUM_CHANNELS] = {
 
 static adc_channel_t s_adc_chan[NUM_CHANNELS];
 static adc_cali_handle_t s_cali_handles[NUM_CHANNELS];
+/* 2.3: true only for channels whose GPIO mapped to ADC1 and whose channel
+ * config succeeded in continuity_init(). Unconfigured channels are never
+ * sampled — adc_oneshot_read on a stale s_adc_chan[] entry would silently
+ * sample the wrong ADC input. */
+static bool s_chan_configured[NUM_CHANNELS] = { false };
 
 /* ── Per-channel state ─────────────────────────────────────────── */
 
@@ -55,65 +61,30 @@ static volatile int32_t s_raw[NUM_CHANNELS] = { 0 };   /* pre-calibration counts
 /* Callback on band change */
 static void (*s_on_change_cb)(void) = NULL;
 
-/* ── Band classification with hysteresis (FSD §5.4.2, §14.5) ─── */
+/* ── Band classification ───────────────────────────────────────── */
 
-/* Three bands only. SHORT was merged into CONNECTED on 2026-08-21 — see the
- * rlc_continuity_band_t comment: the distinction is below the measurement
- * floor at the specified 1 mA test current, so reporting it would be
- * guessing. CONT_SHORT_UV is consequently unused. */
-static rlc_continuity_band_t classify_initial(int32_t uv)
-{
-    /* First reading — simple thresholds, no hysteresis */
-    if (uv < CONT_MARGINAL_UV)   return CONT_CONNECTED;
-    if (uv < CONT_OPEN_UV)       return CONT_MARGINAL;
-    return CONT_OPEN;
-}
-
-static rlc_continuity_band_t classify_with_hysteresis(int32_t uv,
-                                                       rlc_continuity_band_t current)
-{
-    switch (current) {
-    case CONT_CONNECTED:
-        /* Up to MARGINAL? */
-        if (uv > CONT_MARGINAL_UV + CONT_HYSTERESIS_MARGINAL_UV) {
-            if (uv < CONT_OPEN_UV) return CONT_MARGINAL;
-            return CONT_OPEN;
-        }
-        return CONT_CONNECTED;
-
-    case CONT_MARGINAL:
-        /* Down to CONNECTED? */
-        if (uv < CONT_MARGINAL_UV - CONT_HYSTERESIS_MARGINAL_UV)
-            return CONT_CONNECTED;
-        /* Up to OPEN? */
-        if (uv > CONT_OPEN_UV + CONT_HYSTERESIS_OPEN_UV)
-            return CONT_OPEN;
-        return CONT_MARGINAL;
-
-    case CONT_OPEN:
-        /* Stay OPEN unless the reading drops below boundary - hysteresis */
-        if (uv < CONT_OPEN_UV - CONT_HYSTERESIS_OPEN_UV) {
-            if (uv < CONT_MARGINAL_UV) return CONT_CONNECTED;
-            return CONT_MARGINAL;
-        }
-        return CONT_OPEN;
-
-    case CONT_SHORT:
-        /* Deprecated band — a unit that booted before the merge, or a stale
-         * cached value, is folded into the current scheme on first update. */
-        return classify_initial(uv);
-    }
-    return classify_initial(uv);
-}
+/* The classifier lives in rlc_common (rlc_continuity_class.c) so the boot
+ * self-test exercises the production functions rather than a copy
+ * (Phase-2 M2 / review 2.5). */
 
 /* ── ADC burst sampling ────────────────────────────────────────── */
 
+/* 2.3: sentinel returned by sample_channel() when the channel is not
+ * configurable or the ADC read fails. A real reading is always >= 0, so -1
+ * is unambiguous. The task fails safe to CONT_OPEN on this value — uv = 0
+ * would classify as CONNECTED, the only arming-permitting band, i.e. the
+ * exact opposite of the safe direction. */
+#define CONT_SAMPLE_FAILED (-1)
+
 static int32_t sample_channel(int ch_idx)
 {
+    if (!s_chan_configured[ch_idx]) {
+        return CONT_SAMPLE_FAILED;
+    }
+
     adc_oneshot_unit_handle_t adc_handle = rlc_battery_get_adc_handle();
     if (adc_handle == NULL) {
-        ESP_LOGE(TAG, "ADC handle not available");
-        return 0;
+        return CONT_SAMPLE_FAILED;
     }
 
     int32_t sum = 0;
@@ -121,8 +92,7 @@ static int32_t sample_channel(int ch_idx)
         int raw = 0;
         esp_err_t ret = adc_oneshot_read(adc_handle, s_adc_chan[ch_idx], &raw);
         if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "ADC read failed on ch%d (GPIO %d)", ch_idx + 1, s_gpio[ch_idx]);
-            return 0;
+            return CONT_SAMPLE_FAILED;
         }
         sum += raw;
     }
@@ -150,34 +120,70 @@ static int32_t sample_channel(int ch_idx)
 
 /* ── Continuity task ───────────────────────────────────────────── */
 
+/* 2.3: latched per-channel ADC-failure state. Log once on entering failure
+ * and once on recovery — a persistent failure fires every 100 ms per
+ * channel and would otherwise drown the log. */
+static bool s_adc_failed[NUM_CHANNELS] = { false };
+
 static void continuity_task(void *arg)
 {
     (void)arg;
+    esp_task_wdt_add(NULL);   /* 5.11: self-register (see rlc_base_battery.c) */
     int current_ch = 0;
 
     ESP_LOGI(TAG, "continuity task started — sampling %d channels", NUM_CHANNELS);
 
     while (1) {
         int32_t uv = sample_channel(current_ch);
-        rlc_continuity_band_t new_band;
 
-        s_uv[current_ch] = uv;
-
-        if (!s_band_initialized[current_ch]) {
-            new_band = classify_initial(uv);
-            s_band_initialized[current_ch] = true;
+        if (uv == CONT_SAMPLE_FAILED) {
+            /* 2.3: fail safe. Classify OPEN directly — never run the
+             * classifier on a fabricated reading, and never let hysteresis
+             * hold a stale CONNECTED band across an ADC failure (guard 2
+             * blocks arming on OPEN only). */
+            if (!s_adc_failed[current_ch]) {
+                ESP_LOGE(TAG, "ch%d (GPIO %d): ADC read failed — failing safe to OPEN",
+                         current_ch + 1, s_gpio[current_ch]);
+                s_adc_failed[current_ch] = true;
+            }
+            s_uv[current_ch] = 0;
+            if (s_bands[current_ch] != CONT_OPEN) {
+                s_bands[current_ch] = CONT_OPEN;
+                if (s_on_change_cb) {
+                    s_on_change_cb();
+                }
+            }
         } else {
-            new_band = classify_with_hysteresis(uv, s_bands[current_ch]);
-        }
+            rlc_continuity_band_t new_band;
 
-        if (new_band != s_bands[current_ch]) {
-            ESP_LOGI(TAG, "ch%d: band %d -> %d (%ld uV)", current_ch + 1,
-                     s_bands[current_ch], new_band, uv);
-            s_bands[current_ch] = new_band;
+            if (s_adc_failed[current_ch]) {
+                ESP_LOGW(TAG, "ch%d: ADC recovered — re-initialising band",
+                         current_ch + 1);
+                s_adc_failed[current_ch] = false;
+                /* Restart classification from a clean read; a band held at
+                 * OPEN through the failure must not need hysteresis margins
+                 * to leave OPEN once readings are real again. */
+                s_band_initialized[current_ch] = false;
+            }
 
-            /* Notify status update task */
-            if (s_on_change_cb) {
-                s_on_change_cb();
+            s_uv[current_ch] = uv;
+
+            if (!s_band_initialized[current_ch]) {
+                new_band = rlc_continuity_classify_initial(uv);
+                s_band_initialized[current_ch] = true;
+            } else {
+                new_band = rlc_continuity_classify_hysteresis(uv, s_bands[current_ch]);
+            }
+
+            if (new_band != s_bands[current_ch]) {
+                ESP_LOGI(TAG, "ch%d: band %d -> %d (%ld uV)", current_ch + 1,
+                         s_bands[current_ch], new_band, (long)uv);
+                s_bands[current_ch] = new_band;
+
+                /* Notify status update task */
+                if (s_on_change_cb) {
+                    s_on_change_cb();
+                }
             }
         }
 
@@ -218,6 +224,9 @@ void continuity_init(void)
             continue;
         }
 
+        /* 2.3: only now is s_adc_chan[i] guaranteed to mean what it says. */
+        s_chan_configured[i] = true;
+
         /* Calibration re-enabled 2026-08-21 (bug #26). It had been disabled
          * with a note that curve fitting produced corrupted handles and
          * LoadProhibited panics, and that "raw conversion is sufficient
@@ -250,17 +259,15 @@ void continuity_init(void)
 
 void continuity_start_task(void)
 {
-    TaskHandle_t handle;
     xTaskCreatePinnedToCore(
         continuity_task,
         "continuity_task",
         4096,
         NULL,
         5,              /* Priority 5 (FSD §9.10) */
-        &handle,
+        NULL,
         0               /* Core 0 */
     );
-    rlc_watchdog_add_task(handle);
     ESP_LOGI(TAG, "task started (prio 5, core 0, 4096 stack)");
 }
 

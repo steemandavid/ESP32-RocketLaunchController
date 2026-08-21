@@ -22,11 +22,16 @@
 
 static const char *TAG = "rlc_rbat";
 
-static rlc_battery_status_t s_status = BATTERY_OK;
+/* 5.13: priority boost during the ADC read (see battery_task). Must stay
+ * below configMAX_PRIORITIES — enforced at compile time. */
+#define BATTERY_ADC_BOOST_PRIO  24
+_Static_assert(BATTERY_ADC_BOOST_PRIO < configMAX_PRIORITIES,
+               "ADC boost priority exceeds configMAX_PRIORITIES");
 
 static void battery_task(void *arg)
 {
     (void)arg;
+    esp_task_wdt_add(NULL);   /* 5.11: self-register (see rlc_base_battery.c) */
     bool critical_posted = false;  /* edge-trigger */
 
     /* Delay first read until WiFi/ESP-NOW init completes. The ADC driver
@@ -44,19 +49,19 @@ static void battery_task(void *arg)
          * The ESP-IDF ADC driver uses a newlib lock (semaphore without
          * priority inheritance) shared between ADC1 and ADC2. */
         int orig_prio = uxTaskPriorityGet(NULL);
-        vTaskPrioritySet(NULL, 24);
+        vTaskPrioritySet(NULL, BATTERY_ADC_BOOST_PRIO);
         uint16_t mv = rlc_battery_sample();
         vTaskPrioritySet(NULL, orig_prio);
 
         /* Three-threshold check (FSD §8.3.4) */
-        s_status = rlc_battery_check(REMOTE_VBAT_MIN_ARM_MV,
-                                     REMOTE_VBAT_MIN_OPERATE_MV,
-                                     REMOTE_VBAT_CRITICAL_MV);
+        rlc_battery_status_t st = rlc_battery_check(REMOTE_VBAT_MIN_ARM_MV,
+                                                    REMOTE_VBAT_MIN_OPERATE_MV,
+                                                    REMOTE_VBAT_CRITICAL_MV);
 
         /* Update link manager so battery goes out in PING payload */
         rlc_link_set_remote_battery_mv(mv);
 
-        if (s_status == BATTERY_CRITICAL) {
+        if (st == BATTERY_CRITICAL) {
             ESP_LOGW(TAG, "CRITICAL battery: %u mV (< %u)", mv, REMOTE_VBAT_CRITICAL_MV);
             /* R8: post EVT_BATTERY_CRITICAL on first entry into critical band
              * (FSD §8.3.4). Edge-triggered to avoid queue spam. */
@@ -67,10 +72,10 @@ static void battery_task(void *arg)
                     critical_posted = true;
                 }
             }
-        } else if (s_status == BATTERY_LOW) {
+        } else if (st == BATTERY_LOW) {
             ESP_LOGW(TAG, "LOW battery: %u mV (< %u)", mv, REMOTE_VBAT_MIN_ARM_MV);
             critical_posted = false;
-        } else if (s_status == BATTERY_WARNING) {
+        } else if (st == BATTERY_WARNING) {
             ESP_LOGW(TAG, "WARNING battery: %u mV (< %u)", mv, REMOTE_VBAT_MIN_OPERATE_MV);
             critical_posted = false;
         } else {
@@ -84,13 +89,10 @@ static void battery_task(void *arg)
 
 void remote_battery_start_task(void)
 {
-    TaskHandle_t handle;
-    xTaskCreatePinnedToCore(battery_task, "battery_task", 4096, NULL, 3, &handle, 0);
-    rlc_watchdog_add_task(handle);
+    if (xTaskCreatePinnedToCore(battery_task, "battery_task", 4096, NULL, 3,
+                                NULL, 0) != pdPASS) {
+        ESP_LOGE(TAG, "battery task create failed");
+        return;
+    }
     ESP_LOGI(TAG, "remote battery task started (prio 3, core 0)");
-}
-
-rlc_battery_status_t remote_battery_get_status(void)
-{
-    return s_status;
 }

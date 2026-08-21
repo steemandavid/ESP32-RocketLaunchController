@@ -21,6 +21,7 @@
 #include "rlc_link.h"
 #include "rlc_config.h"
 #include "rlc_protocol.h"
+#include "rlc_arm_state.h"
 #include "rlc_version.h"
 #include "pin_config.h"
 
@@ -29,6 +30,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -494,42 +496,10 @@ static void snapshot(disp_data_t *d)
 
 /* ── Base arm state, derived from two distinct signals ────────────
  *
- * The key switch (a precondition the operator controls) and the arm sense
- * (the arm relay COM output — the actual hazard) answer different questions,
- * so collapsing them into ARMED/SAFE loses the one that matters. In
- * particular, a welded arm relay leaves the fire path live with the key
- * turned OFF: keying off the display would print SAFE over an energised
- * igniter circuit. ARMED is therefore driven by the arm sense, never the key.
+ * The derivation itself lives in rlc_common (rlc_arm_state.c) so the host
+ * tests compile the real source. See the header for why ARMED/WELD key off
+ * the arm sense, never the key switch.
  */
-typedef enum {
-    BASE_ARM_UNKNOWN = 0,   /* no fresh status — never claim SAFE */
-    BASE_ARM_SAFE,          /* key off, fire path dead */
-    BASE_ARM_READY,         /* key turned, path still dead — arming permitted */
-    BASE_ARM_ARMED,         /* arm relay closed, VBAT live on the fire path */
-    BASE_ARM_WELD,          /* sense HIGH while the relay should be de-energised */
-} base_arm_state_t;
-
-static base_arm_state_t base_arm_state(const disp_data_t *d)
-{
-    if (!d->status_fresh) return BASE_ARM_UNKNOWN;
-
-    bool sense = d->status.base_arm_sense != 0;
-    bool key   = d->status.base_key_switch != 0;
-
-    /* The relay is only meant to be energised in the firing path states. Sense
-     * HIGH anywhere else means the contacts are closed when they should not be.
-     * Checked here as well as via ERR_RELAY_FAULT so the warning appears before
-     * the base's own weld confirm count elapses. */
-    uint8_t st = d->status.base_state;
-    bool relay_expected_on = (st == STATE_ARMED || st == STATE_PRE_FIRE ||
-                              st == STATE_FIRING);
-
-    if (d->status.error_flags & ERR_RELAY_FAULT) return BASE_ARM_WELD;
-    if (sense && !relay_expected_on)             return BASE_ARM_WELD;
-    if (sense)                                   return BASE_ARM_ARMED;
-    if (key)                                     return BASE_ARM_READY;
-    return BASE_ARM_SAFE;
-}
 
 static const char *base_arm_label(base_arm_state_t s)
 {
@@ -715,7 +685,7 @@ static void draw_main_dynamic(const disp_data_t *d)
     /* BASE reflects the fire path, REMOTE the operator's own switch.
      * "SEL CH 1   BASE READY   REMOTE ARMED" is 36 of the 40 characters
      * available at the scale-2 font floor. */
-    base_arm_state_t bs = base_arm_state(d);
+    base_arm_state_t bs = rlc_base_arm_state(&d->status, d->status_fresh);
     bool weld_blink = ((now_ms() / 400) % 2) == 0;
     snprintf(buf, sizeof(buf), "BASE %s   REMOTE %s",
              base_arm_label(bs),
@@ -1021,6 +991,10 @@ static screen_t screen_for_state(const disp_data_t *d)
 static void display_task(void *arg)
 {
     (void)arg;
+    /* 5.10: TWDT coverage — a hung SPI transaction previously froze the
+     * last-rendered screen ("ARMED"/"PRE-FIRE") forever with no reset. The
+     * loop wakes every DISPLAY_FRAME_MS, so a healthy task feeds easily. */
+    esp_task_wdt_add(NULL);
     ESP_LOGI(TAG, "display task started (prio 2, core 1)");
 
     screen_t current = SCR_NONE;
@@ -1131,6 +1105,7 @@ static void display_task(void *arg)
 
         flush();
         frame++;
+        esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(DISPLAY_FRAME_MS));
     }
 }
@@ -1300,8 +1275,6 @@ void display_firmware_mismatch(const uint8_t *base_ver, const uint8_t *remote_ve
 /* The task derives IDLE/ARMED/FIRING/LINK_LOST from the FSM state, so these
  * remain as call sites for the FSM (and for logging) without duplicating the
  * selection logic. */
-void display_main_status(void) { }
-
 void display_armed(uint8_t channel)
 {
     ESP_LOGI(TAG, "[ARMED] channel %u", channel);

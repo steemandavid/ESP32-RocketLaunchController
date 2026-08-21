@@ -24,13 +24,11 @@ void fire_button_start_task(void);
  */
 bool fire_button_is_pressed(void);
 
-/**
- * Return true once per fresh press transition, then clear.
- *
- * A button that is held at boot does NOT generate a fresh press
- * until it has been released first (safety interlock).
- */
-bool fire_button_was_fresh_press(void);
+/* Fresh-press interlock (FSD 5.5.3): provided by edge-triggered press
+ * events — a callback fires only on a released->pressed transition, so a
+ * button held at power-on cannot produce a press event until released.
+ * The former fire_button_was_fresh_press() polling API was dead code
+ * (review 4.12) and has been removed. */
 
 /**
  * Register optional callbacks for press / release events.

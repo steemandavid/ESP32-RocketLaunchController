@@ -21,11 +21,6 @@ rlc_state_t base_state_get(void);
 uint8_t base_state_get_armed_channel(void);
 
 /**
- * Get current continuity bands (deprecated — use continuity_get_bands()).
- */
-uint16_t base_state_get_continuity(void);
-
-/**
  * Get current error flags.
  */
 uint8_t base_state_get_error_flags(void);

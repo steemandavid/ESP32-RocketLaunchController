@@ -127,11 +127,17 @@ static void on_key_debounce_change(int gpio_num, bool new_state, void *user_data
 #define WELD_CONFIRM_COUNT  3
 static int s_weld_high_count = 0;
 
+/* 5.5: latch so the fault fires once per condition. Without it the callback
+ * re-fires every 500 ms for as long as the weld persists — permanent log and
+ * event spam in terminal ERROR. Cleared only when the condition clears. */
+static bool s_weld_latched = false;
+
 static void weld_check(void)
 {
     /* Only check when arm relay is intentionally OFF */
     if (arm_relay_get_intended()) {
         s_weld_high_count = 0;
+        s_weld_latched = false;
         return;
     }
 
@@ -139,14 +145,18 @@ static void weld_check(void)
     if (arm_sense_get_debounced()) {
         s_weld_high_count++;
         if (s_weld_high_count >= WELD_CONFIRM_COUNT) {
-            ESP_LOGE(TAG, "CONTACT WELD DETECTED: relay OFF but sense debounced HIGH (%d consecutive)",
-                     s_weld_high_count);
-            if (s_on_fault_cb) {
-                s_on_fault_cb();
+            if (!s_weld_latched) {
+                s_weld_latched = true;
+                ESP_LOGE(TAG, "CONTACT WELD DETECTED: relay OFF but sense debounced HIGH (%d consecutive)",
+                         s_weld_high_count);
+                if (s_on_fault_cb) {
+                    s_on_fault_cb();
+                }
             }
         }
     } else {
         s_weld_high_count = 0;
+        s_weld_latched = false;
     }
 }
 
@@ -155,6 +165,8 @@ static void weld_check(void)
 static void arm_sense_task(void *arg)
 {
     (void)arg;
+
+    esp_task_wdt_add(NULL);   /* 5.11: self-register (see rlc_base_battery.c) */
 
     ESP_LOGI(TAG, "task started");
 
@@ -242,9 +254,6 @@ void arm_sense_start_task(void)
         &s_task_handle,
         0               /* Core 0 */
     );
-
-    /* Register with the task watchdog */
-    rlc_watchdog_add_task(s_task_handle);
 }
 
 bool arm_sense_get_debounced(void)

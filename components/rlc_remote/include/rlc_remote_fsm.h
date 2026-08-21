@@ -54,21 +54,6 @@ uint8_t remote_fsm_get_selected_channel(void);
 uint8_t remote_fsm_get_armed_channel(void);
 
 /**
- * Get the armed channel as volatile read (for fire-repeat task).
- */
-volatile uint8_t *remote_fsm_get_armed_channel_ptr(void);
-
-/**
- * Check if fire-repeat should be active (PRE_FIRE or FIRING state).
- */
-bool remote_fsm_is_fire_repeat_active(void);
-
-/**
- * Notify the FSM to stop fire repeat.
- */
-void remote_fsm_stop_fire_repeat(void);
-
-/**
  * Snapshot the most recent STATUS_UPDATE received from the base.
  * Used by the display task (FSD §10.2.2 — continuity grid, base battery,
  * arm sense). The copy is taken under the FSM's status mutex.

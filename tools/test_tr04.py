@@ -124,13 +124,17 @@ def main():
     if saw_arm_activity and saw_link_lost:
         print("\n  ** PASS ** : Remote entered LINK_LOST when base disappeared.")
         print("  wait_for_ack correctly processed EVT_LINK_LOST via sentinel (R1).")
+        sys.exit(0)
     elif saw_link_lost and not saw_arm_activity:
         print("\n  ** PASS (no arm) ** : Link loss detected. But no arm was attempted.")
         print("  Re-run with arm attempt for full R1 verification.")
+        sys.exit(0)
     elif saw_arm_activity and not saw_link_lost:
         print("\n  ** FAIL ** : Arm attempted but remote did NOT enter LINK_LOST.")
+        sys.exit(1)
     else:
         print("\n  ** INCOMPLETE ** : No activity detected.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

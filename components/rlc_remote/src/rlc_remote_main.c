@@ -183,7 +183,13 @@ void remote_app_main(void)
     /* Priority 3 — battery monitoring */
     remote_battery_start_task();
     /* m4: Dedicated encoder task (FSD §9.10 — priority 3, core 0, 4096 stack) */
-    xTaskCreatePinnedToCore(encoder_task_fn, "encoder_task", 4096, NULL, 3, NULL, 0);
+    if (xTaskCreatePinnedToCore(encoder_task_fn, "encoder_task", 4096, NULL, 3,
+                                NULL, 0) != pdPASS) {
+        ESP_LOGE(TAG, "encoder task create failed");
+        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
+        display_error("ENCODER TASK FAILED");
+        return;
+    }
     ESP_LOGI(TAG, "encoder task started (prio 3, core 0)");
 
     /* §9.13 Step 10: Begin link establishment */

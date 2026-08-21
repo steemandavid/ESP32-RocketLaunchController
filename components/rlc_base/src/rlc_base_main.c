@@ -51,11 +51,21 @@ static void on_io_change(void)
 
 /**
  * Arm sense callback — forward to FSM as EVT_ARM_SENSE_CHANGED.
+ * 5.3: J4-style short blocking send (10 ms), matching the key-switch and
+ * weld-fault siblings — base_fsm_post_event's zero-timeout send could drop
+ * the arm-sense-lost event on a transient queue burst, delaying disarm.
  */
 static void on_arm_change_cb(bool armed)
 {
     status_update_trigger();
-    base_fsm_post_event(EVT_ARM_SENSE_CHANGED, armed);
+    if (base_fsm_get_queue()) {
+        rlc_fsm_event_t evt = {0};
+        evt.type = EVT_ARM_SENSE_CHANGED;
+        evt.data.arm_state.armed = armed;
+        if (xQueueSend(base_fsm_get_queue(), &evt, pdMS_TO_TICKS(10)) != pdTRUE) {
+            ESP_LOGE(TAG, "FSM queue full — EVT_ARM_SENSE_CHANGED dropped!");
+        }
+    }
 }
 
 /**

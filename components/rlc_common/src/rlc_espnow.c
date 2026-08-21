@@ -19,6 +19,7 @@
 
 #include <string.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_now.h"
 #include "esp_event.h"
@@ -39,6 +40,7 @@ typedef struct {
     uint8_t src_mac[6];
     int     rssi;
     int     len;
+    int64_t received_ms;   /* C3: stamped in espnow_recv_cb, at wire time */
     uint8_t data[RLC_ESPNOW_RX_MAX];
 } rlc_espnow_rx_item_t;
 
@@ -66,6 +68,10 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info,
     memcpy(item.src_mac, recv_info->src_addr, 6);
     item.rssi = recv_info->rx_ctrl ? recv_info->rx_ctrl->rssi : 0;
     item.len  = data_len;
+    /* C3 (§6.4.1b): stamp at wire-receive time, before the frame enters the
+     * queue, so downstream freshness logic never counts queue drain latency
+     * as airtime. */
+    item.received_ms = esp_timer_get_time() / 1000;
     memcpy(item.data, data, data_len);
 
     /* esp_now_recv_cb runs in Wi-Fi task context (not ISR).
@@ -85,8 +91,10 @@ static void espnow_send_cb(const uint8_t *mac, esp_now_send_status_t status)
 
         if (s_consecutive_send_failures >= ESPNOW_SEND_FAIL_THRESHOLD &&
             s_send_failure_cb) {
-            ESP_LOGE(TAG, "%d consecutive send failures — immediate link loss",
-                     s_consecutive_send_failures);
+            /* 2.7: Wi-Fi task context — the callback must not block (no
+             * mutexes, no timed queue sends, no logging). The link manager
+             * only latches a flag and performs the link-loss transition on
+             * its own task. The link-loss line is logged there, once. */
             s_send_failure_cb();
             s_consecutive_send_failures = 0;
         }
@@ -104,7 +112,8 @@ static void espnow_rx_task(void *arg)
     while (1) {
         if (xQueueReceive(s_rx_queue, &item, portMAX_DELAY) == pdTRUE) {
             if (s_recv_cb) {
-                s_recv_cb(item.src_mac, item.data, item.len, item.rssi);
+                s_recv_cb(item.src_mac, item.data, item.len, item.rssi,
+                          item.received_ms);
             }
         }
     }

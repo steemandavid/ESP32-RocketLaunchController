@@ -70,8 +70,12 @@ static volatile uint32_t s_step_count  = 0;   /* channel changes emitted */
  * Feed one quadrature sample. Returns +1 / -1 when a channel step should be
  * emitted, 0 otherwise. Pure apart from the module statics, so the host tests
  * can drive it directly.
+ *
+ * 5.12: IRAM_ATTR — called from encoder_isr. With CONFIG_GPIO_CTRL_FUNC_IN_IRAM
+ * set, the whole decode path (this function, the ISR, gpio_get_level's inline
+ * register read) stays IRAM-resident and survives flash cache misses.
  */
-static int8_t encoder_feed(uint8_t state)
+static int8_t IRAM_ATTR encoder_feed(uint8_t state)
 {
     uint8_t pos = s_cycle_pos[state & 0x3];
 

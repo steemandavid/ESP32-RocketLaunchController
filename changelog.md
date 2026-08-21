@@ -1,5 +1,80 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-21 — All findings from Code_Review_AllPhases_20260821_1430.md fixed
+
+### What ran
+
+Fix session against every Major (2.1–2.7) and every minor (4.5–4.15,
+5.3–5.16, §6, §7) in the all-phases review. Known-open items (NACK 0x0C
+guard, palette, CONT_MARGINAL 67 Ω value, bug #18 mask 0x01, crypto keys)
+were deliberately left as tracked. Verified end-to-end: host tests
+(10 binaries × 2 units, all pass) and full builds of both units
+(`./build_base.sh`, `./build_remote.sh`, entry points verified in binaries).
+
+### Majors — all 7 fixed
+
+| # | Fix |
+|---|---|
+| 2.1 | DISARM during arm-verify now calls `abort_arm_verify(NACK_WRONG_STATE)` before the idempotent ACK (`rlc_base_fsm.c`) |
+| 2.2 | New `firing_exit(safe_state)` helper funnels all six FIRING exits; `ERR_VBAT_CRITICAL` latched during FIRING → terminal ERROR (FSD §7.2.5) |
+| 2.3 | Continuity ADC failure now fails safe to OPEN: `CONT_SAMPLE_FAILED` sentinel, per-channel `s_adc_configured` + `s_adc_failed` latches, one-shot logging (`rlc_continuity.c`) |
+| 2.4 | Remote arm-key interlock: `wait_for_ack` returns `WAIT_FOR_ACK_INTERRUPTED (-4)` on key-off/button/encoder; ARM retry loop re-checks `arm_switch_is_armed()`; "Guard 0" on FIRE paths; key-off after ACK sends DISARM/CEASE_FIRE; fire-repeat gated on key (`rlc_remote_fsm.c`) |
+| 2.5 | Classifier deduplicated: new `rlc_common/src/rlc_continuity_class.c` (+ header) holds the production three-band classifier; `rlc_continuity.c` and `rlc_selftest.c` both call it |
+| 2.6 | Wire-receive timestamp stamped in the ESP-NOW recv callback (`esp_timer_get_time()/1000`), threaded through `rlc_link_on_rx(received_ms)` — never re-stamped |
+| 2.7 | Send-failure handler only latches a flag in WiFi-task context; consumed in link_task (duplicate ESP_LOGE removed) |
+
+### Minors — highlights
+
+- **4.5–4.7** FIRING pulse backstop timer (`FIRE_PULSE_BACKSTOP_MARGIN_MS`
+  250); key-off and switch-off in IDLE abort pending arm-verify; key-sense
+  guard in ARMED EVT_CMD_FIRE.
+- **4.8–4.11** remote: ACK/NACK correlation via `s_pending_cmd_type/_seq`;
+  IDLE reconcile sends DISARM(0xFF) if base still armed; stale-status
+  timeout sends CEASE_FIRE in PRE_FIRE/FIRING.
+- **4.12/4.13** fire-button "fresh press" API deleted (edge-triggered events
+  already guarantee it, documented in header); relay `gpio_config` failure is
+  fatal at boot.
+- **5.3–5.16** J4-style blocking queue sends for callbacks; siren mutex;
+  arm-sense weld-fault single-shot latch; link-state fixes (overflow → LOST,
+  remote version check → VERSION_MISMATCH, locked state+token read,
+  LINK_REQUEST slow retry interval); **TWDT self-registration everywhere**
+  (`esp_task_wdt_add(NULL)` at task entry — `rlc_watchdog_add_task()`
+  deleted); buzzer/display TWDT coverage; ISR decoder moved to
+  `IRAM_ATTR encoder_feed()`; encoder task creation checked;
+  `CONFIG_GPIO_CTRL_FUNC_IN_IRAM=y` in sdkconfig.defaults (confirmed set in
+  both resolved sdkconfig.h files).
+- **§6** `adc_cali_raw_to_voltage` checked (fallback estimate instead of
+  0 mV); debouncer initial determination fires no callback (was a spurious
+  "released" at boot from the 0xFFFF seed); `test_tr04.py` exits 1 on
+  FAIL/INCOMPLETE.
+- **§7** dead APIs deleted: `remote_fsm_get_armed_channel_ptr`,
+  `remote_fsm_stop_fire_repeat`, `remote_fsm_is_fire_repeat_active`,
+  `remote_battery_get_status`, `base_state_get_continuity` (returns-0 trap),
+  empty `display_main_status()` stub. New shared `rlc_common`
+  `rlc_arm_state.h/.c` — display and `test_armstate.c` both use the real
+  source (test `#include`s the `.c`; mirror removed). Buzzer header timings
+  corrected to actual step tables; `CONT_MARGINAL_UV` comment ~20 Ω → ~67 Ω;
+  idf floor `>=5.4`.
+
+### Compile-breaker caught during the minors batch
+
+`rlc_remote_battery.c` still called the deleted `rlc_watchdog_add_task()`
+(5.11 batch had missed the creator-side call there). Removed; task creation
+now checked, dead `s_status` static became a local.
+
+### Deliberately deferred (low risk, documented)
+
+4.14/4.15 (seq-0 replay window, LINK_REQUEST replay DoS), 5.16 (battery clip
+bias — log-only), ESP-NOW deinit race (never-called path).
+
+### Verification
+
+- `./tests/host/run.sh` — all pass (test_encoder skipped on BASE by design).
+- `./build_base.sh` / `./build_remote.sh` — clean, `base_app_main` /
+  `remote_app_main` verified in binaries.
+- **Not flashed** — new images are in `build_base/rlc.bin` and `build/rlc.bin`
+  awaiting a decision to flash (by-id ports per global rule).
+
 ## 2026-08-21 — Full-codebase review + documentation audit (no code changes)
 
 ### What ran

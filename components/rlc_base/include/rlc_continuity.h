@@ -2,7 +2,7 @@
  * RLC Continuity Sensing Module (Base Unit)
  *
  * ADC1-based 8-channel continuity monitoring with 64-sample oversampling,
- * 4-band classification (SHORT/GOOD/MARGINAL/OPEN) with hysteresis.
+ * three-band classification (CONNECTED/MARGINAL/OPEN) with hysteresis.
  * FSD §5.4.2, §7.3.1.
  */
 

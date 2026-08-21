@@ -14,15 +14,21 @@
 /**
  * Callback invoked when a message is received.
  *
- * @param src_mac  Sender MAC address (6 bytes)
- * @param data     Raw message data (header + payload)
- * @param len      Length of data in bytes
- * @param rssi     RSSI of the received frame (dBm)
+ * @param src_mac      Sender MAC address (6 bytes)
+ * @param data         Raw message data (header + payload)
+ * @param len          Length of data in bytes
+ * @param rssi         RSSI of the received frame (dBm)
+ * @param received_ms  Wire-receive timestamp (ms since boot), captured in
+ *                     the ESP-NOW recv callback itself — before the frame
+ *                     enters any queue — so downstream freshness checks
+ *                     (dead-man, §6.4.1b) never count queue latency as
+ *                     airtime. Not deferred to processing time (C3).
  */
 typedef void (*rlc_espnow_recv_cb_t)(const uint8_t *src_mac,
                                       const uint8_t *data,
                                       int len,
-                                      int rssi);
+                                      int rssi,
+                                      int64_t received_ms);
 
 /**
  * Callback invoked when a send completes.
@@ -35,6 +41,10 @@ typedef void (*rlc_espnow_send_cb_t)(const uint8_t *dst_mac, bool success);
 /**
  * Callback invoked when 5 consecutive ESP-NOW send failures occur
  * (FSD §6.4.1a — immediate link loss).
+ *
+ * Runs in Wi-Fi task context (esp_now send_cb). Implementations MUST NOT
+ * block: no mutex takes, no timed queue sends, no logging. Latch a flag and
+ * defer the actual state transition to a task (see rlc_link.c, 2.7).
  */
 typedef void (*rlc_espnow_send_failure_cb_t)(void);
 

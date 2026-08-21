@@ -40,7 +40,14 @@ static void configure_output(int gpio)
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type    = GPIO_INTR_DISABLE,
     };
-    gpio_config(&cfg);
+    /* 4.13: an unchecked failure here would leave the pin floating — for
+     * a relay drive that means an undefined fire path. Fatal at boot. */
+    esp_err_t ret = gpio_config(&cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "gpio_config failed for GPIO %d: %s — HALTING",
+                 gpio, esp_err_to_name(ret));
+        while (1) { vTaskDelay(portMAX_DELAY); }
+    }
 }
 
 void relay_init(void)

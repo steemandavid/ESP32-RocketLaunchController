@@ -22,11 +22,7 @@ int rlc_watchdog_init(void);
  */
 void rlc_watchdog_feed(void);
 
-/**
- * Register an arbitrary task with the TWDT.
- * Use for non-main tasks (e.g. link_task) that also need watchdog coverage.
- *
- * @param task  Task handle, or NULL for the calling task
- * @return      0 on success
- */
-int rlc_watchdog_add_task(TaskHandle_t task);
+/* 5.11: spawned tasks register THEMSELVES with esp_task_wdt_add(NULL) at
+ * task entry — never from the creator after xTaskCreate. A spawned task at
+ * a higher priority than its creator can call esp_task_wdt_reset() before
+ * the creator's add, producing "task not found" TWDT error bursts at boot. */

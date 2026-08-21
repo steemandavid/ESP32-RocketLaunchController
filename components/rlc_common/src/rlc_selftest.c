@@ -13,6 +13,7 @@
 #include "rlc_debounce.h"
 #include "rlc_version.h"
 #include "rlc_config.h"
+#include "rlc_continuity_class.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -477,18 +478,12 @@ _Static_assert(CONT_MARGINAL == 2, "CONT_MARGINAL must be 2 (wire encoding)");
 _Static_assert(CONT_SHORT == 3, "CONT_SHORT must be 3 (wire encoding)");
 
 /**
- * Threshold classification — same logic as rlc_continuity.c classify_initial().
- * Uses the same CONT_*_UV constants from rlc_config.h, so any threshold
- * change is tested here automatically. The _Static_asserts above ensure
- * enum values stay aligned with wire encoding.
+ * Classification tests call the PRODUCTION classifier
+ * (rlc_continuity_classify_initial / _hysteresis, rlc_common) — never a
+ * local copy. Phase-2 M2 / review 2.5: a copied classifier passes at boot
+ * while the production logic has been edited, which is exactly the
+ * divergence this suite exists to catch.
  */
-static rlc_continuity_band_t selftest_classify_uv(int32_t uv)
-{
-    if (uv < CONT_MARGINAL_UV)   return CONT_CONNECTED;
-    if (uv < CONT_OPEN_UV)       return CONT_MARGINAL;
-    return CONT_OPEN;
-}
-
 static int test_continuity_classification(void)
 {
     int failures = 0;
@@ -513,14 +508,10 @@ static int test_continuity_classification(void)
      * field. Keep them in step when the thresholds change. SHORT is absent
      * because the band was merged into CONNECTED — see rlc_protocol.h. */
 
-
-    /* Vectors are expressed against the config constants deliberately: they
-     * caught the 2026-08-21 OPEN threshold move at boot rather than in the
-     * field. Keep them in step when the thresholds change. */
-
     const int count = sizeof(tests) / sizeof(tests[0]);
     for (int i = 0; i < count; i++) {
-        rlc_continuity_band_t result = selftest_classify_uv(tests[i].uv);
+        rlc_continuity_band_t result =
+            rlc_continuity_classify_initial(tests[i].uv);
         if (result != tests[i].expected) {
             ESP_LOGE(TAG, "FAIL: classify(%ld uV) = %d, expected %d",
                      (long)tests[i].uv, result, tests[i].expected);
@@ -538,41 +529,10 @@ static int test_continuity_classification(void)
 
 /* ── Continuity hysteresis test (§5.4.2, T-U11) ───────────────── */
 
-/**
- * Inline hysteresis classifier — mirrors the production logic in
- * rlc_continuity.c classify_with_hysteresis(). Tests that hysteresis
- * prevents spurious transitions near band boundaries.
- */
-static rlc_continuity_band_t test_classify_hysteresis(int32_t uv,
-                                                       rlc_continuity_band_t current)
-{
-    switch (current) {
-    case CONT_CONNECTED:
-        if (uv > CONT_MARGINAL_UV + CONT_HYSTERESIS_MARGINAL_UV) {
-            if (uv < CONT_OPEN_UV) return CONT_MARGINAL;
-            return CONT_OPEN;
-        }
-        return CONT_CONNECTED;
-
-    case CONT_MARGINAL:
-        if (uv < CONT_MARGINAL_UV - CONT_HYSTERESIS_MARGINAL_UV)
-            return CONT_CONNECTED;
-        if (uv > CONT_OPEN_UV + CONT_HYSTERESIS_OPEN_UV)
-            return CONT_OPEN;
-        return CONT_MARGINAL;
-
-    case CONT_OPEN:
-        if (uv < CONT_OPEN_UV - CONT_HYSTERESIS_OPEN_UV) {
-            if (uv < CONT_MARGINAL_UV) return CONT_CONNECTED;
-            return CONT_MARGINAL;
-        }
-        return CONT_OPEN;
-
-    case CONT_SHORT:
-    default:
-        return selftest_classify_uv(uv);
-    }
-}
+/* Calls the production rlc_continuity_classify_hysteresis() — see the
+ * comment above test_continuity_classification(). */
+#define test_classify_hysteresis(uv, cur) \
+    rlc_continuity_classify_hysteresis((uv), (cur))
 
 static int test_continuity_hysteresis(void)
 {
@@ -665,11 +625,11 @@ static int test_continuity_bands_encoding(void)
     /* Expected: ch1=01, ch2=11, ch3=00, ch4=10, ch5=01, ch6=00, ch7=11, ch8=10
      * Bits: 10_11_00_01_10_00_11_01 = 0xB24D */
     uint16_t expected = 0;
-    expected |= (0x01UL << 0);   /* ch1: GOOD=1 */
+    expected |= (0x01UL << 0);   /* ch1: CONNECTED=1 */
     expected |= (0x03UL << 2);   /* ch2: SHORT=3 */
     expected |= (0x00UL << 4);   /* ch3: OPEN=0 */
     expected |= (0x02UL << 6);   /* ch4: MARGINAL=2 */
-    expected |= (0x01UL << 8);   /* ch5: GOOD=1 */
+    expected |= (0x01UL << 8);   /* ch5: CONNECTED=1 */
     expected |= (0x00UL << 10);  /* ch6: OPEN=0 */
     expected |= (0x03UL << 12);  /* ch7: SHORT=3 */
     expected |= (0x02UL << 14);  /* ch8: MARGINAL=2 */

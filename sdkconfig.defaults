@@ -23,6 +23,11 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 # 5000ms is well beyond any ADC lock hold time while still catching genuine hangs.
 CONFIG_ESP_INT_WDT_TIMEOUT_MS=5000
 
+# Keep GPIO control functions in IRAM — the encoder quadrature ISR
+# (rlc_encoder.c encoder_isr) reads pin levels from interrupt context
+# (review 5.12).
+CONFIG_GPIO_CTRL_FUNC_IN_IRAM=y
+
 # Brown-out detection
 CONFIG_ESP_BROWNOUT_DET=y
 CONFIG_ESP_BROWNOUT_DET_LVL_SEL_7=y

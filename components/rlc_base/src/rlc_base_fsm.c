@@ -46,6 +46,7 @@ static volatile uint8_t     s_error_flags = 0;
 static int64_t s_arm_time_ms = 0;
 static int64_t s_prefire_start_ms = 0;
 static int64_t s_postfire_start_ms = 0;
+static int64_t s_firing_start_ms = 0;   /* 4.5: max-duration backstop */
 
 /* M1: Non-blocking arm sense verification state */
 static bool     s_arm_verify_pending = false;
@@ -220,6 +221,27 @@ static void do_enter_error(uint8_t err_flag)
     s_state = STATE_ERROR;
 }
 
+/* 2.2: Shared FIRING-exit tail. Every path that leaves FIRING funnels
+ * through here so an ERR_VBAT_CRITICAL flag latched during the pulse
+ * (FSD §7.2.5: "complete the pulse, then ERROR") can never be dropped.
+ * Without this, operator-abort exits returned the unit to service on a
+ * critical battery, and the stale flag later detonated as a spurious
+ * terminal ERROR at the next POST_FIRE entry. Callers must already have
+ * made the hardware safe (fire_timer_stop/relay_all_safe/siren_off) and
+ * cleared s_firing_channel/s_armed_channel/s_link_lost_pending. */
+static void firing_exit(rlc_state_t safe_state)
+{
+    if (s_error_flags & ERR_VBAT_CRITICAL) {
+        ESP_LOGE(TAG, "battery critical latched during FIRING — terminal ERROR");
+        do_enter_error(0);  /* Flag already set */
+        return;
+    }
+    if (safe_state == STATE_LINK_LOST) siren_start_link_lost();
+    rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
+    status_update_trigger();
+    s_state = safe_state;
+}
+
 /* ── Guard: IDLE -> ARMED (FSD §7.2.2) ───────────────────────── */
 
 /**
@@ -301,6 +323,10 @@ static void process_event(const rlc_fsm_event_t *evt)
             s_state = STATE_IDLE;
             rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
             status_update_trigger();
+        } else if (evt->type == EVT_BATTERY_CRITICAL) {
+            /* §6: battery posts this once per crossing — discarding it here
+             * would lose it permanently. Critical battery is terminal. */
+            do_enter_error(ERR_VBAT_CRITICAL);
         }
         break;
 
@@ -360,6 +386,14 @@ static void process_event(const rlc_fsm_event_t *evt)
             }
 
         } else if (evt->type == EVT_CMD_DISARM) {
+            /* 2.1: a DISARM arriving inside the 200 ms arm-verify window must
+             * cancel the pending ARM (the arm relay is already energised) —
+             * same as CEASE_FIRE below. Otherwise the verify completes after
+             * the remote has shown "disarmed", leaving the base ARMED behind
+             * the operator's back. */
+            if (s_arm_verify_pending) {
+                abort_arm_verify(NACK_WRONG_STATE);
+            }
             /* Idempotent ACK (FSD §7.2.7) */
             send_ack(MSG_CMD_DISARM, evt->data.cmd.seq_number,
                      evt->data.cmd.channel);
@@ -379,6 +413,13 @@ static void process_event(const rlc_fsm_event_t *evt)
                 abort_arm_verify(NACK_LOW_BATTERY);
             }
             do_enter_error(ERR_VBAT_CRITICAL);
+        } else if (evt->type == EVT_KEY_SWITCH_CHANGED && !evt->data.arm_state.armed) {
+            /* 4.6: key OFF during the verify window cancels the pending ARM
+             * with the true reason — previously the window ignored key-off
+             * and the verify timeout later misreported NACK_ARM_SENSE_FAULT. */
+            if (s_arm_verify_pending) {
+                abort_arm_verify(NACK_BASE_SWITCH_OFF);
+            }
         } else if (evt->type == EVT_LINK_LOST) {
             if (s_arm_verify_pending) {
                 relay_all_safe();
@@ -400,6 +441,15 @@ static void process_event(const rlc_fsm_event_t *evt)
             }
             /* Guard: arm sense still HIGH */
             if (!arm_sense_get_debounced()) {
+                send_nack(MSG_CMD_FIRE, evt->data.cmd.seq_number, NACK_BASE_SWITCH_OFF);
+                do_disarm();
+                return;
+            }
+
+            /* Guard 3 (4.7): key switch still ON at ARMED→PRE_FIRE. The key
+             * is re-checked again at PRE_FIRE→FIRING, but refusing early
+             * stops the siren/2 s countdown from starting at all. */
+            if (!key_sense_get_debounced()) {
                 send_nack(MSG_CMD_FIRE, evt->data.cmd.seq_number, NACK_BASE_SWITCH_OFF);
                 do_disarm();
                 return;
@@ -486,11 +536,8 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* C1: If link was lost during pulse, transition to LINK_LOST now */
             if (s_link_lost_pending) {
                 s_link_lost_pending = false;
-                siren_start_link_lost();
-                rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
-                status_update_trigger();
                 ESP_LOGI(TAG, "FIRING -> LINK_LOST (pulse completed, link was lost)");
-                s_state = STATE_LINK_LOST;
+                firing_exit(STATE_LINK_LOST);
             } else {
                 s_postfire_start_ms = now_ms();
                 rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
@@ -507,10 +554,8 @@ static void process_event(const rlc_fsm_event_t *evt)
             s_armed_channel = 0;
             s_link_lost_pending = false;
             send_ack(MSG_CMD_CEASE_FIRE, evt->data.cmd.seq_number, 0);
-            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
-            status_update_trigger();
             ESP_LOGI(TAG, "FIRING -> IDLE (CEASE_FIRE)");
-            s_state = STATE_IDLE;
+            firing_exit(STATE_IDLE);
 
         } else if (evt->type == EVT_ARM_SENSE_CHANGED && !evt->data.arm_state.armed) {
             /* Arm relay feedback lost during FIRING — cease fire */
@@ -520,10 +565,8 @@ static void process_event(const rlc_fsm_event_t *evt)
             s_firing_channel = 0;
             s_armed_channel = 0;
             s_link_lost_pending = false;
-            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
-            status_update_trigger();
             ESP_LOGW(TAG, "FIRING -> IDLE (arm sense lost)");
-            s_state = STATE_IDLE;
+            firing_exit(STATE_IDLE);
 
         } else if (evt->type == EVT_KEY_SWITCH_CHANGED && !evt->data.arm_state.armed) {
             /* Key switch OFF during FIRING — same as CEASE_FIRE (FSD §7.2.5) */
@@ -533,10 +576,8 @@ static void process_event(const rlc_fsm_event_t *evt)
             s_firing_channel = 0;
             s_armed_channel = 0;
             s_link_lost_pending = false;
-            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
-            status_update_trigger();
             ESP_LOGW(TAG, "FIRING -> IDLE (key switch OFF)");
-            s_state = STATE_IDLE;
+            firing_exit(STATE_IDLE);
 
         } else if (evt->type == EVT_CMD_FIRE) {
             /* Repeated CMD_FIRE during FIRING — silently discard (FSD §7.2.3) */
@@ -550,10 +591,8 @@ static void process_event(const rlc_fsm_event_t *evt)
             s_armed_channel = 0;
             s_link_lost_pending = false;
             send_ack(MSG_CMD_DISARM, evt->data.cmd.seq_number, 0);
-            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
-            status_update_trigger();
             ESP_LOGI(TAG, "FIRING -> IDLE (DISARM)");
-            s_state = STATE_IDLE;
+            firing_exit(STATE_IDLE);
 
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
             /* Complete the fire pulse, then enter ERROR (FSD §7.2.5) */
@@ -575,11 +614,9 @@ static void process_event(const rlc_fsm_event_t *evt)
                 siren_off();
                 s_firing_channel = 0;
                 s_armed_channel = 0;
-                siren_start_link_lost();
-                rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
-                status_update_trigger();
+                s_link_lost_pending = false;
                 ESP_LOGW(TAG, "FIRING -> LINK_LOST (immediate abort, link lost)");
-                s_state = STATE_LINK_LOST;
+                firing_exit(STATE_LINK_LOST);
             }
         }
         break;
@@ -614,6 +651,10 @@ static void process_event(const rlc_fsm_event_t *evt)
             rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
             ESP_LOGI(TAG, "LINK_LOST -> IDLE (recovered)");
             s_state = STATE_IDLE;
+        } else if (evt->type == EVT_BATTERY_CRITICAL) {
+            /* §6: previously silently discarded — the unit then idled on a
+             * critical battery after link recovery with only guard 8 left. */
+            do_enter_error(ERR_VBAT_CRITICAL);
         }
         break;
 
@@ -689,12 +730,30 @@ static void check_timers(void)
 
             /* Transition to FIRING */
             s_firing_channel = s_armed_channel;
+            s_firing_start_ms = t;   /* 4.5: backstop baseline */
             relay_fire_set(s_armed_channel, true);
             fire_timer_start(FIRE_PULSE_DURATION_MS, s_armed_channel, s_fsm_task);
             rlc_rgb_led_set_pattern(LED_PATTERN_FIRING);
             status_update_trigger();
             ESP_LOGI(TAG, "PRE_FIRE -> FIRING (ch %u)", s_armed_channel);
             s_state = STATE_FIRING;
+        }
+    }
+
+    /* 4.5: max-duration backstop. If the GPTimer's EVT_FIRE_PULSE_DONE
+     * notification is ever lost, the FSM would sit in FIRING with the relay
+     * energised forever (the task keeps feeding the TWDT, so nothing else
+     * would catch it). Synthesise the completion event well after the pulse
+     * should have ended — the normal handler then makes everything safe. */
+    if (s_state == STATE_FIRING && s_firing_start_ms > 0) {
+        if ((t - s_firing_start_ms) >=
+                FIRE_PULSE_DURATION_MS + FIRE_PULSE_BACKSTOP_MARGIN_MS) {
+            ESP_LOGE(TAG, "fire pulse done notification lost — backstop abort "
+                          "(%lld ms in FIRING)", (t - s_firing_start_ms));
+            s_firing_start_ms = 0;
+            rlc_fsm_event_t fe = {0};
+            fe.type = EVT_FIRE_PULSE_DONE;
+            process_event(&fe);
         }
     }
 

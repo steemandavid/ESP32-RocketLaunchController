@@ -10,4 +10,3 @@
 #include "rlc_battery.h"
 
 void remote_battery_start_task(void);
-rlc_battery_status_t remote_battery_get_status(void);

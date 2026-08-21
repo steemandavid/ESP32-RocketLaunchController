@@ -130,7 +130,6 @@ uint8_t     remote_fsm_get_selected_channel(void){ return s_selected_channel; }
 uint8_t     remote_fsm_get_armed_channel(void){ return s_armed_channel; }
 QueueHandle_t remote_fsm_get_queue(void)      { return s_evt_queue; }
 TaskHandle_t  remote_fsm_get_task(void)       { return s_fsm_task; }
-bool remote_fsm_is_fire_repeat_active(void)   { return s_fire_repeat_active; }
 
 bool remote_fsm_get_status(rlc_payload_status_update_t *out)
 {
@@ -150,19 +149,6 @@ uint32_t remote_fsm_get_prefire_remaining_ms(void)
     int64_t elapsed = now_ms() - s_prefire_start_ms;
     if (elapsed >= PRE_FIRE_DELAY_MS) return 0;
     return (uint32_t)(PRE_FIRE_DELAY_MS - elapsed);
-}
-
-volatile uint8_t *remote_fsm_get_armed_channel_ptr(void)
-{
-    return &s_armed_channel;
-}
-
-void remote_fsm_stop_fire_repeat(void)
-{
-    s_fire_repeat_active = false;
-    if (s_fire_repeat_task) {
-        xTaskNotifyGive(s_fire_repeat_task);  /* Wake it up to check the flag */
-    }
 }
 
 int remote_fsm_init(void)
@@ -302,6 +288,11 @@ static void do_enter_idle(void)
     s_armed_channel = 0;
     s_fire_repeat_active = false;
     s_prefire_start_ms = 0;
+    /* 4.9: re-sync the tracked selection with the encoder — after
+     * LINKING/LINK_LOST the cached s_selected_channel could be stale,
+     * making the display highlight a different channel than a long-press
+     * would arm. */
+    s_selected_channel = encoder_get_channel();
     rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
     ESP_LOGI(TAG, "-> IDLE");
     s_state = STATE_IDLE;
@@ -355,13 +346,18 @@ static void do_enter_error(void)
 /**
  * Wait for ACK/NACK with timeout. Returns:
  *  1 = ACK received (channel verified)
- *  0 = timeout / interrupted (caller should fall back to "abort" path)
+ *  0 = timeout (caller may retry)
  * -1 = NACK received (reason in *nack_reason)
  * -2 = channel mismatch in ACK
  * -3 = state already transitioned by an inline-handled critical event
  *      (LINK_LOST or BATTERY_CRITICAL). Caller MUST NOT touch state. (R1)
+ * -4 = interrupted by local operator input (arm switch off, fire button
+ *      release, or encoder activity). Terminal for the pending command —
+ *      callers must NOT retry (2.4: the retry loop's condition is
+ *      `result == 0`, so -4 naturally falls out of it).
  */
 #define WAIT_FOR_ACK_STATE_HANDLED (-3)
+#define WAIT_FOR_ACK_INTERRUPTED   (-4)
 
 static int wait_for_ack(uint8_t expected_channel, uint32_t timeout_ms,
                         uint8_t *nack_reason)
@@ -371,25 +367,38 @@ static int wait_for_ack(uint8_t expected_channel, uint32_t timeout_ms,
         rlc_fsm_event_t evt;
         if (xQueueReceive(s_evt_queue, &evt, pdMS_TO_TICKS(50)) == pdTRUE) {
             if (evt.type == EVT_CMD_ACK) {
+                /* 4.8: correlate to the pending command (acked type + seq).
+                 * A stale ACK from an earlier ARM must not satisfy a FIRE
+                 * wait — ignore it and keep waiting. */
+                if (evt.data.ack.acked_msg_type != s_pending_cmd_type ||
+                    evt.data.ack.acked_seq_number != s_pending_cmd_seq) {
+                    continue;
+                }
                 if (evt.data.ack.channel != expected_channel) {
                     return -2;  /* Channel mismatch */
                 }
                 return 1;  /* ACK OK */
             } else if (evt.type == EVT_CMD_NACK) {
+                /* 4.8: same correlation — a stale NACK must not spuriously
+                 * abort (and previously disarm) the current attempt. */
+                if (evt.data.nack.nacked_msg_type != s_pending_cmd_type ||
+                    evt.data.nack.nacked_seq_number != s_pending_cmd_seq) {
+                    continue;
+                }
                 if (nack_reason) *nack_reason = evt.data.nack.reason_code;
                 return -1;  /* NACK */
             } else {
                 /* Process other events inline during wait */
                 if (evt.type == EVT_ARM_SWITCH_CHANGED && !evt.data.arm_state.armed) {
-                    return 0;  /* Arm switch off during wait */
+                    return WAIT_FOR_ACK_INTERRUPTED;  /* Arm switch off */
                 }
                 if (evt.type == EVT_FIRE_BUTTON_RELEASED) {
-                    return 0;  /* Button released during wait */
+                    return WAIT_FOR_ACK_INTERRUPTED;  /* Button released */
                 }
                 if (evt.type == EVT_ENCODER_ROTATE ||
                     evt.type == EVT_ENCODER_SHORT_PRESS ||
                     evt.type == EVT_ENCODER_LONG_PRESS) {
-                    return 0;  /* Encoder activity during wait */
+                    return WAIT_FOR_ACK_INTERRUPTED;  /* Encoder activity */
                 }
                 if (evt.type == EVT_LINK_LOST) {
                     do_enter_link_lost();
@@ -479,6 +488,14 @@ static void process_event(const rlc_fsm_event_t *evt)
             uint8_t nack_reason = 0;
             int result = wait_for_ack(ch, CMD_ACK_TIMEOUT_MS, &nack_reason);
             for (int retry = 0; result == 0 && retry < CMD_RETRY_COUNT; retry++) {
+                /* 2.4: a timeout is the only retry licence. Re-check the arm
+                 * key before putting another CMD_ARM on the wire — the key
+                 * may have gone off since the last check without an event
+                 * having been consumed yet. */
+                if (!arm_switch_is_armed()) {
+                    ESP_LOGI(TAG, "ARM retry aborted: arm switch OFF");
+                    break;
+                }
                 if (send_cmd_arm(ch) != 0) {
                     ESP_LOGE(TAG, "CMD_ARM retry %d send failed", retry + 1);
                     break;
@@ -487,12 +504,27 @@ static void process_event(const rlc_fsm_event_t *evt)
             }
 
             if (result == 1) {
-                /* ACK received with matching channel */
-                s_armed_channel = ch;
-                rlc_rgb_led_set_pattern(LED_PATTERN_ARMED);
-                buzzer_play(BUZZER_BEEP_DOUBLE);
-                ESP_LOGI(TAG, "IDLE -> ARMED (ch %u)", ch);
-                s_state = STATE_ARMED;
+                if (!arm_switch_is_armed()) {
+                    /* 2.4: ACK arrived after the key went off (the switch-off
+                     * event was consumed inside wait_for_ack). Never enter
+                     * ARMED without the key — undo at the base and stay IDLE. */
+                    ESP_LOGW(TAG, "ARM ACK after key-off — sending DISARM, staying IDLE");
+                    send_cmd_disarm(ch);
+                    buzzer_play(BUZZER_BEEP_TRIPLE);
+                } else {
+                    /* ACK received with matching channel */
+                    s_armed_channel = ch;
+                    rlc_rgb_led_set_pattern(LED_PATTERN_ARMED);
+                    buzzer_play(BUZZER_BEEP_DOUBLE);
+                    ESP_LOGI(TAG, "IDLE -> ARMED (ch %u)", ch);
+                    s_state = STATE_ARMED;
+                }
+            } else if (result == WAIT_FOR_ACK_INTERRUPTED) {
+                /* 2.4: local operator input ended the attempt — do not retry,
+                 * do not enter ARMED. The base times the ARM out or dead-mans
+                 * on its own; also disarm in case a CMD_ARM reached it. */
+                ESP_LOGW(TAG, "ARM attempt interrupted — aborting");
+                send_cmd_disarm(ch);
             } else if (result == -1) {
                 /* NACK */
                 ESP_LOGW(TAG, "ARM NACK: 0x%02x (%s)",
@@ -521,6 +553,13 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* R2: multi-arm detection — base must never report >1 channel armed */
             if (is_multi_armed(s_last_status.channel_armed_bitmask)) {
                 handle_multi_arm_violation(s_last_status.channel_armed_bitmask);
+            } else if (s_last_status.channel_armed_bitmask != 0) {
+                /* 4.10: the base reports an armed channel while we are IDLE
+                 * (e.g. our ARM ACK was lost). Reconcile by disarming — the
+                 * hazard state must not persist out of sight of this UI
+                 * until the base's own 10 s arm timeout. */
+                ESP_LOGW(TAG, "base armed while remote IDLE — DISARM to reconcile");
+                send_cmd_disarm(0xFF);
             }
         } else if (evt->type == EVT_ENCODER_ROTATE) {
             /* R4: track selected channel in IDLE so getter is not stale */
@@ -534,6 +573,15 @@ static void process_event(const rlc_fsm_event_t *evt)
     case STATE_ARMED:
         if (evt->type == EVT_FIRE_BUTTON_PRESSED) {
             /* Attempt to fire (FSD §8.2.4) */
+            /* Guard 0 (2.4): arm key must be ON. FSD §8.2.3/§8.2.4 list the
+             * arm switch as a fire precondition; the remote must never put a
+             * CMD_FIRE on the wire without it, whatever led it into ARMED. */
+            if (!arm_switch_is_armed()) {
+                ESP_LOGW(TAG, "FIRE rejected: arm switch OFF");
+                do_disarm_and_idle();
+                break;
+            }
+
             /* Guard 1: STATUS_UPDATE confirms channel still armed */
             uint16_t armed_mask = s_last_status.channel_armed_bitmask;
             /* R2: multi-arm detection — refuse to fire if base reports >1 armed */
@@ -574,13 +622,21 @@ static void process_event(const rlc_fsm_event_t *evt)
                                       &nack_reason);
 
             if (result == 1) {
-                /* ACK — enter PRE_FIRE */
-                s_prefire_start_ms = now_ms();
-                s_fire_repeat_active = true;
-                xTaskNotifyGive(s_fire_repeat_task);  /* Wake fire-repeat task */
-                rlc_rgb_led_set_pattern(LED_PATTERN_PRE_FIRE);
-                ESP_LOGI(TAG, "ARMED -> PRE_FIRE (ch %u)", s_armed_channel);
-                s_state = STATE_PRE_FIRE;
+                if (!arm_switch_is_armed()) {
+                    /* 2.4: key went off while the FIRE ACK was in flight —
+                     * cancel instead of entering PRE_FIRE. */
+                    ESP_LOGW(TAG, "FIRE ACK after key-off — CEASE_FIRE, staying disarmed");
+                    send_cmd_cease_fire();
+                    do_disarm_and_idle();
+                } else {
+                    /* ACK — enter PRE_FIRE */
+                    s_prefire_start_ms = now_ms();
+                    s_fire_repeat_active = true;
+                    xTaskNotifyGive(s_fire_repeat_task);  /* Wake fire-repeat task */
+                    rlc_rgb_led_set_pattern(LED_PATTERN_PRE_FIRE);
+                    ESP_LOGI(TAG, "ARMED -> PRE_FIRE (ch %u)", s_armed_channel);
+                    s_state = STATE_PRE_FIRE;
+                }
             } else if (result == -1) {
                 /* NACK */
                 ESP_LOGW(TAG, "FIRE NACK: 0x%02x (%s)",
@@ -756,7 +812,14 @@ static void check_timers(void)
                      now_ms() - s_last_status_rx_ms);
             if (s_state != STATE_IDLE) {
                 s_fire_repeat_active = false;
-                send_cmd_disarm(s_armed_channel);
+                /* 4.11: PRE_FIRE/FIRING need CEASE_FIRE (the base is mid
+                 * sequence — DISARM is the wrong tool there), and DISARM is
+                 * only meaningful with a real channel — never 0. */
+                if (s_state == STATE_PRE_FIRE || s_state == STATE_FIRING) {
+                    send_cmd_cease_fire();
+                } else if (s_armed_channel > 0) {
+                    send_cmd_disarm(s_armed_channel);
+                }
             }
             do_enter_idle();
         }
@@ -783,9 +846,12 @@ static void cmd_fire_repeat_task_fn(void *arg)
             /* R5: Re-check the flag immediately before sending. The FSM may
              * have cleared s_fire_repeat_active and called send_cmd_cease_fire()
              * after our outer-loop check but before this point — we don't want
-             * a stray CMD_FIRE on the wire after CEASE_FIRE. */
+             * a stray CMD_FIRE on the wire after CEASE_FIRE.
+             * 2.4: the arm key is re-checked too — no CMD_FIRE leaves this
+             * unit with the key off, even before the FSM consumes the
+             * switch-off event. */
             uint8_t ch = s_armed_channel;
-            if (ch > 0 && s_fire_repeat_active) {
+            if (ch > 0 && s_fire_repeat_active && arm_switch_is_armed()) {
                 send_cmd_fire(ch);  /* Fire-and-forget, no ACK */
             }
             esp_task_wdt_reset();

@@ -12,9 +12,12 @@
  * Debounce: 8-bit shift register, 10 ms poll -> 80 ms settle.
  *   0x00 = pressed (active LOW), 0xFF = released
  *
- * Fresh-press safety: the button must transition from released to
- * pressed AFTER boot to count as a fresh press. A stuck button at
- * power-on is ignored until it is released first.
+ * Fresh-press safety (4.12): press events are edge-triggered — the press
+ * callback fires only on a released->pressed transition. A button already
+ * held at power-on can therefore never generate EVT_FIRE_BUTTON_PRESSED
+ * without a release first, which is the interlock FSD 5.5.3 calls for.
+ * The former fire_button_was_fresh_press() polling API was dead code and
+ * has been removed.
  */
 
 #include "rlc_fire_button.h"
@@ -33,8 +36,6 @@ static const char *TAG = "fire_btn";
 /* ── Static state ──────────────────────────────────────────────── */
 
 static rlc_debounce_t s_db;
-static volatile bool s_was_released = true;   /* assumes released at boot */
-static volatile bool s_fresh_press  = false;
 
 static void (*s_on_press)(void)   = NULL;
 static void (*s_on_release)(void) = NULL;
@@ -64,10 +65,6 @@ static void on_change_cb(int gpio_num, bool new_state, void *user_data)
 
     if (new_state) {
         /* Button pressed */
-        if (s_was_released) {
-            s_fresh_press  = true;
-            s_was_released = false;
-        }
         led_red(true);
         led_green(false);
         if (s_on_press) {
@@ -75,7 +72,6 @@ static void on_change_cb(int gpio_num, bool new_state, void *user_data)
         }
     } else {
         /* Button released */
-        s_was_released = true;
         led_red(false);
         led_green(true);
         if (s_on_release) {
@@ -89,6 +85,8 @@ static void on_change_cb(int gpio_num, bool new_state, void *user_data)
 static void fire_btn_task(void *arg)
 {
     (void)arg;
+
+    esp_task_wdt_add(NULL);   /* 5.11: self-register (see rlc_base_battery.c) */
 
     ESP_LOGI(TAG, "Task started on core %d", xPortGetCoreID());
 
@@ -131,11 +129,8 @@ void fire_button_init(void)
     /* Init debounce engine (8-bit = 80 ms at 10 ms poll) */
     rlc_debounce_init(&s_db, PIN_FIRE_BUTTON, DEBOUNCE_8BIT);
 
-    /* Fresh-press safety: if button is already held at init, mark it as
-     * not-released so the debounce settling does NOT generate a fresh press. */
     if (gpio_get_level(PIN_FIRE_BUTTON) == 0) {   /* LOW = pressed */
-        s_was_released = false;
-        ESP_LOGW(TAG, "Button held at boot — fresh-press suppressed");
+        ESP_LOGW(TAG, "Button held at boot — no press event until released");
     }
 
     ESP_LOGI(TAG, "Initialised (btn=%d, led_r=%d, led_g=%d)",
@@ -159,22 +154,12 @@ void fire_button_start_task(void)
         return;
     }
 
-    rlc_watchdog_add_task(s_task_handle);
-    ESP_LOGI(TAG, "Task created, handle=%p", s_task_handle);
+    ESP_LOGI(TAG, "Task created");
 }
 
 bool fire_button_is_pressed(void)
 {
     return rlc_debounce_get_state(&s_db);
-}
-
-bool fire_button_was_fresh_press(void)
-{
-    if (s_fresh_press) {
-        s_fresh_press = false;
-        return true;
-    }
-    return false;
 }
 
 void fire_button_register_cb(void (*on_press)(void), void (*on_release)(void))

@@ -82,11 +82,6 @@ void display_splash(int attempt, int max_attempts);
 void display_firmware_mismatch(const uint8_t *base_ver, const uint8_t *remote_ver);
 
 /**
- * Request the main IDLE status screen (normally selected automatically).
- */
-void display_main_status(void);
-
-/**
  * Request the ARMED screen (normally selected automatically).
  */
 void display_armed(uint8_t channel);

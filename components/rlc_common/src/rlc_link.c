@@ -254,9 +254,12 @@ static void send_status_update(void)
 {
     uint32_t seq;
     if (!seq_next(&seq)) {
-        /* Overflow — would need to re-link, but status updates are not commands */
-        s_tx_seq = 0;
-        seq = ++s_tx_seq;
+        /* 5.6: overflow — wrapping s_tx_seq makes the peer reject every
+         * subsequent frame as replay. Drop the link instead (safe direction:
+         * the remote re-links and gets a fresh session with seq reset). */
+        ESP_LOGW(TAG, "seq overflow in send_status_update — dropping link");
+        set_state(RLC_LINK_STATE_LOST);
+        return;
     }
 
     uint8_t buf[RLC_MSG_MAX_SIZE];
@@ -279,8 +282,10 @@ void rlc_link_send_status_update(const rlc_payload_status_update_t *payload)
 
     uint32_t seq;
     if (!seq_next(&seq)) {
-        s_tx_seq = 0;
-        seq = ++s_tx_seq;
+        /* 5.6: overflow — re-link rather than wrap (see send_status_update) */
+        ESP_LOGW(TAG, "seq overflow in status update — dropping link");
+        set_state(RLC_LINK_STATE_LOST);
+        return;
     }
 
     uint8_t buf[RLC_MSG_MAX_SIZE];
@@ -298,9 +303,12 @@ static void send_ping(uint16_t battery_mv)
 {
     uint32_t seq;
     if (!seq_next(&seq)) {
-        ESP_LOGW(TAG, "seq overflow in send_ping — re-linking");
-        set_state(RLC_LINK_STATE_LINKING);
-        send_link_request();
+        /* 5.6: overflow — drop the link rather than silently switching to
+         * LINKING (which emitted no FSM event, leaving the remote FSM
+         * believing the link was up). LOST posts EVT_LINK_LOST (safe
+         * direction: disarm); tick_remote then resumes LINK_REQUESTs. */
+        ESP_LOGW(TAG, "seq overflow in send_ping — dropping link");
+        set_state(RLC_LINK_STATE_LOST);
         return;
     }
 
@@ -353,6 +361,19 @@ static void handle_link_request(const uint8_t *payload, uint16_t plen)
              req->remote_firmware_version[0],
              req->remote_firmware_version[1],
              req->remote_firmware_version[2]);
+
+    /* 5.7: the base version-checks the remote too. Without this a mismatch
+     * surfaced as 1.5 s of "link trouble" per handshake attempt instead of
+     * a clear VERSION_MISMATCH lock-out. */
+    if (!version_matches(req->remote_firmware_version)) {
+        ESP_LOGE(TAG, "FW MISMATCH: remote %u.%u.%u / base %u.%u.%u",
+                 req->remote_firmware_version[0],
+                 req->remote_firmware_version[1],
+                 req->remote_firmware_version[2],
+                 RLC_VERSION_MAJOR, RLC_VERSION_MINOR, RLC_VERSION_PATCH);
+        set_state(RLC_LINK_STATE_VERSION_MISMATCH);
+        return;
+    }
 
     /* FSD §6.4.1: reject if app-state guard says busy (ARMED/PRE_FIRE/FIRING/POST_FIRE).
      * Guard returns true when busy, so reject when it returns true. */
@@ -560,8 +581,9 @@ static void process_frame(const link_rx_item_t *it)
 
                 s_rx_last_seq = hdr.sequence_number;
 
-                /* Forward to FSM with wire-receive timestamp (C3: captured in
-                 * rlc_link_on_rx, not deferred to processing time). */
+                /* Forward to FSM with the wire-receive timestamp (C3: stamped
+                 * in the ESP-NOW recv callback, carried through both queues
+                 * unchanged — not processing time). */
                 if (s_cmd_queue) {
                     rlc_fsm_event_t evt = {0};
                     uint8_t channel = 0;
@@ -623,8 +645,23 @@ static void process_frame(const link_rx_item_t *it)
 
 /* ── ESP-NOW send failure callback (FSD §6.4.1a) ─────────────── */
 
+/* 2.7: this callback runs in Wi-Fi task context (via esp_now send_cb).
+ * It must not take the state mutex (portMAX_DELAY), send to queues with a
+ * timeout, or log — link_task holds that same mutex across process_frame()
+ * including its own esp_now_send(), so blocking here while the link is
+ * already failing is an ABBA against Wi-Fi-internal locks. Instead it only
+ * latches a flag; link_task consumes it within its 50 ms poll below. */
+static volatile bool s_send_failure_pending = false;
+
 static void espnow_send_failure_handler(void)
 {
+    s_send_failure_pending = true;
+}
+
+/* Runs on link_task: apply a latched send-failure notification. */
+static void handle_send_failure(void)
+{
+    s_send_failure_pending = false;
     lock();
     if (s_state == RLC_LINK_STATE_LINKED) {
         ESP_LOGE(TAG, "5 consecutive send failures — immediate link loss");
@@ -645,11 +682,16 @@ static void tick_remote(void)
 
     if (s_state == RLC_LINK_STATE_LINKING ||
         s_state == RLC_LINK_STATE_LOST) {
-        if (t - s_last_linkreq_ms >= LINK_REQUEST_INTERVAL_MS) {
+        /* 7: after LINK_REQUEST_MAX_RETRIES fast attempts, back off to
+         * LINK_REQUEST_SLOW_INTERVAL_MS (FSD §6.4.1 — the constant existed
+         * but was only ever printed, never applied). */
+        uint32_t interval = (s_linkreq_attempts >= LINK_REQUEST_MAX_RETRIES)
+                          ? LINK_REQUEST_SLOW_INTERVAL_MS
+                          : LINK_REQUEST_INTERVAL_MS;
+        if (t - s_last_linkreq_ms >= interval) {
             send_link_request();
-            /* FSD §6.4.1: after 5 attempts, display "NO LINK" and keep retrying */
             if (s_linkreq_attempts == LINK_REQUEST_MAX_RETRIES) {
-                ESP_LOGW(TAG, "NO LINK — %u attempts failed, retrying at %d ms",
+                ESP_LOGW(TAG, "NO LINK — %u attempts failed, retrying every %d ms",
                          s_linkreq_attempts, LINK_REQUEST_SLOW_INTERVAL_MS);
             }
         }
@@ -743,6 +785,12 @@ static void link_task(void *arg)
             unlock();
         }
 
+        /* 2.7: consume a send-failure notification latched by the Wi-Fi
+         * task callback — the state transition happens here, on this task. */
+        if (s_send_failure_pending) {
+            handle_send_failure();
+        }
+
         lock();
         if (s_role == RLC_LINK_ROLE_REMOTE) {
             tick_remote();
@@ -759,9 +807,10 @@ static void link_task(void *arg)
 /* ── Public API ────────────────────────────────────────────────── */
 
 static void espnow_recv_trampoline(const uint8_t *src_mac,
-                                    const uint8_t *data, int len, int rssi)
+                                    const uint8_t *data, int len, int rssi,
+                                    int64_t received_ms)
 {
-    rlc_link_on_rx(src_mac, data, len, rssi);
+    rlc_link_on_rx(src_mac, data, len, rssi, received_ms);
 }
 
 int rlc_link_init(rlc_link_role_t role, const uint8_t *peer_mac)
@@ -792,7 +841,8 @@ int rlc_link_init(rlc_link_role_t role, const uint8_t *peer_mac)
 }
 
 void rlc_link_on_rx(const uint8_t *src_mac,
-                    const uint8_t *data, int len, int rssi)
+                    const uint8_t *data, int len, int rssi,
+                    int64_t received_ms)
 {
     if (!s_rx_queue || !src_mac || !data || len <= 0 || len > LINK_RX_MAX) return;
 
@@ -800,7 +850,10 @@ void rlc_link_on_rx(const uint8_t *src_mac,
     memcpy(it.src_mac, src_mac, 6);
     it.rssi = rssi;
     it.len  = len;
-    it.received_ms = now_ms();  /* C3: capture wire-receive timestamp, not deferred */
+    /* C3: timestamp was captured in the ESP-NOW recv callback (wire time);
+     * carried through unchanged — never re-stamped here, or queue latency
+     * would be counted as airtime by the dead-man logic. */
+    it.received_ms = received_ms;
     memcpy(it.data, data, len);
     (void)xQueueSend(s_rx_queue, &it, 0);
 }
@@ -887,11 +940,15 @@ void rlc_link_register_cmd_queue(QueueHandle_t q)
 
 int rlc_link_send_cmd(uint8_t msg_type, uint32_t seq, const void *payload, uint16_t payload_len)
 {
-    if (s_state != RLC_LINK_STATE_LINKED) return -1;
-
+    /* 5.9: state and token read under the same lock — reading s_state
+     * before taking the mutex could pair a stale LINKED check with a
+     * session token that has since been rotated. */
     lock();
+    rlc_link_state_t st = s_state;
     uint32_t token = s_session_token;
     unlock();
+
+    if (st != RLC_LINK_STATE_LINKED) return -1;
 
     uint8_t buf[RLC_MSG_MAX_SIZE];
     int len = rlc_msg_build(buf, msg_type, seq, token, payload, payload_len);

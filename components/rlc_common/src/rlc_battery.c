@@ -144,10 +144,13 @@ uint16_t rlc_battery_sample(void)
     }
 
     int voltage_mv = 0;
-    if (s_cali_handle) {
-        adc_cali_raw_to_voltage(s_cali_handle, raw, &voltage_mv);
+    if (s_cali_handle &&
+        adc_cali_raw_to_voltage(s_cali_handle, raw, &voltage_mv) == ESP_OK) {
+        /* calibrated conversion */
     } else {
-        /* Fallback: rough estimate for 12-bit, 12dB attenuation (0-3.3V) */
+        /* Fallback: rough estimate for 12-bit, 12dB attenuation (0-3.3V).
+         * Also used when calibration fails (§6) — an unchecked failure left
+         * voltage_mv at 0 and read as a flat battery. */
         voltage_mv = (raw * 3300) / 4095;
     }
 

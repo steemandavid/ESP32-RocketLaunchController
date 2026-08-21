@@ -64,8 +64,9 @@ typedef struct {
 
 /**
  * Guard callback for LINK_REQUEST rejection during safety-critical states.
- * Return false to silently ignore the LINK_REQUEST (FSD §6.4.1).
- * If not set (NULL), all LINK_REQUESTs are accepted.
+ * Return TRUE when the application is busy (ARMED/PRE_FIRE/FIRING/
+ * POST_FIRE) — the LINK_REQUEST is then silently ignored (FSD §6.4.1).
+ * Return false to accept. If not set (NULL), all LINK_REQUESTs are accepted.
  */
 typedef bool (*rlc_link_guard_cb_t)(void);
 
@@ -85,11 +86,14 @@ int rlc_link_init(rlc_link_role_t role, const uint8_t *peer_mac);
 /**
  * Receive-side entry point, called by the ESP-NOW recv worker task.
  * Forwards the frame to the link task's queue for processing.
+ * received_ms is the wire-receive timestamp captured in the ESP-NOW recv
+ * callback (C3, FSD §6.4.1b) — never re-stamped here.
  */
 void rlc_link_on_rx(const uint8_t *src_mac,
                     const uint8_t *data,
                     int len,
-                    int rssi);
+                    int rssi,
+                    int64_t received_ms);
 
 /**
  * Snapshot current link status (thread-safe, mutex-protected).
@@ -111,7 +115,7 @@ void rlc_link_set_remote_battery_mv(uint16_t mv);
 /**
  * Set the guard callback for LINK_REQUEST rejection.
  * When set, the callback is invoked before processing a LINK_REQUEST.
- * If it returns false, the request is silently ignored.
+ * If it returns true (busy), the request is silently ignored.
  * This allows the application state machine to block session resets
  * during ARMED/PRE_FIRE/FIRING/POST_FIRE (FSD §6.4.1).
  */
@@ -150,7 +154,9 @@ uint32_t rlc_link_get_session_token(void);
 
 /**
  * Get the next TX sequence number (thread-safe).
- * Returns 0 on overflow (caller should re-link).
+ * Returns 0 on counter wrap; a 0 return is not a usable seq — callers must
+ * abort the send and re-link (the anti-replay check compares seq numbers,
+ * so a wrapped counter cannot produce a monotonic sequence).
  */
 uint32_t rlc_link_next_seq(void);
 

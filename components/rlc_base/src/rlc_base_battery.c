@@ -20,9 +20,20 @@
 
 static const char *TAG = "rlc_bat";
 
+/* 5.13: priority boost during the ADC read (see battery_task). Must stay
+ * below configMAX_PRIORITIES — enforced at compile time. */
+#define BATTERY_ADC_BOOST_PRIO  24
+_Static_assert(BATTERY_ADC_BOOST_PRIO < configMAX_PRIORITIES,
+               "ADC boost priority exceeds configMAX_PRIORITIES");
+
 static void battery_task(void *arg)
 {
     (void)arg;
+    /* 5.11: self-register at task entry. Registering from the creator after
+     * xTaskCreate races this task's first esp_task_wdt_reset() (spawned at a
+     * higher priority than the creator) and produces the "task not found"
+     * TWDT error bursts seen at boot. */
+    esp_task_wdt_add(NULL);
     bool critical_posted = false;  /* edge-trigger so we only post once per crossing */
 
     /* Delay first read until WiFi/ESP-NOW init completes. The ADC driver
@@ -38,7 +49,7 @@ static void battery_task(void *arg)
         /* Boost priority during ADC read to prevent priority inversion
          * with WiFi driver (prio 23) over the shared ADC hardware lock. */
         int orig_prio = uxTaskPriorityGet(NULL);
-        vTaskPrioritySet(NULL, 24);
+        vTaskPrioritySet(NULL, BATTERY_ADC_BOOST_PRIO);
         rlc_battery_sample();
         vTaskPrioritySet(NULL, orig_prio);
         uint16_t mv = rlc_battery_get_voltage_mv();
@@ -69,8 +80,6 @@ static void battery_task(void *arg)
 
 void base_battery_start_task(void)
 {
-    TaskHandle_t handle;
-    xTaskCreatePinnedToCore(battery_task, "battery_task", 3072, NULL, 3, &handle, 0);
-    rlc_watchdog_add_task(handle);
+    xTaskCreatePinnedToCore(battery_task, "battery_task", 3072, NULL, 3, NULL, 0);
     ESP_LOGI(TAG, "battery task started (prio 3, core 0)");
 }

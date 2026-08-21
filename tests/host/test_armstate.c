@@ -5,36 +5,22 @@
  * path live with the key OFF, and keying the display off the key switch would
  * print SAFE over an energised igniter circuit.
  *
- * The logic under test is a pure function of the cached STATUS_UPDATE, so it
- * is reproduced here against the real protocol header rather than pulling in
- * the whole ILI9488 driver. Any divergence between this table and
- * rlc_display.c is itself a bug — see T-M07 below, which pins the field
- * semantics the display relies on. */
+ * The real production source is compiled in (rlc_arm_state.c — also what
+ * rlc_display.c calls), so a divergence between this table and the display
+ * is impossible. See T-M07 below, which pins the protocol field semantics
+ * the derivation depends on. */
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
 
 #include "rlc_protocol.h"
+#include "rlc_arm_state.h"
+#include "rlc_arm_state.c"   /* the real derivation, not a mirror */
 
-typedef enum {
-    BASE_ARM_UNKNOWN = 0, BASE_ARM_SAFE, BASE_ARM_READY,
-    BASE_ARM_ARMED, BASE_ARM_WELD,
-} base_arm_state_t;
-
-/* Mirror of base_arm_state() in rlc_display.c */
 static base_arm_state_t derive(const rlc_payload_status_update_t *st, bool fresh)
 {
-    if (!fresh) return BASE_ARM_UNKNOWN;
-    bool sense = st->base_arm_sense != 0;
-    bool key   = st->base_key_switch != 0;
-    uint8_t s  = st->base_state;
-    bool relay_expected_on = (s == STATE_ARMED || s == STATE_PRE_FIRE || s == STATE_FIRING);
-    if (st->error_flags & ERR_RELAY_FAULT) return BASE_ARM_WELD;
-    if (sense && !relay_expected_on)       return BASE_ARM_WELD;
-    if (sense)                             return BASE_ARM_ARMED;
-    if (key)                               return BASE_ARM_READY;
-    return BASE_ARM_SAFE;
+    return rlc_base_arm_state(st, fresh);
 }
 
 static const char *name(base_arm_state_t s)
