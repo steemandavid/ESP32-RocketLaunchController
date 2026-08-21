@@ -32,7 +32,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
-| 26 | Six of eight continuity channels read raw ADC 0 regardless of load — the GOOD band is unmeasurable and real igniters classify as SHORT | Hardware (suspected) | OPEN — decisive test identified | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
+| 26 | Continuity misclassified — **root cause found: ~64 Ω in the continuity return path lifts every sense node ~400 mV**, plus ADC calibration was disabled | Hardware + firmware | Calibration FIXED; **return-path resistance OPEN** | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
 | 25 | No hardware undervoltage cut-off on either battery — firmware thresholds only, and ERROR does not disconnect the load | Hardware | OPEN | Pack protection. A unit left switched on, or one whose firmware has halted, will discharge a LiPo past the point of permanent damage and into the unsafe-to-recharge region. |
 | 24 | Base 3.3 V rail runs high — killed chip #3 at 3.68 V, and **measured ~3.72 V again on 2026-08-21 with chip #4 fitted** | Hardware | **RECURRING — chip #4 at risk now** | Nothing functionally. The base has no rail clamp and no secured ground path, so a repeat ground-lift kills chip #4 the same way. |
 | 23 | Remote VBAT divider has no ADC headroom — a full 2S pack sits at 97 % of the ADC's usable ceiling | Hardware | OPEN | Accuracy only. Costs ~0.7 % at full charge; thresholds are unaffected as they sit at 71-78 % of range. |
@@ -1305,6 +1305,65 @@ last good reading on total ADC failure.
 already a robust median that is sufficient, and making it a median too would
 slow the response to a genuine voltage collapse — a behavioural change in a
 safety path that was not warranted by the evidence.
+
+---
+
+### Bug #26 ROOT CAUSE — ~64 Ω in the continuity return (2026-08-21)
+
+**Two independent faults, found in sequence.**
+
+**Fault 1 — ADC calibration was disabled.** `rlc_continuity.c` hardcoded
+`s_cali_handles[i] = NULL` with the note that curve fitting produced corrupted
+handles, and that "raw conversion is sufficient because the thresholds have
+wide margins". Bench measurement disproved the second claim. Re-enabled with
+defensive guards (non-OK return or NULL handle falls back to raw); no crash
+observed on chip #4, and the readings changed while raw stayed identical,
+confirming it is active.
+
+**Fault 2 — the continuity return path carries ~64 Ω.** With calibration on,
+every sense node reads ~400 mV above where it should. Modelling a common return
+resistance `R_g` carrying the summed sense current fits **every channel**:
+
+| CH | Load | Predicted | Measured | Error |
+|---|---|---|---|---|
+| 1 | 0.1 Ω | 400.1 mV | 400 mV | −0 |
+| 2 | 14.9 Ω | 413.3 mV | 411 mV | −2 |
+| 3 | 74.3 Ω | 464.9 mV | 465 mV | +0 |
+| 4 | 2160 Ω | 1552.0 mV | 1541 mV | −11 |
+| 5 | 4280 Ω | 2035.2 mV | 2023 mV | −12 |
+| 6 | Klima igniter | 401.8 mV | 400 mV | −2 |
+| 7 | Amazon igniter | 401.8 mV | 400 mV | −2 |
+
+Total sense current 6.28 mA × 64 Ω = the observed 400 mV lift. A resistive
+divider cannot produce that pattern any other way.
+
+**Predicted outcome once the return is repaired** — all eight bands correct,
+including the GOOD band that was previously thought unmeasurable:
+
+| CH | Load | Node | Band |
+|---|---|---|---|
+| 1 | 0.1 Ω | 0.1 mV | SHORT ✓ |
+| 2 | 14.9 Ω | 15.1 mV | GOOD ✓ |
+| 3 | 74.3 Ω | 73.7 mV | MARGINAL ✓ |
+| 4 | 2160 Ω | 1308 mV | MARGINAL ✓ |
+| 5 | 4280 Ω | 1857 mV | OPEN ✓ |
+| 6-8 | igniters ~2 Ω | ~2 mV | GOOD ✓ |
+
+**Verification step: measure resistance from the igniter low-side / continuity
+ground terminal to the DevKit GND pin.** Expect < 1 Ω; the model predicts ~64 Ω.
+
+**Earlier hypotheses, all disproved and worth recording:** R_ref missing (the
+pin rests at 3.6 V open, so R_ref is present); an ADC dead zone at 12 dB
+attenuation (0 dB changed nothing); and an ESP ground offset (DevKit GND to
+battery negative measures 4.8 mV in circuit). The "raw 0" readings seen before
+the DevKit was reseated were a *different* manifestation of the same bad
+grounding — that time lifting the ESP's own ground, driving the inputs negative.
+
+**The 3.71 V rail reading is also explained and is NOT a regulator fault.** The
+DevKit measures 3.35 V in circuit against its own GND, and 3.30 V on a new
+board. The bug #24 LDO replacement was probably unnecessary; that incident and
+this one are the same underlying problem — **the grounding of this system is
+bad**, and it has now produced three different misleading symptoms.
 
 ---
 

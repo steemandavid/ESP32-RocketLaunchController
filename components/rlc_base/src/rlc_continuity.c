@@ -229,13 +229,31 @@ void continuity_init(void)
             continue;
         }
 
-        /* Calibration disabled for continuity channels.
-         * The ESP-IDF adc_cali_create_scheme_curve_fitting produces corrupted
-         * handles for some ADC1 channels on ESP32-S3, causing LoadProhibited
-         * panics in adc_cali_raw_to_voltage. Raw conversion is sufficient for
-         * band classification (SHORT/GOOD/MARGINAL/OPEN) which has wide
-         * threshold margins. */
-        s_cali_handles[i] = NULL;
+        /* Calibration re-enabled 2026-08-21 (bug #26). It had been disabled
+         * with a note that curve fitting produced corrupted handles and
+         * LoadProhibited panics, and that "raw conversion is sufficient
+         * because the thresholds have wide margins". Bench measurement
+         * disproved that second claim: uncalibrated, a 0 V input reads raw
+         * ~458, i.e. +369 mV of offset, which is 5.6x the entire GOOD band.
+         * Real igniters were misclassified as a result.
+         *
+         * Guarded defensively — a non-OK return or a NULL handle leaves the
+         * channel on the raw fallback rather than trusting a bad handle. */
+        adc_cali_handle_t h = NULL;
+        adc_cali_curve_fitting_config_t cali_cfg = {
+            .unit_id  = ADC_UNIT_1,
+            .chan     = s_adc_chan[i],
+            .atten    = CONT_ADC_ATTEN,
+            .bitwidth = ADC_BITWIDTH_12,
+        };
+        esp_err_t cret = adc_cali_create_scheme_curve_fitting(&cali_cfg, &h);
+        if (cret == ESP_OK && h != NULL) {
+            s_cali_handles[i] = h;
+        } else {
+            ESP_LOGW(TAG, "ch%d: ADC calibration unavailable (%s) — raw fallback",
+                     i + 1, esp_err_to_name(cret));
+            s_cali_handles[i] = NULL;
+        }
     }
 
     ESP_LOGI(TAG, "continuity ADC initialised (%d channels)", NUM_CHANNELS);
