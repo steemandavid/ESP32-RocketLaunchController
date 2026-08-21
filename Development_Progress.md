@@ -32,6 +32,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
+| 26 | Six of eight continuity channels read raw ADC 0 regardless of load — the GOOD band is unmeasurable and real igniters classify as SHORT | Hardware (suspected) | OPEN — decisive test identified | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
 | 25 | No hardware undervoltage cut-off on either battery — firmware thresholds only, and ERROR does not disconnect the load | Hardware | OPEN | Pack protection. A unit left switched on, or one whose firmware has halted, will discharge a LiPo past the point of permanent damage and into the unsafe-to-recharge region. |
 | 24 | Base ESP32 chip #3 destroyed — 3.3 V rail floated to 3.68 V after accidental ground disconnect | Hardware | Chip replaced (chip #4); rail protection OPEN | Nothing functionally. The base has no rail clamp and no secured ground path, so a repeat ground-lift kills chip #4 the same way. |
 | 23 | Remote VBAT divider has no ADC headroom — a full 2S pack sits at 97 % of the ADC's usable ceiling | Hardware | OPEN | Accuracy only. Costs ~0.7 % at full charge; thresholds are unaffected as they sit at 71-78 % of range. |
@@ -1304,6 +1305,72 @@ last good reading on total ADC failure.
 already a robust median that is sufficient, and making it a median too would
 slow the response to a genuine voltage collapse — a behavioural change in a
 safety path that was not warranted by the evidence.
+
+---
+
+### Bug #26 — Six continuity channels read raw ADC 0 (2026-08-21, OPEN)
+
+**Bench test.** Known loads on all eight channels:
+
+| CH | Load | Predicted pin | Raw ADC | Band | Expected |
+|---|---|---|---|---|---|
+| 1 | 0.1 Ω | 100 µV | **0** | SHORT | SHORT ✓ (no information) |
+| 2 | 14.9 Ω | 14 831 µV | **0** | SHORT | GOOD ✗ |
+| 3 | 74.3 Ω | 72 611 µV | **0** | SHORT | MARGINAL ✗ |
+| 4 | 2160 Ω | 1 288 671 µV | 1284 | MARGINAL | MARGINAL ✓ (value 20 % low) |
+| 5 | 4280 Ω | 1 829 240 µV | 2026 | OPEN | OPEN ✓ (value 11 % low) |
+| 6 | Klima igniter | ~2 mV | **0** | SHORT | GOOD ✗ |
+| 7 | Amazon igniter | ~2 mV | **0** | SHORT | GOOD ✗ |
+| 8 | Amazon igniter | ~2 mV | **0** | SHORT | GOOD ✗ |
+
+**Two of eight bands correct.** All three real igniters report SHORT — the
+display tells the operator "terminals shorted, possible wiring fault" for a
+correctly connected igniter.
+
+**First hypothesis (ADC dead zone) was tested and DISPROVED.** The theory was
+that the GOOD band (0.5–66 mV) sat below the ESP32-S3's response floor at 12 dB
+attenuation. Switching the continuity channels to **0 dB** (0–950 mV, ~13x the
+resolution) changed nothing for the six dead channels — still raw 0 — while
+CH4 and CH5 correctly saturated at 4095, proving the attenuation change had
+taken effect. At 0 dB, CH3's predicted 72.6 mV should read ~313 counts.
+
+**Therefore the floor is not an ADC range limit.** Those six pins are either
+genuinely near 0 V, or those ADC channels are not functioning. The experiment
+was reverted; 12 dB at least reads the high end correctly.
+
+**Leading hypothesis: R_ref missing or open on the affected channels.** With no
+3.3 V feed through R_ref, the pin is tied toward GND through the load and
+R_pull, reading 0 **regardless of what is connected** — which matches the data
+exactly, since 0.1 Ω, 14.9 Ω, 74.3 Ω and three igniters all read identical 0.
+
+**Decisive test (10 seconds, not yet run): disconnect the load from CH2 and
+read the channel.**
+
+- Reads ~3.19 V (OPEN) → R_ref is present and the front end works; the fault is
+  elsewhere and the ADC-floor question reopens.
+- Stays at 0 → **R_ref missing or open on that channel** — a wiring/populating
+  fault, and the fix is hardware.
+
+Working channels are GPIO 5 and 6; dead are GPIO 2, 4, 7, 8, 9, 10. No firmware
+conflict on those pins (relays are 11–18, arm relay 47, siren 40, key sense 42,
+arm sense 21, VBAT 1) and the battery ADC on GPIO 1 works, so the ADC1
+peripheral itself is healthy.
+
+**Also found:** CH4 and CH5 read 20 % and 11 % below prediction, and
+inconsistently, so it is not a single scale error. Continuity ADC calibration
+is deliberately disabled (`rlc_continuity.c`, documented: curve-fitting
+produced corrupted handles and LoadProhibited panics on some ADC1 channels), so
+readings use the uncalibrated `(raw × 3300) / 4095` fallback — verified to match
+both in-range channels exactly. The stated justification, "wide threshold
+margins", is what this test contradicts.
+
+**Historical note:** test B2-A02/B2-C02 recorded "CH1 with ~2 Ω resistor = GOOD,
+32000–33000 µV". A 2 Ω load cannot produce 32 mV (32 mV is ~33 Ω), and today a
+2 Ω load reads 0. That baseline is unreliable.
+
+**Not changed pending diagnosis:** `CONT_OPEN_UV` remains 1500000 µV (~2828 Ω)
+even though FSD §5.4.2 documents ">500 Ω". Tightening the only band that blocks
+arming, on readings that are not trustworthy, would be worse than the mismatch.
 
 ---
 

@@ -506,8 +506,12 @@ static int test_continuity_classification(void)
         { 500000,   CONT_MARGINAL }, /* Still marginal */
         { 1500000,  CONT_OPEN },     /* At OPEN boundary */
         { 2000000,  CONT_OPEN },     /* Definitely open */
-        { 3190000,  CONT_OPEN },     /* Max ADC range */
+        { 3190000,  CONT_OPEN },     /* Open-circuit rest voltage */
     };
+
+    /* Vectors are expressed against the config constants deliberately: they
+     * caught the 2026-08-21 OPEN threshold move at boot rather than in the
+     * field. Keep them in step when the thresholds change. */
 
     const int count = sizeof(tests) / sizeof(tests[0]);
     for (int i = 0; i < count; i++) {

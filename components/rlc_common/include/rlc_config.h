@@ -184,13 +184,29 @@
 
 #define CONT_R_REF_OHM                 3300    /* Total series resistance (1.5k + 1.8k fusible) */
 #define CONT_R_PULL_OHM                100000  /* Pull-down per channel (Ω) */
+/* ADC attenuation for the continuity inputs.
+ *
+ * 12 dB (0-3100 mV full scale). 0 dB was tried on 2026-08-21 to recover the
+ * GOOD band and made no difference: the channels reading raw 0 still read
+ * raw 0, so the floor is NOT an ADC range limit. Kept at 12 dB, which at
+ * least reads the high end correctly, until the sense front end is
+ * understood. See bug #26. */
+#define CONT_ADC_ATTEN                 ADC_ATTEN_DB_12
+#define CONT_ADC_FULLSCALE_MV          3300
+
 #define CONT_SAMPLE_INTERVAL_MS        100     /* Per-channel ADC interval */
 #define CONT_OVERSAMPLE_COUNT          64      /* ADC samples averaged per reading */
 
 /* Thresholds in microvolts (µV) — multiply ADC millivolts by 1000 */
 #define CONT_SHORT_UV                  500     /* Below = SHORT (< 0.5 Ω) */
 #define CONT_MARGINAL_UV               66000   /* Above = MARGINAL (> ~20 Ω) */
-#define CONT_OPEN_UV                   1500000 /* Above = OPEN (> ~500 Ω) */
+/* NOTE: 1500000 uV is ~2828 ohm through the documented 3.3k/100k divider, not
+ * the ">500 ohm" the comment and FSD §5.4.2 claim. Tightening it to 432000 uV
+ * (a true 500 ohm) was prepared on 2026-08-21 but NOT adopted: the sense
+ * readings are not currently trustworthy (bug #26), and tightening the only
+ * band that blocks arming on untrustworthy numbers would be worse than the
+ * mismatch. Revisit once the front end is fixed. */
+#define CONT_OPEN_UV                   1500000 /* Above = OPEN (~2828 Ω, see note) */
 
 /* Hysteresis bands (µV) — prevents oscillation at boundaries */
 #define CONT_HYSTERESIS_SHORT_UV       200

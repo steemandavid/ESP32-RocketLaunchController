@@ -324,6 +324,15 @@ void rlc_rgb_led_set_brightness(uint8_t brightness)
 
 void rlc_rgb_led_set_pattern(rlc_led_pattern_t pattern)
 {
+    /* Safe before rlc_rgb_led_init(): the boot self-test failure path signals
+     * ERROR and halts, and on 2026-08-21 that path ran before the driver was
+     * initialised — xSemaphoreTake(NULL) asserted and the unit reboot-looped
+     * instead of halting with an error indication. A fail-safe halt that
+     * cannot itself fail matters more than the mutex here. */
+    if (!s_pattern_mutex) {
+        s_current_pattern = pattern;
+        return;
+    }
     xSemaphoreTake(s_pattern_mutex, portMAX_DELAY);
     s_current_pattern = pattern;
     xSemaphoreGive(s_pattern_mutex);

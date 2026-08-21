@@ -234,6 +234,17 @@ void base_app_main(void)
                      base_fsm_get_error_flags(),
                      rlc_error_flags_str(base_fsm_get_error_flags(),
                                          errbuf, sizeof(errbuf)));
+            char cbuf[160];
+            int n = 0;
+            for (int c = 1; c <= NUM_CHANNELS && n < (int)sizeof(cbuf) - 24; c++) {
+                static const char *bn[] = { "OPEN", "GOOD", "MARG", "SHRT" };
+                n += snprintf(cbuf + n, sizeof(cbuf) - n, " ch%d=%ld/%ld/%s", c,
+                              (long)continuity_get_raw(c),
+                              (long)continuity_get_uv(c),
+                              bn[continuity_get_channel(c) & 3]);
+            }
+            ESP_LOGI(TAG, "cont raw/uV:%s", cbuf);
+
             last_status_log_ms = now;
         }
 

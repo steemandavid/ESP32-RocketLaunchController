@@ -43,3 +43,18 @@ rlc_continuity_band_t continuity_get_channel(uint8_t ch);
  * Called from continuity_task context.
  */
 void continuity_register_change_cb(void (*cb)(void));
+
+/**
+ * Last sampled sense voltage for a channel, in microvolts.
+ *
+ * The band alone does not say how close a channel sits to a threshold, which
+ * is what matters when judging a marginal igniter or validating the band
+ * boundaries themselves.
+ *
+ * @param ch  channel 1-8
+ * @return    microvolts, or 0 for an invalid channel
+ */
+int32_t continuity_get_uv(uint8_t ch);
+
+/** Last averaged raw ADC count for a channel (1-8), before calibration. */
+int32_t continuity_get_raw(uint8_t ch);

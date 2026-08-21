@@ -45,6 +45,13 @@ static rlc_continuity_band_t s_bands[NUM_CHANNELS] = {
 };
 static bool s_band_initialized[NUM_CHANNELS] = { false };
 
+/* Last sampled sense voltage per channel. Retained so the raw measurement can
+ * be inspected without waiting for a band change — the band alone hides how
+ * close a channel sits to a threshold, which is what matters when judging a
+ * marginal igniter or checking the thresholds themselves. */
+static volatile int32_t s_uv[NUM_CHANNELS] = { 0 };
+static volatile int32_t s_raw[NUM_CHANNELS] = { 0 };   /* pre-calibration counts */
+
 /* Callback on band change */
 static void (*s_on_change_cb)(void) = NULL;
 
@@ -140,11 +147,13 @@ static int32_t sample_channel(int ch_idx)
     if (s_cali_handles[ch_idx] != NULL) {
         esp_err_t ret = adc_cali_raw_to_voltage(s_cali_handles[ch_idx], avg_raw, &voltage_mv);
         if (ret != ESP_OK) {
-            voltage_mv = (avg_raw * 3300) / 4095;
+            voltage_mv = (avg_raw * CONT_ADC_FULLSCALE_MV) / 4095;
         }
     } else {
-        voltage_mv = (avg_raw * 3300) / 4095;
+        voltage_mv = (avg_raw * CONT_ADC_FULLSCALE_MV) / 4095;
     }
+
+    s_raw[ch_idx] = avg_raw;
 
     /* Convert millivolts to microvolts for threshold comparison */
     return (int32_t)voltage_mv * 1000;
@@ -162,6 +171,8 @@ static void continuity_task(void *arg)
     while (1) {
         int32_t uv = sample_channel(current_ch);
         rlc_continuity_band_t new_band;
+
+        s_uv[current_ch] = uv;
 
         if (!s_band_initialized[current_ch]) {
             new_band = classify_initial(uv);
@@ -209,7 +220,7 @@ void continuity_init(void)
         }
 
         adc_oneshot_chan_cfg_t chan_cfg = {
-            .atten    = ADC_ATTEN_DB_12,
+            .atten    = CONT_ADC_ATTEN,
             .bitwidth = ADC_BITWIDTH_12,
         };
         ret = adc_oneshot_config_channel(adc_handle, s_adc_chan[i], &chan_cfg);
@@ -264,4 +275,16 @@ rlc_continuity_band_t continuity_get_channel(uint8_t ch)
 void continuity_register_change_cb(void (*cb)(void))
 {
     s_on_change_cb = cb;
+}
+
+int32_t continuity_get_uv(uint8_t ch)
+{
+    if (ch < 1 || ch > NUM_CHANNELS) return 0;
+    return s_uv[ch - 1];
+}
+
+int32_t continuity_get_raw(uint8_t ch)
+{
+    if (ch < 1 || ch > NUM_CHANNELS) return 0;
+    return s_raw[ch - 1];
 }
