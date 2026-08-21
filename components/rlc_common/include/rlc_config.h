@@ -186,13 +186,19 @@
 #define CONT_R_PULL_OHM                100000  /* Pull-down per channel (Ω) */
 /* ADC attenuation for the continuity inputs.
  *
- * 12 dB (0-3100 mV full scale). 0 dB was tried on 2026-08-21 to recover the
- * GOOD band and made no difference: the channels reading raw 0 still read
- * raw 0, so the floor is NOT an ADC range limit. Kept at 12 dB, which at
- * least reads the high end correctly, until the sense front end is
- * understood. See bug #26. */
-#define CONT_ADC_ATTEN                 ADC_ATTEN_DB_12
-#define CONT_ADC_FULLSCALE_MV          3300
+ * 0 dB (0-950 mV full scale, ~0.23 mV/LSB) rather than the 12 dB used
+ * elsewhere. An earlier 0 dB trial appeared to change nothing, but that test
+ * was invalid — a ~64 ohm fault in the continuity return was pinning every
+ * channel at the time. With the ground repaired, 12 dB measured 73.7 mV as
+ * raw 70 but collapsed 15.1 mV to raw 1 and 2 mV to raw 0, which is where
+ * real igniters live. 0 dB gives ~3.5x the counts per millivolt.
+ *
+ * An open channel rests at ~3.19 V, far above this range, so the ADC
+ * saturates at 4095. That is harmless (well inside the pin's absolute
+ * maximum) and unambiguous: saturated means OPEN. CONT_OPEN_UV must
+ * therefore stay below full scale. */
+#define CONT_ADC_ATTEN                 ADC_ATTEN_DB_0
+#define CONT_ADC_FULLSCALE_MV          950
 
 #define CONT_SAMPLE_INTERVAL_MS        100     /* Per-channel ADC interval */
 #define CONT_OVERSAMPLE_COUNT          64      /* ADC samples averaged per reading */
@@ -200,13 +206,14 @@
 /* Thresholds in microvolts (µV) — multiply ADC millivolts by 1000 */
 #define CONT_SHORT_UV                  500     /* Below = SHORT (< 0.5 Ω) */
 #define CONT_MARGINAL_UV               66000   /* Above = MARGINAL (> ~20 Ω) */
-/* NOTE: 1500000 uV is ~2828 ohm through the documented 3.3k/100k divider, not
- * the ">500 ohm" the comment and FSD §5.4.2 claim. Tightening it to 432000 uV
- * (a true 500 ohm) was prepared on 2026-08-21 but NOT adopted: the sense
- * readings are not currently trustworthy (bug #26), and tightening the only
- * band that blocks arming on untrustworthy numbers would be worse than the
- * mismatch. Revisit once the front end is fixed. */
-#define CONT_OPEN_UV                   1500000 /* Above = OPEN (~2828 Ω, see note) */
+/* 432000 uV is what 500 ohm produces through the 3.3k/100k divider, so this is
+ * the ">500 ohm" boundary FSD §5.4.2 documents. It previously sat at 1500000
+ * uV — ~2828 ohm, not 500 — and is unreachable at 0 dB attenuation anyway.
+ * Adopted 2026-08-21 once the return-path fault was repaired and the readings
+ * became trustworthy. OPEN is the only band that blocks arming, so this
+ * tightens a safety guard: a 1 kohm connection that will not fire is now
+ * refused rather than merely flagged. */
+#define CONT_OPEN_UV                   432000  /* Above = OPEN (> ~500 Ω) */
 
 /* Hysteresis bands (µV) — prevents oscillation at boundaries */
 #define CONT_HYSTERESIS_SHORT_UV       200

@@ -503,9 +503,9 @@ static int test_continuity_classification(void)
         { 30000,    CONT_GOOD },     /* Still good */
         { 66000,    CONT_MARGINAL }, /* At MARGINAL boundary */
         { 100000,   CONT_MARGINAL }, /* Marginal */
-        { 500000,   CONT_MARGINAL }, /* Still marginal */
-        { 1500000,  CONT_OPEN },     /* At OPEN boundary */
-        { 2000000,  CONT_OPEN },     /* Definitely open */
+        { 400000,   CONT_MARGINAL }, /* Still marginal, just under OPEN */
+        { 432000,   CONT_OPEN },     /* At OPEN boundary (~500 ohm) */
+        { 900000,   CONT_OPEN },     /* Definitely open */
         { 3190000,  CONT_OPEN },     /* Open-circuit rest voltage */
     };
 

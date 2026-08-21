@@ -32,7 +32,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
-| 26 | Continuity misclassified — **root cause found: ~64 Ω in the continuity return path lifts every sense node ~400 mV**, plus ADC calibration was disabled | Hardware + firmware | Calibration FIXED; **return-path resistance OPEN** | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
+| 26 | Continuity misclassified — ~64 Ω return-path fault + ADC calibration disabled + 12 dB attenuation | Hardware + firmware | **Return repaired, calibration on, 0 dB adopted: 5/8 → correct. Residual: igniters under ~5 Ω still read SHORT** | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
 | 25 | No hardware undervoltage cut-off on either battery — firmware thresholds only, and ERROR does not disconnect the load | Hardware | OPEN | Pack protection. A unit left switched on, or one whose firmware has halted, will discharge a LiPo past the point of permanent damage and into the unsafe-to-recharge region. |
 | 24 | Base 3.3 V rail runs high — killed chip #3 at 3.68 V, and **measured ~3.72 V again on 2026-08-21 with chip #4 fitted** | Hardware | **RECURRING — chip #4 at risk now** | Nothing functionally. The base has no rail clamp and no secured ground path, so a repeat ground-lift kills chip #4 the same way. |
 | 23 | Remote VBAT divider has no ADC headroom — a full 2S pack sits at 97 % of the ADC's usable ceiling | Hardware | OPEN | Accuracy only. Costs ~0.7 % at full charge; thresholds are unaffected as they sit at 71-78 % of range. |
@@ -1364,6 +1364,59 @@ DevKit measures 3.35 V in circuit against its own GND, and 3.30 V on a new
 board. The bug #24 LDO replacement was probably unnecessary; that incident and
 this one are the same underlying problem — **the grounding of this system is
 bad**, and it has now produced three different misleading symptoms.
+
+---
+
+### Bug #26 RESOLVED (mostly) — ground repaired, 0 dB adopted (2026-08-21)
+
+**User repaired the return path** (wiring error found, heavier gauge fitted, all
+grounds now within 0.3 Ω). The 400 mV lift vanished and the mid-range became
+accurate immediately — CH4 within 8 mV of prediction, CH5 within 5 mV.
+
+That isolated the last fault cleanly: **a genuine ADC low-end collapse at
+12 dB**. With good grounding, 73.7 mV read raw 70 (ideal 91), but 15.1 mV
+collapsed to raw 1 and 2 mV to raw 0.
+
+**0 dB attenuation then worked** — the earlier trial had been invalidated by the
+return fault pinning every channel. Adopted along with the documented 500 Ω
+OPEN boundary (`CONT_OPEN_UV` 1500000 → 432000 µV), which the 0 dB range also
+requires since 1.5 V is unreachable.
+
+| CH | Load | Predicted | Measured | Expected | Got | |
+|---|---|---|---|---|---|---|
+| 1 | 0.1 Ω | 0.1 mV | 0 | SHORT | SHORT | ✓ |
+| 2 | 14.9 Ω | 15.1 mV | 12 mV | GOOD | **GOOD** | ✓ |
+| 3 | 74.3 Ω | 73.7 mV | 73 mV | MARGINAL | **MARGINAL** | ✓ |
+| 4 | 2160 Ω | 1308 mV | saturated | OPEN | **OPEN** | ✓ |
+| 5 | 4280 Ω | 1857 mV | saturated | OPEN | **OPEN** | ✓ |
+| 6-8 | igniters ~2 Ω | 2.0 mV | 0 | GOOD | SHORT | ✗ |
+
+**5/8 correct, up from 2/8.** CH3 landed within 0.7 mV of prediction.
+
+**Residual limitation.** The ADC floor at 0 dB sits around 5 mV, so anything
+below roughly 5 Ω reads 0 and classifies SHORT. Real e-matches (1–3 Ω) fall in
+that band. At the specified 1 mA test current a 2 Ω igniter develops 2 mV,
+which is at the edge of what this ADC can do.
+
+**Operationally, the important distinction works:** OPEN — the only band that
+blocks arming — is now correct and set at the documented 500 Ω. A missing or
+broken igniter is detected. What cannot be distinguished is a good low-Ω
+igniter from a genuine dead short, since both present under 5 mV.
+
+**Options for the residual, none yet adopted:**
+
+1. **Accept and relabel** — merge SHORT into GOOD as "connected", since the two
+   are not separable at 1 mA. Honest, firmware-only, loses shorted-lead
+   detection (which does not currently work anyway).
+2. **Raise the test current.** `R_ref` 3.3 kΩ → 1 kΩ gives 3.3 mA and puts a
+   2 Ω igniter at 6.6 mV (raw ~28 at 0 dB). Still ~15x below the ~50 mA no-fire
+   threshold, versus the present ~50x. Hardware change, erodes a deliberate
+   safety margin.
+3. **Amplify** the sense node. Proper fix, most work.
+
+**Also worth aligning:** the GOOD/MARGINAL boundary is 66000 µV (~67 Ω) while
+FSD §5.4.2 documents 20 Ω. Neither test load falls between, so it changed no
+result here, but the code and spec still disagree.
 
 ---
 
