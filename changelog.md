@@ -69,6 +69,35 @@ glyph table and legend all updated. The diamond glyph that marked SHORT is
 removed along with its `fill_diamond()` helper. FSD **v1.29**. Full host suite
 green.
 
+**Caught during verification:** two private label tables in `rlc_base_main.c`
+(the 1 Hz TRACE line and the 5 s continuity line) still read
+`{ "OPEN", "GOOD", "MARG", "SHRT" }` after the enum rename, so the base log
+contradicted the remote display. Both now read `CONN`, with index 3 — the
+deprecated SHORT slot — also mapping to `CONN` so a stale cached band cannot
+print a name the system no longer uses.
+
+### On-target verification
+
+All eight channels were confirmed classifying correctly under the three-band
+scheme before the label fix:
+
+| CH | Load | Reading | Band |
+|---|---|---|---|
+| 1 | Amazon igniter | 4 mV | CONNECTED |
+| 2 | 14.9 Ω | 11-13 mV | CONNECTED |
+| 3 | 74.3 Ω | 68-70 mV | MARGINAL |
+| 4 | 2k16 | saturated | OPEN |
+| 5 | 4k28 | saturated | OPEN |
+| 6-8 | igniters | 3-4 mV | CONNECTED |
+
+**8/8 correct** — up from 2/8 at the start of this investigation.
+
+The label fix itself was flashed but **not re-verified on target**: both units
+went silent afterwards with their ports free and unheld, which points at the
+bench being powered down rather than a firmware fault. The change is a
+two-string edit confirmed by inspection and the host suite, but it is worth a
+glance at the next power-up.
+
 ## 2026-08-20 — Encoder rotation sense; strip tests were committed red
 
 ### Rotation reversed

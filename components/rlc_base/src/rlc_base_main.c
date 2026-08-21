@@ -256,7 +256,7 @@ void base_app_main(void)
             }
             int32_t wmean10 = (int32_t)((wsum * 10) / win_n);
 
-            static const char *tb[] = { "OPEN", "GOOD", "MARG", "SHRT" };
+            static const char *tb[] = { "OPEN", "CONN", "MARG", "CONN" };
             ESP_LOGI(TAG, "TRACE %s | ch1 now %ld  mean %ld.%ld  min %ld max %ld "
                           "spread %ld (n=%d)  %ld uV  %s",
                      tbuf, (long)r1, (long)(wmean10/10), (long)(wmean10%10),
@@ -284,7 +284,9 @@ void base_app_main(void)
             char cbuf[160];
             int n = 0;
             for (int c = 1; c <= NUM_CHANNELS && n < (int)sizeof(cbuf) - 24; c++) {
-                static const char *bn[] = { "OPEN", "GOOD", "MARG", "SHRT" };
+                /* Index 3 is the deprecated SHORT value: never produced, but a stale
+                 * cached band must not print a name the system no longer uses. */
+                static const char *bn[] = { "OPEN", "CONN", "MARG", "CONN" };
                 n += snprintf(cbuf + n, sizeof(cbuf) - n, " ch%d=%ld/%ld/%s", c,
                               (long)continuity_get_raw(c),
                               (long)continuity_get_uv(c),
