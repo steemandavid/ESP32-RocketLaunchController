@@ -75,6 +75,27 @@ static void arm_switch_task(void *arg)
     while (1) {
         int level = gpio_get_level(PIN_ARM_SWITCH);
         rlc_debounce_update(&s_db, level, on_debounce_change, NULL);
+
+        /* N1: the debouncer deliberately fires NO callback on its very first
+         * stable determination (rlc_debounce.c) — that suppression exists for
+         * the fire button, whose fresh-press interlock must not see a
+         * held-at-boot button as a press. The arm key is the opposite case:
+         * a key already turned to ARM at power-up is a state we must adopt,
+         * not an edge we must ignore. Without this sync s_armed stayed false
+         * until the operator physically toggled the key off and back on, so
+         * every long-press was refused with "TURN ARM KEY FIRST" and the arm
+         * LED never lit. Syncing from the debouncer every poll picks the
+         * initial determination up and is a no-op once the callback runs. */
+        if (rlc_debounce_is_stable(&s_db)) {
+            bool st = rlc_debounce_get_state(&s_db);
+            if (st != s_armed) {
+                s_armed = st;
+                set_arm_led(st);
+                ESP_LOGI(TAG, "arm state adopted from debouncer: %s",
+                         st ? "ARMED" : "DISARMED");
+            }
+        }
+
         esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -110,8 +131,10 @@ void arm_switch_init(void)
     /* Initialise debounce engine — 16-bit (160 ms at 10 ms polling) */
     rlc_debounce_init(&s_db, PIN_ARM_SWITCH, DEBOUNCE_16BIT);
 
-    /* LED off until the debouncer establishes the initial state (first poll);
-     * the initial determination fires no callback (see rlc_debounce.c). */
+    /* Start disarmed. The initial determination fires no callback (see
+     * rlc_debounce.c), so arm_switch_task adopts it explicitly from
+     * rlc_debounce_get_state() within the first ~160 ms — including the case
+     * where the key is already turned to ARM at power-up (N1). */
     s_armed = false;
     set_arm_led(false);
 
@@ -120,16 +143,21 @@ void arm_switch_init(void)
 
 void arm_switch_start_task(void)
 {
-    xTaskCreatePinnedToCore(
-        arm_switch_task,
-        "arm_sw_task",
-        3072,
-        NULL,
-        6,
-        &s_task_handle,
-        0   /* Core 0 */
-    );
-
+    /* m9: checked. Without this task arm_switch_is_armed() is frozen at
+     * false, so the arm key can never be seen — every long-press refused,
+     * with no explanation. Halt rather than present a dead arm path. */
+    if (xTaskCreatePinnedToCore(
+            arm_switch_task,
+            "arm_sw_task",
+            3072,
+            NULL,
+            6,
+            &s_task_handle,
+            0   /* Core 0 */
+        ) != pdPASS) {
+        ESP_LOGE(TAG, "arm switch task create FAILED — arm key cannot be read. HALTING.");
+        while (1) { vTaskDelay(portMAX_DELAY); }
+    }
 }
 
 bool arm_switch_is_armed(void)

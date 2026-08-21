@@ -96,6 +96,13 @@ void status_update_init(void)
 
 void status_update_start_task(void)
 {
-    xTaskCreatePinnedToCore(status_update_task, "stupd_task", 4096, NULL, 3, NULL, 0);
+    /* m9: checked. No status task means the remote never gets a STATUS_UPDATE,
+     * so its ARM guard 3 (fresh status) refuses everything — safe, but the
+     * cause would be invisible without this line. */
+    if (xTaskCreatePinnedToCore(status_update_task, "stupd_task", 4096, NULL, 3,
+                                NULL, 0) != pdPASS) {
+        ESP_LOGE(TAG, "status update task create FAILED — remote will see no status");
+        return;
+    }
     ESP_LOGI(TAG, "status update task started (prio 3, core 0)");
 }

@@ -52,9 +52,18 @@ static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 /* Software timer timestamps */
 static int64_t  s_prefire_start_ms = 0;
 
-/* Pending command tracking */
-static uint32_t s_pending_cmd_seq = 0;
-static uint8_t  s_pending_cmd_type = 0;
+/* Pending command tracking — what wait_for_ack() correlates incoming
+ * ACK/NACKs against (4.8).
+ *
+ * 5.6: these are written by send_cmd_arm()/send_cmd_fire(), and
+ * send_cmd_fire() is ALSO called from cmd_fire_repeat_task_fn on its own
+ * task. That is safe only because the two never overlap: the repeat task
+ * runs solely while s_fire_repeat_active is true, which the FSM task sets
+ * after wait_for_ack() has already returned, and clears before it starts any
+ * new ACK wait. If a future change starts a wait while repeats are running,
+ * these must move under a lock or become per-attempt locals. */
+static volatile uint32_t s_pending_cmd_seq = 0;
+static volatile uint8_t  s_pending_cmd_type = 0;
 
 /* Task and queue handles */
 static QueueHandle_t s_evt_queue = NULL;
@@ -437,6 +446,12 @@ static void process_event(const rlc_fsm_event_t *evt)
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
             ESP_LOGW(TAG, "BATTERY_CRITICAL during LINKING -> ERROR");
             do_enter_error_text("REMOTE BATTERY CRITICAL");
+        } else if (evt->type == EVT_LINK_LOST) {
+            /* m1: a LINK_REQUEST round that fails after the link had briefly
+             * come up posts EVT_LINK_LOST while we are still in LINKING.
+             * Adopt it so the alarm and the display agree with the link
+             * manager rather than sitting on "Connecting..." silently. */
+            do_enter_link_lost();
         }
         break;
 
@@ -525,6 +540,13 @@ static void process_event(const rlc_fsm_event_t *evt)
                  * on its own; also disarm in case a CMD_ARM reached it. */
                 ESP_LOGW(TAG, "ARM attempt interrupted — aborting");
                 send_cmd_disarm(ch);
+                /* m13: the interrupting event may have been EVT_ENCODER_ROTATE,
+                 * which wait_for_ack() consumed without applying. Re-sync from
+                 * the encoder — otherwise the display and strip cursor keep
+                 * showing the pre-rotation channel while the next long-press
+                 * arms a different one. Same divergence 4.9 closed for the
+                 * LINKING/LINK_LOST path. */
+                s_selected_channel = encoder_get_channel();
             } else if (result == -1) {
                 /* NACK */
                 ESP_LOGW(TAG, "ARM NACK: 0x%02x (%s)",
@@ -775,9 +797,16 @@ static void process_event(const rlc_fsm_event_t *evt)
     case STATE_LINK_LOST:
         if (evt->type == EVT_LINK_RECOVERED) {
             buzzer_stop();
-            rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
-            ESP_LOGI(TAG, "LINK_LOST -> IDLE (recovered)");
-            s_state = STATE_IDLE;
+            /* 4.9: same re-sync as every other IDLE entry — the encoder may
+             * have moved while the link was down. */
+            do_enter_idle();
+        } else if (evt->type == EVT_BATTERY_CRITICAL) {
+            /* m1: the base got this fix; the remote had not. The battery task
+             * edge-triggers and posts once per crossing, so discarding it here
+             * lost it permanently — the remote then recovered the link and
+             * returned to IDLE on a critical pack, with only the
+             * REMOTE_VBAT_MIN_ARM_MV arming guard left. Critical is terminal. */
+            do_enter_error_text("REMOTE BATTERY CRITICAL");
         }
         break;
 
@@ -822,6 +851,16 @@ static void check_timers(void)
                 }
             }
             do_enter_idle();
+            /* m3: latch the timeout. s_last_status_rx_ms used to be left
+             * alone, so the whole block re-ran on every 50 ms tick until a
+             * fresh STATUS_UPDATE arrived — a 20 Hz warning flood during
+             * exactly the condition an operator needs to read the log
+             * through. Clearing it also makes is_status_fresh() report
+             * "no data" rather than "old data", which is the honest answer
+             * and is what the ARM guard already treats as a refusal. */
+            portENTER_CRITICAL(&s_status_lock);
+            s_last_status_rx_ms = 0;
+            portEXIT_CRITICAL(&s_status_lock);
         }
     }
 }

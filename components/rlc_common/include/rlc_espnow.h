@@ -78,6 +78,16 @@ void rlc_espnow_register_send_cb(rlc_espnow_send_cb_t cb);
 void rlc_espnow_register_send_failure_cb(rlc_espnow_send_failure_cb_t cb);
 
 /**
+ * Cumulative ESP-NOW send failures since boot (m7).
+ *
+ * Replaces the per-failure log line that used to be emitted from the Wi-Fi
+ * task's send callback — a context where logging can block. Poll this from a
+ * housekeeping loop instead. Not reset by a successful send (unlike the
+ * consecutive counter that drives the link-loss threshold).
+ */
+uint32_t rlc_espnow_get_send_failure_total(void);
+
+/**
  * Send a raw message to the peer.
  *
  * @param peer_mac  Destination MAC (6 bytes)

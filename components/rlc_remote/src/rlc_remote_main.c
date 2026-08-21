@@ -118,6 +118,16 @@ void remote_app_main(void)
 {
     ESP_LOGI(TAG, "=== RLC Remote Unit v%s ===", RLC_VERSION_STRING);
 
+    /* N3: reconfigure the TWDT before ANY task exists. It rebuilds the
+     * subscriber list, so doing it later — as this unit used to, after
+     * display_start_task() — silently unsubscribes every task that has
+     * already self-registered. The remote then rebooted 11.4 s into every
+     * boot: the display task logged "task not found" at 20 Hz, the watchdog
+     * eventually triggered unfed, and the trigger handler panicked
+     * (LoadProhibited) walking its stale entries. app_main subscribes itself
+     * later, via rlc_watchdog_register_self(), once the slow init is done. */
+    rlc_watchdog_init();
+
     /* Visual feedback first (remote has no relays/safety GPIOs). */
     rlc_rgb_led_init();
     rlc_rgb_led_set_pixel_count(NUM_CHANNELS);  /* 8-pixel igniter strip */
@@ -172,8 +182,20 @@ void remote_app_main(void)
     fire_button_init();
     arm_switch_init();
 
-    /* §9.13 Step 8: Configure hardware watchdog + TWDT */
-    rlc_watchdog_init();
+    /* (§9.13 Step 8: the TWDT was reconfigured at the top of this function —
+     * see the N3 note there. Nothing to do here.) */
+
+    /* 5.7: register the input callbacks BEFORE starting the tasks that drive
+     * them. They used to be wired up at the very end of init, after the FSM
+     * came up — so any button press, key turn or encoder detent during the
+     * first couple of hundred milliseconds was silently dropped. The
+     * callbacks themselves are safe to install early: each one returns
+     * immediately if remote_fsm_get_queue() is still NULL. */
+    fire_button_register_cb(on_fire_press, on_fire_release);
+    arm_switch_register_cb(on_arm_switch_change);
+    encoder_register_rotate_cb(on_encoder_rotate);
+    encoder_register_press_cb(on_encoder_press);
+    encoder_register_long_press_cb(on_encoder_long_press);
 
     /* §9.13 Step 9: Start FreeRTOS tasks */
     /* Priority 7 — fire button (highest safety) */
@@ -216,14 +238,15 @@ void remote_app_main(void)
         return;
     }
 
-    /* Wire up input callbacks to post events to FSM */
-    fire_button_register_cb(on_fire_press, on_fire_release);
-    arm_switch_register_cb(on_arm_switch_change);
-    encoder_register_rotate_cb(on_encoder_rotate);
-    encoder_register_press_cb(on_encoder_press);
-    encoder_register_long_press_cb(on_encoder_long_press);
+    /* (Input callbacks were registered before their tasks started — see 5.7
+     * above.) */
 
     ESP_LOGI(TAG, "remote ready — Phase 3 FSM active, waiting for link");
+
+    /* N3: subscribe app_main only now. All the slow init (SPI display,
+     * NVS/Wi-Fi bring-up, peer registration retries) is behind us, so the
+     * 10 ms housekeeping loop below can feed comfortably. */
+    rlc_watchdog_register_self();
 
     /* Housekeeping loop — watchdog + LED status feeds + status log */
     int64_t last_log_ms = 0;
@@ -272,12 +295,13 @@ void remote_app_main(void)
             rlc_link_get_status(&ls);
             uint32_t enc_isr = 0, enc_valid = 0, enc_steps = 0;
             encoder_get_stats(&enc_isr, &enc_valid, &enc_steps);
-            ESP_LOGI(TAG, "state=%d armed=%u sel=%u rssi=%d missed=%u contact=%lums "
+            ESP_LOGI(TAG, "state=%d armed=%u sel=%u rssi=%d missed=%u txfail=%lu contact=%lums "
                           "attempts=%u vbat=%u mv arm=%d fire=%d "
                           "enc[isr=%lu valid=%lu step=%lu]",
                      remote_fsm_get_state(), remote_fsm_get_armed_channel(),
                      remote_fsm_get_selected_channel(),
                      ls.rssi_avg_dbm, ls.missed_pings,
+                     (unsigned long)rlc_espnow_get_send_failure_total(),
                      (unsigned long)ls.ms_since_contact, ls.linkreq_attempts,
                      rlc_battery_get_voltage_mv(), arm_switch_is_armed(),
                      fire_button_is_pressed(),

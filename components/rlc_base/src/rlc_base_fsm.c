@@ -149,6 +149,13 @@ static void send_ack(uint8_t msg_type, uint32_t seq_num, uint8_t channel)
     p.acked_sequence_number = seq_num;
     p.channel = channel;
     uint32_t seq = rlc_link_next_seq();
+    /* m6: 0 means the tx counter overflowed; rlc_link_next_seq() has already
+     * dropped the link. Sending anyway would put a frame on the wire that the
+     * peer rejects as a replay. */
+    if (seq == 0) {
+        ESP_LOGE(TAG, "ACK not sent (type=0x%02x) — seq overflow, link dropped", msg_type);
+        return;
+    }
     (void)rlc_link_send_cmd(MSG_CMD_ACK, seq, &p, sizeof(p));
     ESP_LOGI(TAG, "ACK sent: type=0x%02x ch=%u seq=%lu",
              msg_type, channel, (unsigned long)seq_num);
@@ -161,6 +168,10 @@ static void send_nack(uint8_t msg_type, uint32_t seq_num, uint8_t reason)
     p.nacked_sequence_number = seq_num;
     p.reason_code = reason;
     uint32_t seq = rlc_link_next_seq();
+    if (seq == 0) {   /* m6 — see send_ack() */
+        ESP_LOGE(TAG, "NACK not sent (type=0x%02x) — seq overflow, link dropped", msg_type);
+        return;
+    }
     (void)rlc_link_send_cmd(MSG_CMD_NACK, seq, &p, sizeof(p));
     ESP_LOGW(TAG, "NACK sent: type=0x%02x reason=0x%02x (%s)",
              msg_type, reason, rlc_nack_reason_str(reason));
@@ -221,14 +232,20 @@ static void do_enter_error(uint8_t err_flag)
     s_state = STATE_ERROR;
 }
 
-/* 2.2: Shared FIRING-exit tail. Every path that leaves FIRING funnels
- * through here so an ERR_VBAT_CRITICAL flag latched during the pulse
- * (FSD §7.2.5: "complete the pulse, then ERROR") can never be dropped.
- * Without this, operator-abort exits returned the unit to service on a
- * critical battery, and the stale flag later detonated as a spurious
- * terminal ERROR at the next POST_FIRE entry. Callers must already have
- * made the hardware safe (fire_timer_stop/relay_all_safe/siren_off) and
- * cleared s_firing_channel/s_armed_channel/s_link_lost_pending. */
+/* 2.2: Shared tail for every *abort* exit from FIRING, so an
+ * ERR_VBAT_CRITICAL flag latched during the pulse (FSD §7.2.5: "complete the
+ * pulse, then ERROR") can never be dropped. Without this, operator-abort
+ * exits returned the unit to service on a critical battery, and the stale
+ * flag later detonated as a spurious terminal ERROR at the next POST_FIRE
+ * entry. Callers must already have made the hardware safe
+ * (fire_timer_stop/relay_all_safe/siren_off) and cleared
+ * s_firing_channel/s_armed_channel/s_link_lost_pending.
+ *
+ * m4: NOT used by the normal FIRING -> POST_FIRE completion path. That path
+ * is the one case where the pulse did finish, so FSD §7.2.5's "complete the
+ * pulse, then ERROR" is honoured by the POST_FIRE flag check instead
+ * (process_event's POST_FIRE case and check_timers). Do not "unify" the two
+ * without re-reading that requirement. */
 static void firing_exit(rlc_state_t safe_state)
 {
     if (s_error_flags & ERR_VBAT_CRITICAL) {
@@ -635,12 +652,16 @@ static void process_event(const rlc_fsm_event_t *evt)
                      evt->data.cmd.channel);
         } else if (evt->type == EVT_LINK_LOST) {
             do_enter_link_lost();
-        } else if (evt->type == EVT_BATTERY_CRITICAL) {
-            do_enter_error(ERR_VBAT_CRITICAL);
         }
-        /* If battery critical was flagged during FIRING, enter ERROR now */
-        if (s_error_flags & ERR_VBAT_CRITICAL) {
-            do_enter_error(0);  /* Flag already set */
+        /* Battery critical — either arriving now, or latched during FIRING and
+         * carried here so the pulse could complete first (FSD §7.2.5).
+         * m4: a single check. Previously EVT_BATTERY_CRITICAL called
+         * do_enter_error() and then fell into an unconditional second call
+         * below — two relay_all_safe() passes (20 ms of vTaskDelay each), two
+         * siren restarts and a duplicate ERROR log for one event. */
+        if ((evt->type == EVT_BATTERY_CRITICAL) ||
+            (s_error_flags & ERR_VBAT_CRITICAL)) {
+            do_enter_error(ERR_VBAT_CRITICAL);
         }
         break;
 
@@ -676,8 +697,9 @@ static void check_timers(void)
 
     /* M1: Arm sense verification timeout */
     if (s_arm_verify_pending && s_arm_verify_start_ms > 0) {
-        if ((t - s_arm_verify_start_ms) >= 200) {
-            ESP_LOGW(TAG, "arm sense verify timeout (200 ms) — NACK ARM_SENSE_FAULT");
+        if ((t - s_arm_verify_start_ms) >= ARM_SENSE_VERIFY_TIMEOUT_MS) {
+            ESP_LOGW(TAG, "arm sense verify timeout (%d ms) — NACK ARM_SENSE_FAULT",
+                     ARM_SENSE_VERIFY_TIMEOUT_MS);
             abort_arm_verify(NACK_ARM_SENSE_FAULT);
         }
     }
@@ -751,6 +773,12 @@ static void check_timers(void)
             ESP_LOGE(TAG, "fire pulse done notification lost — backstop abort "
                           "(%lld ms in FIRING)", (t - s_firing_start_ms));
             s_firing_start_ms = 0;
+            /* m5: stop the GPTimer explicitly. The EVT_FIRE_PULSE_DONE
+             * handler does not (it is the path where the timer has already
+             * expired), but here we do not know *why* the notification never
+             * arrived — if the timer itself is the problem it is still armed.
+             * Every other FIRING exit calls this; so should the backstop. */
+            fire_timer_stop();
             rlc_fsm_event_t fe = {0};
             fe.type = EVT_FIRE_PULSE_DONE;
             process_event(&fe);

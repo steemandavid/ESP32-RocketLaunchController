@@ -1,5 +1,147 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-21 — Post-fix re-review, firmware 1.1.1, both units flashed and tested
+
+### What ran
+
+Second full-codebase review of the day, against commit 28293b6 (the fix commit
+for the 14:30 review). Written up as
+`Code_Review_AllPhases_20260821_1523.md`. Then: fixes applied, documentation
+updated, both units built and flashed, on-target testing.
+
+### Review result
+
+**All seven prior Majors (2.1–2.7) verified fixed in source**, along with the
+large majority of the 32 minors. The classifier and arm-state extractions into
+`rlc_common` close the duplicate-copy anti-pattern (Phase-2 M2) that had
+survived three review rounds.
+
+**Two new Majors**, both introduced or left standing by the fix commit, neither
+on the ignition path:
+
+- **N1 — the arm key being ON at power-up was never registered.** The debounce
+  fix suppressed the first stable reading's callback (correct — the fire button
+  needs that for its fresh-press interlock), but the remote's arm switch cached
+  its state *only* from that callback. Key already turned to ARM at boot →
+  `arm_switch_is_armed()` false forever, LED dark, every long-press refused
+  with "TURN ARM KEY FIRST", recoverable only by toggling the key. That is the
+  ordinary flow of turning the key before powering up. Fails safe, but the arm
+  path was dead.
+  Fixed per-consumer (the suppression itself must stay): the arm-switch task
+  and the base's arm-sense/key-sense tasks now adopt the debounced state by
+  polling `rlc_debounce_get_state()`. FSD §5.3.1 states both halves of the
+  contract; T-D01…T-D06 pin them from both sides.
+
+- **N2 — the siren mutex added last round was only half a fix.**
+  `esp_timer_stop()` does not cancel an already-dispatched callback, so a stale
+  tick could still (a) drive the siren back ON after `siren_off()` with the
+  timer stopped — permanently, or (b) read the PRE_FIRE pattern's zero cycle
+  count as "finished" and silence the siren for the whole 2 s countdown. (b)
+  opens on every launch, since ARMED→PRE_FIRE is always preceded by a running
+  500 ms timer. Fixed with a pattern-active flag; FSD §12.3 records why the
+  mutex alone is not enough.
+
+### N3 — found by flashing, not by reading (CRITICAL)
+
+Neither static pass caught this. Both verified that every task self-registers
+with the TWDT (5.10/5.11); neither asked *when the TWDT is reconfigured
+relative to those registrations*.
+
+`esp_task_wdt_reconfigure()` rebuilds the subscriber list. The remote called it
+at boot step 8, after `display_start_task()` — so the display and buzzer tasks
+were silently unsubscribed, the display logged `task not found` at 20 Hz, the
+unfed watchdog triggered at 11.4 s, and **the trigger handler panicked**
+(`LoadProhibited`) walking its stale entries. The remote rebooted every 11.4 s,
+on every boot. It also voided the watchdog coverage fix 5.10 had added to those
+two tasks, so a hung SPI transaction could still freeze an "ARMED" screen
+forever.
+
+Ironically, 5.11 (self-register at task entry) is what made this certain rather
+than intermittent — it moved registration earlier, ahead of the reconfigure.
+The base was clean only by accident, calling `rlc_watchdog_init()` before any
+task started.
+
+Fixed by splitting the function: `rlc_watchdog_init()` reconfigures only and is
+now the first statement of `app_main` on both units (FSD §9.13 step 0);
+`rlc_watchdog_register_self()` subscribes `app_main` just before its
+housekeeping loop (step 11), kept separate because the SPI/NVS/Wi-Fi/peer-retry
+init between them can exceed the 5 s timeout on its own.
+
+### Minors fixed
+
+m1 remote battery-critical in LINK_LOST now terminal (matching the base) plus
+LINKING handling EVT_LINK_LOST · m2 ping health window + expected-slot tracker
+reset with the session, ending the spurious ~5 s `COMM_DEGRADED` arm block
+after every link recovery · m3 stale-status timeout latches instead of
+re-firing at 20 Hz · m4 `firing_exit()` invariant comment corrected, POST_FIRE
+double-ERROR collapsed · m5 backstop stops the GPTimer · m6
+`rlc_link_next_seq()` drops the link on overflow, both base call sites check ·
+m7 send failures counted not logged from Wi-Fi context, surfaced as `txfail=`
+in both status lines · m8 fabricated handshake STATUS_UPDATE (`base_state =
+IDLE`, a false "safe" from a base in ERROR) replaced with a real push via a new
+application hook · m9 five unchecked `xTaskCreate` calls checked, two fatal ·
+m10 `SIREN_LINK_LOST_DURATION_MS` derived instead of dead · m11 `s_bands[]`
+volatile · m12 `ARM_SENSE_VERIFY_TIMEOUT_MS` named · m13 interrupted ARM
+re-syncs the channel selection · 5.7 remote input callbacks registered before
+their tasks start · base strip initialised before the self-tests so a
+self-test halt is actually visible.
+
+### Firmware version
+
+**1.1.0 → 1.1.1.** Arm-path behaviour changed on both units, so the strict
+version gate does real work here: a half-flashed pair refuses to link rather
+than running mismatched safety logic. Flash base and remote together.
+
+### Tests
+
+Host suite grown from 10 binaries / 217 checks to **12 binaries / 265 checks**,
+all passing. New `tests/host/test_debounce.c` compiles the real engine — the
+harness had been stubbing it out, which is part of why N1 was invisible. The
+stub is deleted and `test_encoder.c` now links the real debouncer too.
+
+### Documentation
+
+FSD → v1.31: new §5.3.1 (debounce initial-state contract, both rules as
+requirements), §12.3 pattern-cancellation requirement, §6 handshake
+STATUS_UPDATE tightened from description to requirement, §7.2.2 arm-verify
+window named and its non-blocking cancellation semantics spelled out, §14.1
+gained `ARM_SENSE_VERIFY_TIMEOUT_MS` and `FIRE_PULSE_BACKSTOP_MARGIN_MS`,
+§15.5 gained T-D01…T-D06 and had the stale `CONT_GOOD`/`SHORT` band names in
+T-U10/T-U12 corrected to the three-band scheme, and §9.13 gained the N3 TWDT
+ordering requirement as steps 0 and 11. README and Development_Progress updated
+to match.
+
+### On target
+
+Board identity confirmed by MAC before flashing (base `44:1b:f6:81:f1:70` on
+`...5B5E042156`, remote `ac:a7:04:e2:f2:8c` on `...5B5E043219`), both matching
+the configured peers. Both units flashed.
+
+Verified: 12/12 boot self-test suites on each; **zero TWDT errors, panics or
+unexpected reboots over 45 s continuous on both** (against a remote that was
+rebooting every 11.4 s before the N3 fix); link on LINK_REQUEST attempt 1,
+LINKING→IDLE in 40 ms; link-loss detection at 1548 ms and recovery 880 ms later
+with both FSMs following; bidirectional fw 1.1.1 version check; base 12.34 V /
+remote 8.00 V, RSSI −24, `missed=0`, `txfail=0`.
+
+### Operator bench tests
+
+**PASS:** N1 (arm key turned to ARM *before* power-up — LED lights, long-press
+accepted; this is the regression that made 1.1.0's arm path unusable) and a
+full arm → pre-fire → fire → post-fire cycle on channel 1 with the display's
+four-state BASE field tracked through it.
+
+**Open — N2 is not verified on hardware.** The siren output (GPIO 40) is not
+connected on the base, so while the ARMED→PRE_FIRE→FIRING sequence ran
+correctly, the audible behaviour was not observed, and the "siren stuck on
+after disarm" test could not be run at all. Both N2 failure modes are silent
+ones, which is exactly why a disconnected output cannot exercise them. The N2
+fix rests on code inspection until the driver is fitted (IRLZ44N low-side per
+FSD §5.4.8/§5.4.10, 150 Ω gate series + 10 kΩ gate pull-down for boot safety,
+flyback diode across the coil) and tests 2 and 3 are re-run.
+
+---
+
 ## 2026-08-21 — All findings from Code_Review_AllPhases_20260821_1430.md fixed
 
 ### What ran

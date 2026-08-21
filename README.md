@@ -96,10 +96,16 @@ Requires **ESP-IDF v5.4.1** and an ESP32-S3 (16 MB flash, 8 MB OCT PSRAM).
 
 The host tests compile the **real firmware sources** against mock ESP-IDF
 headers and assert their behaviour directly — currently the LED strip renderer,
-battery ADC sampling, error-flag naming, the base arm-state derivation, and the
-rotary encoder's quadrature decoder. They run once per unit, because the two
-units are not configured identically; a test whose hardware exists on only one
-unit compiles to a skip on the other.
+battery ADC sampling, error-flag naming, the base arm-state derivation, the
+rotary encoder's quadrature decoder, and the shift-register debounce engine.
+They run once per unit, because the two units are not configured identically;
+a test whose hardware exists on only one unit compiles to a skip on the other.
+Currently 12 binaries, 265 checks.
+
+Including the production source rather than mirroring it is the point: a
+duplicated copy of the continuity classifier passed its own boot self-test for
+three review rounds while the real one drifted. Where a module is pure enough
+to host-compile, the test includes the `.c` file.
 
 Serial ports are referenced by stable `/dev/serial/by-id/` paths rather than
 `/dev/ttyACMx`, which reorders between plug-ins. Current port and MAC
@@ -198,12 +204,13 @@ Known open items before any field use:
 
 | Document | Contents |
 |---|---|
-| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.30 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
+| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.31 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
 | `Development_Progress.md` | Per-phase task and test tracking, hardware reference, bug history |
 | `RLC_Project_Summary.md` | Plain-language overview written for club members |
 | `changelog.md` | Session-by-session development log |
 | `Phase{1,2,3}_Code_Review*.md` | Code reviews against the specification |
-| `Code_Review_AllPhases_*.md` | Full-codebase review (2026-08-21): 7 Major findings, 4 gating live-fire, plus a documentation-consistency audit |
+| `Code_Review_AllPhases_20260821_1430.md` | Full-codebase review: 7 Major findings, 4 gating live-fire, plus a documentation-consistency audit. All seven fixed in 28293b6. |
+| `Code_Review_AllPhases_20260821_1523.md` | Post-fix re-review: all 7 prior Majors verified fixed; 2 new Majors found (arm key at boot, siren stale-callback race) and 13 minors. Fixed in firmware 1.1.1. |
 
 ## Hardware
 

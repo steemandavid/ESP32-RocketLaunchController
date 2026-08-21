@@ -40,6 +40,13 @@
 
 #define ARM_TIMEOUT_MS                 10000
 
+/* FSD §7.2.2: how long the base waits for the arm relay's sense feedback to
+ * go HIGH after energising the coil, before NACKing ARM_SENSE_FAULT. The
+ * wait is non-blocking (M1) — safety events are still processed inside it.
+ * m12: was a bare 200 in rlc_base_fsm.c while every sibling timeout lived
+ * here. */
+#define ARM_SENSE_VERIFY_TIMEOUT_MS    200
+
 #define SIREN_LINK_LOST_DURATION_MS    4000
 #define NACK_DISPLAY_DURATION_MS       3000
 

@@ -183,6 +183,30 @@ static void arm_sense_task(void *arg)
         /* Feed the key sense debounce engine */
         rlc_debounce_update(&s_key_db, key_level, on_key_debounce_change, NULL);
 
+        /* N1: the debouncer fires no callback on its first stable
+         * determination, so the cached bools would otherwise keep the
+         * single raw read taken in arm_sense_init() until the next real
+         * transition — wrong if that read caught a transient, or if the key
+         * was turned during the first 160 ms. Adopt the debounced truth.
+         * Both feed arming guards, so the shadow must not be allowed to
+         * drift. No-op once the change callbacks are running. */
+        if (rlc_debounce_is_stable(&s_db)) {
+            bool armed = !rlc_debounce_get_state(&s_db);  /* LOW=active=disarmed */
+            if (armed != s_armed) {
+                s_armed = armed;
+                ESP_LOGI(TAG, "arm sense adopted from debouncer: %s",
+                         armed ? "ARMED (VBAT present)" : "DISARMED");
+            }
+        }
+        if (rlc_debounce_is_stable(&s_key_db)) {
+            bool key_on = !rlc_debounce_get_state(&s_key_db);
+            if (key_on != s_key_on) {
+                s_key_on = key_on;
+                ESP_LOGI(TAG, "key switch adopted from debouncer: %s",
+                         key_on ? "ON" : "OFF");
+            }
+        }
+
         /* Periodic contact-welding detection */
         s_weld_check_ticks++;
         if (s_weld_check_ticks >= WELD_CHECK_DIVISOR) {
@@ -245,15 +269,23 @@ void arm_sense_init(void)
 
 void arm_sense_start_task(void)
 {
-    xTaskCreatePinnedToCore(
-        arm_sense_task,
-        "arm_switch_task",
-        4096,
-        NULL,
-        7,              /* Priority 7 -- highest base unit task */
-        &s_task_handle,
-        0               /* Core 0 */
-    );
+    /* m9: checked, and this is the one that matters most. A silent failure
+     * here means no arm-relay feedback, no key-switch events and no weld
+     * detection, while the FSM's getters keep returning the init seed as if
+     * everything were fine. Halt rather than run the fire path blind. */
+    if (xTaskCreatePinnedToCore(
+            arm_sense_task,
+            "arm_switch_task",
+            4096,
+            NULL,
+            7,              /* Priority 7 -- highest base unit task */
+            &s_task_handle,
+            0               /* Core 0 */
+        ) != pdPASS) {
+        ESP_LOGE(TAG, "arm sense task create FAILED — no relay feedback, "
+                      "no key sense, no weld detection. HALTING.");
+        while (1) { vTaskDelay(portMAX_DELAY); }
+    }
 }
 
 bool arm_sense_get_debounced(void)

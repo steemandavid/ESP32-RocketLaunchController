@@ -45,7 +45,11 @@ static bool s_chan_configured[NUM_CHANNELS] = { false };
 
 /* ── Per-channel state ─────────────────────────────────────────── */
 
-static rlc_continuity_band_t s_bands[NUM_CHANNELS] = {
+/* m11: volatile, like its s_uv/s_raw siblings below. Written by
+ * continuity_task, read by the FSM task (guard 2 in guard_arm), the status
+ * task and the housekeeping loop. Benign in practice, but this is a value
+ * that gates arming — it should not be a compiler's to cache. */
+static volatile rlc_continuity_band_t s_bands[NUM_CHANNELS] = {
     CONT_OPEN, CONT_OPEN, CONT_OPEN, CONT_OPEN,
     CONT_OPEN, CONT_OPEN, CONT_OPEN, CONT_OPEN,
 };
@@ -259,15 +263,21 @@ void continuity_init(void)
 
 void continuity_start_task(void)
 {
-    xTaskCreatePinnedToCore(
-        continuity_task,
-        "continuity_task",
-        4096,
-        NULL,
-        5,              /* Priority 5 (FSD §9.10) */
-        NULL,
-        0               /* Core 0 */
-    );
+    /* m9: checked. A silent failure here means every channel keeps its
+     * initial CONT_OPEN and arming is refused forever with NO_CONTINUITY —
+     * safe, but indistinguishable from a wiring fault without this log. */
+    if (xTaskCreatePinnedToCore(
+            continuity_task,
+            "continuity_task",
+            4096,
+            NULL,
+            5,              /* Priority 5 (FSD §9.10) */
+            NULL,
+            0               /* Core 0 */
+        ) != pdPASS) {
+        ESP_LOGE(TAG, "continuity task create FAILED — no continuity sensing");
+        return;
+    }
     ESP_LOGI(TAG, "task started (prio 5, core 0, 4096 stack)");
 }
 

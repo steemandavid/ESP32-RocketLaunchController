@@ -17,6 +17,10 @@ int64_t g_mock_us = 0;   /* backs the esp_timer stub */
  * CONFIG_RLC_UNIT_REMOTE in pin_config.h. The runner builds every test once
  * per unit, so under the base build this file compiles to a skip. */
 #ifdef CONFIG_RLC_UNIT_REMOTE
+/* The debouncer used to be stubbed out here. It is pure C with no ESP
+ * dependencies, so compiling the real thing costs nothing and removes a
+ * shadowing header that would otherwise hide it from test_debounce.c. */
+#include "rlc_debounce.c"
 #include "rlc_encoder.c"
 
 static int fails = 0, checks = 0;

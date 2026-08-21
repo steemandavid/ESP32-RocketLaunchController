@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.29
+**Version:** 1.31
 **Date:** 2026-08-21
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -44,6 +44,7 @@
 | 1.28 | 2026-08-20 | Added `ENC_REVERSED` (§5.5.1, §14.1): the encoder's rotation sense is a board property, since which way a KY-040 counts depends on how A and B are wired. Set to 1 as built — the v1.27 decoder moved the channel selection opposite to the knob. Host test T-Q07 pins the direction explicitly so a rewire has to update the constant rather than silently inverting the operator's controls.
 | 1.29 | 2026-08-21 | Continuity reworked after bench characterisation. **SHORT merged into CONNECTED** (§5.4.2): at 1 mA a dead short and a 1.5-1.9 Ω igniter differ by 1-1.6 mV, within noise, drift and lead contact resistance; three runs on a fixed igniter implied 0.77/1.15/1.77 Ω. **`CONT_GOOD` renamed `CONT_CONNECTED`** — the band means a low-resistance path exists, not that the igniter is good. Wire encoding unchanged (value 3 retained, never emitted), so no version bump. Continuity ADC switched to **0 dB** attenuation and calibration **re-enabled** (it was hardcoded off, costing +369 mV of offset). `CONT_OPEN_UV` 1500000 → 432000 µV, finally the documented ~500 Ω. Recorded as-built hardware: snubbers on all 8 channel relays and the arm relay; 1N5819 clamps to GND and 3V3 on CH1-6 (CH7-8 pending).
 | 1.30 | 2026-08-21 | **Continuity ADC clamps completed on all eight channels** (2x 1N5819 per channel, one to GND and one to +3V3). Recorded the assessment: the 1 A part is *correct* at this node, because there is zero series resistance between the relay NC contact and the ADC pin — the clamp carries the full fault current, which a BAT85 (200 mA) or 1N5711 (15 mA) would not survive — and node impedance is set by the igniter, so leakage does not disturb the bands. This does **not** contradict bug #22, where 1N5819 is the wrong part on a 6.4 kΩ divider. Two residual gaps added to the §5.4.9 protection BOM: (a) the 3V3-side clamps inject fault current directly into the 3.3 V rail, now on eight channels instead of one; (b) 1N5819 V_f puts the pin at 3.9-4.2 V during a fault, above the 3.6 V absolute maximum. Required: a **220 Ω sense-branch series resistor per channel** between the relay NC contact and the pin/clamp junction, and an **active 3.3 V rail clamp** (TL431 shunt at ~3.57 V — a 3V6 zener is not adequate in a 3.3/3.6 V window). Both change the continuity thresholds and require recalibration. |
+| 1.31 | 2026-08-21 | Applied the post-fix code review (`Code_Review_AllPhases_20260821_1523.md`). **Firmware 1.1.0 → 1.1.1.** Two Majors: **(N1)** the debounce engine's first stable reading deliberately fires no callback — required by the fire button's fresh-press interlock (§5.5.3) — but the remote's arm switch cached its state only from that callback, so a key already turned to ARM at power-up was never seen and arming was impossible until the key was toggled. §5.3 now states the contract explicitly and requires consumers to adopt the initial determination by polling. **(N2)** `esp_timer_stop()` does not cancel an already-dispatched callback, so the siren's pattern mutex was not sufficient: a stale tick could drive the siren back ON after `siren_off()` (with the timer stopped, permanently) or silence it through the whole PRE_FIRE countdown. A pattern-active flag now invalidates superseded callbacks (§5.4.7). Minors: remote now treats a critical battery in LINK_LOST as terminal, matching the base; link health window and expected-ping tracker reset with the session, so ARM is no longer refused `COMM_DEGRADED` for ~5 s after every recovery; the stale-status timeout latches instead of re-firing at 20 Hz; `rlc_link_next_seq()` drops the link on overflow like its internal siblings; the placeholder handshake `STATUS_UPDATE` (which hardcoded `base_state = IDLE`, a false "safe" if the base was in ERROR) is replaced by a real push via a new application hook; ESP-NOW send failures are counted rather than logged from Wi-Fi task context; remote input callbacks are registered before their tasks start; five unchecked `xTaskCreate` calls checked, two of them fatal; `ARM_SENSE_VERIFY_TIMEOUT_MS` and `SIREN_LINK_LOST_DURATION_MS` are now real constants (§14.1). Host tests T-D01…T-D06 added (§15.5), and the debounce engine is no longer stubbed out in the host harness. **(N3, Critical, found on target after flashing)** `esp_task_wdt_reconfigure()` rebuilds the TWDT subscriber list, and the remote called it at boot step 8 — *after* `display_start_task()`. The display and buzzer tasks were silently unsubscribed, the display logged "task not found" at 20 Hz, and the unfed watchdog triggered at 11.4 s and panicked (`LoadProhibited`) inside its own report path, rebooting the unit on every boot. §9.13 gains a step 0 (reconfigure before any task) and a step 11 (`app_main` subscribes itself after the slow init), with the ordering stated as a requirement. |
 
 ---
 
@@ -542,6 +543,20 @@ The fire button uses an 8-bit register (80 ms debounce) to minimise latency on r
 The rotary encoder A/B pins remain interrupt-driven with an `ENC_LOCKOUT_US` (2 ms) lockout (shift-register debounce is not suitable for quadrature decoding). A cycle-position quadrature decoder is used, which gives consistent direction on every transition for half-step encoders (e.g. KY-040), unlike Gray code lookups which alternate direction. The encoder push button uses the shift-register method at 10 ms polling.
 
 The debounce engine shall be implemented as a generic, reusable module in `rlc_common` that accepts a GPIO number, polling interval, register width (8-bit or 16-bit), and callback for state changes.
+
+#### 5.3.1 Initial-state contract (added v1.31)
+
+The shift register is seeded all-HIGH at init, so the first stable reading is a *determination*, not a transition. The engine therefore behaves as follows, and both halves are load-bearing:
+
+1. **The first stable reading SHALL set the debounced state but SHALL NOT invoke the change callback.**
+   This is required by the fire button's fresh-press interlock (§5.5.3): a button already held down at power-on must never produce a press event, only a release followed by a genuine press.
+
+2. **The first stable reading SHALL be observable by polling** (`rlc_debounce_get_state()` / `rlc_debounce_is_stable()`).
+   Consumers that maintain their own cached copy of the input state — the remote arm switch (§5.5.2), and the base arm sense and key sense (§5.4.3, §5.4.3b) — **SHALL adopt the debounced state by polling on every cycle**, not from the callback alone.
+
+Rule 2 exists because omitting it is a real, shipped defect (review finding N1, firmware 1.1.0): the remote's arm switch cached its state only from the callback, so a key already turned to ARM at power-up left `arm_switch_is_armed()` false indefinitely. Every long-press was refused with "TURN ARM KEY FIRST", the arm indicator LED stayed dark, and the only recovery was to physically toggle the key off and back on. The failure is safe (arming refused, never granted) but total, and it appears in the ordinary operator flow of turning the key before powering up, or power-cycling a remote left in ARM.
+
+Host tests **T-D01…T-D06** (§15.5) pin both rules; breaking either one breaks one of the two inputs.
 
 ### 5.4 Base Unit I/O
 
@@ -1255,7 +1270,9 @@ Total header size: 12 bytes.
 
 **Firmware version enforcement:** the remote shall compare all three components (major, minor, patch) of the received `base_firmware_version` with its own version. If any component differs, the link shall be rejected. The remote shall display "FIRMWARE MISMATCH — Base vX.Y.Z / Remote vX.Y.Z — Reflash required" and shall NOT transition to IDLE. The remote stays in LINKING state but stops retrying, displaying the mismatch error until power cycle.
 
-**Immediately after sending LINK_ACK**, the base SHALL send a full STATUS_UPDATE message to provide the remote with initial system state.
+**Immediately after sending LINK_ACK**, the base SHALL send a **full** STATUS_UPDATE message to provide the remote with initial system state.
+
+> **"Full" is a requirement, not a description (v1.31, review finding m8).** Until firmware 1.1.1 the link layer sent a Phase-1 placeholder here: an all-zero payload with `base_state` hardcoded to `STATE_IDLE`. The app-state guard above rejects LINK_REQUESTs only for the *busy* states (ARMED/PRE_FIRE/FIRING/POST_FIRE), so a base sitting in **ERROR** or **LINK_LOST** answered every handshake by asserting IDLE with no error flags and no continuity data — a false "safe" on the remote's status line and channel strip until the real 2 s update arrived. The link layer no longer fabricates this frame; it invokes an application hook that asks the base's status task to sample and push the true state, which it does within its 100 ms tick.
 
 ##### PING (0x10) — 6 bytes
 
@@ -1565,7 +1582,8 @@ For the initial command:
   9. **Link quality is acceptable** — `ERR_COMM_DEGRADED` is NOT set (ping failure rate ≤ 30% in last 10 pings). Arming on a degraded link risks dead-man timeout false aborts during firing.
 - Actions on successful transition:
   1. Record armed channel number.
-  2. Energise arm relay (GPIO 47 HIGH). Verify arm sense GPIO 21 reads HIGH within 200 ms (M1 arm relay verify — confirms contacts actually closed and VBAT on fire bus. If not HIGH, immediately disarm and set `ERR_RELAY_FAULT`).
+  2. Energise arm relay (GPIO 47 HIGH). Verify arm sense GPIO 21 reads HIGH within `ARM_SENSE_VERIFY_TIMEOUT_MS` (200 ms — §14.1) (M1 arm relay verify — confirms contacts actually closed and VBAT on fire bus. If not HIGH, immediately disarm and set `ERR_RELAY_FAULT`).
+     The wait is **non-blocking**: the FSM remains in IDLE with a pending-verify flag, so safety events are still processed inside the window. A `CMD_DISARM`, `CMD_CEASE_FIRE`, `CMD_FIRE`, key-switch-OFF, battery-critical, weld-fault or link-loss arriving during the window SHALL cancel the pending ARM, de-energise the relay and NACK with the true reason — never complete the arm behind the operator (review findings 2.1 and 4.6).
   3. Start siren pulsing (500 ms on / 500 ms off).
   4. Start arm timeout timer (`ARM_TIMEOUT_MS`, default: 10000 ms). If no CMD_FIRE is received before this timer expires, auto-disarm and return to IDLE.
   5. Send `CMD_ACK` (with channel field) to remote.
@@ -2090,6 +2108,7 @@ Both units SHALL execute the following initialisation sequence in order. If any 
 
 | Step | Action | Mandatory | Notes |
 |------|--------|-----------|-------|
+| 0 | **Reconfigure the TWDT to `WATCHDOG_TIMEOUT_S`** — before any task is created | Yes | §9.6. See the ordering requirement below. |
 | 1 | Configure all channel SPDT relay output GPIOs and arm relay output GPIO (GPIO 47) to safe (inactive / de-energised) state | Yes | §9.7 — before any other peripheral |
 | 2 | Verify packed struct field offsets (`offsetof()` checks) | Yes | §9.9 |
 | 3 | Verify CRC32-C test vector | Yes | §6.2.2 |
@@ -2097,9 +2116,27 @@ Both units SHALL execute the following initialisation sequence in order. If any 
 | 5 | Initialise ESP-NOW, set PMK, register peer | Yes | §6.2.1, §6.2.3 — retry 3× on failure |
 | 6 | Initialise display, read-back display ID | Yes (remote only) | §5.5.6 |
 | 7 | Configure all input GPIOs (including arm relay feedback §5.4.3 and key switch sense §5.4.3b), start debounce engine | Yes | §5.3 |
-| 8 | Configure hardware watchdog and TWDT | Yes | §9.6 |
+| 8 | *(was: configure watchdog — moved to step 0, see below)* | — | §9.6 |
 | 9 | Start FreeRTOS tasks | Yes | §9.10 |
 | 10 | Begin link establishment (LINK_REQUEST / wait for link) | Yes | §6.4.1 |
+| 11 | **Subscribe `app_main` to the TWDT**, immediately before entering its housekeeping loop | Yes | §9.6 |
+
+**TWDT ordering requirement (v1.31, review finding N3 — Critical).**
+
+`esp_task_wdt_reconfigure()` **rebuilds the watchdog's subscriber list.** Every task that has already called `esp_task_wdt_add(NULL)` loses its subscription. The reconfigure therefore SHALL happen at **step 0**, before any task exists — not at the old step 8.
+
+Getting this wrong is not a degraded-diagnostics problem, it is a reboot loop. The remote called it at step 8, after `display_start_task()`:
+
+- the display task's subscription was silently dropped;
+- its `esp_task_wdt_reset()` then logged `task not found` at the full 50 ms frame rate;
+- the now-unfed watchdog triggered at 11.4 s and **panicked inside its own report path** (`LoadProhibited`) while walking stale entries;
+- the unit rebooted, and did so on every boot.
+
+It also silently voided the §9.6 coverage the display and buzzer tasks were given specifically so a hung SPI transaction could not freeze an "ARMED"/"PRE-FIRE" screen forever.
+
+Subscribing `app_main` is deliberately **split out to step 11** rather than done at step 0: the initialisation between them (SPI display bring-up, NVS, Wi-Fi start, up to three 500 ms peer-registration retries) can exceed `WATCHDOG_TIMEOUT_S` on its own, so subscribing early would trade one spurious panic for another.
+
+Spawned tasks continue to self-register at task entry (§9.6). The two rules compose: **reconfigure first, then start tasks, and let each task add itself.**
 
 ---
 
@@ -2447,6 +2484,17 @@ Buzzer patterns shall be driven by a dedicated FreeRTOS task (`buzzer_task`) in 
 
 Siren control is managed directly by the base state machine. The siren pulsing in ARMED state shall be driven by a timer that toggles the siren GPIO every 500 ms. On transition to PRE_FIRE, the siren is set to continuous ON. On disarm or transition to POST_FIRE/IDLE, the siren is set OFF.
 
+**Pattern cancellation (added v1.31, review finding N2).** The pulsing patterns run on an `esp_timer` callback while every pattern change is made from task context. `esp_timer_stop()` does **not** cancel a callback that has already been dispatched — only `esp_timer_delete()` waits, and that cannot be called from a path holding the lock the callback wants. Serialising the pattern state under a mutex is therefore **not sufficient**: a callback can be parked on the lock while a task reconfigures the pattern underneath it, and then act on the new state as if it were the old one.
+
+The implementation SHALL therefore mark whether a periodic pattern is genuinely running, and a callback whose pattern has been superseded SHALL return without touching the siren output. `siren_off()` SHALL additionally clear the pattern's remaining cycle count.
+
+Both failures this prevents were reachable in firmware 1.1.0 and neither is self-correcting:
+
+| Failure | Mechanism |
+|---|---|
+| **Siren stuck ON after disarm** | `siren_off()` left the cycle count at −1 (infinite, from the ARMED pattern). The stale callback toggled the output back ON — with the timer now stopped, nothing ever turned it off again. |
+| **Siren silent through the PRE_FIRE countdown** | `SIREN_PRE_FIRE` sets the cycle count to 0 (steady ON, no timer). A callback left over from the ARMED pattern read 0 as "pattern finished" and drove the siren OFF — no audible pad warning for the full 2 s countdown. ARMED→PRE_FIRE is *always* preceded by a running 500 ms timer, so this window opens on every launch. |
+
 ---
 
 ## 13. Error Handling
@@ -2538,10 +2586,12 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `FIRE_PULSE_DURATION_MS` | 1000 | Igniter current duration. **Safety-relevant parameter** — keep as short as practical. |
 | `COMPLETE_PULSE_ON_LINK_LOSS` | true | If true, base completes fire pulse on link loss during FIRING. If false, base immediately cuts fire pulse. See §7.2.5. **Safety-relevant parameter — RSO/operator should choose.** |
 | `POST_FIRE_COOLDOWN_MS` | 2000 | Cooldown before returning to IDLE |
-| `SIREN_LINK_LOST_DURATION_MS` | 4000 | Siren duration on link loss (4 × 500on/500off) |
+| `FIRE_PULSE_BACKSTOP_MARGIN_MS` | 250 | Grace beyond `FIRE_PULSE_DURATION_MS` before the FSM's max-duration backstop synthesises pulse completion. Defence in depth: if the GPTimer notification is ever lost the FSM would otherwise sit in FIRING with the relay energised, and the task watchdog would not catch it (the task keeps feeding). |
+| `SIREN_LINK_LOST_DURATION_MS` | 4000 | Siren duration on link loss. Since v1.31 the cycle count is **derived** from this and the 500 ms half-period (4 cycles); it was previously a bare literal, so editing this constant had no effect. |
 | `NACK_DISPLAY_DURATION_MS` | 3000 | How long NACK reason text is shown on display |
 | `WATCHDOG_TIMEOUT_S` | 5 | Hardware watchdog timeout |
 | `ARM_TIMEOUT_MS` | 10000 | Maximum time in ARMED state without CMD_FIRE before auto-disarm |
+| `ARM_SENSE_VERIFY_TIMEOUT_MS` | 200 | Time allowed for arm sense (GPIO 21) to read HIGH after the arm relay is energised, before NACK `ARM_SENSE_FAULT` (§7.2.2 step 2). The wait is non-blocking — safety events are still processed inside it. Named in v1.31; previously a bare literal in the FSM. |
 | `DEBOUNCE_POLL_INTERVAL_MS` | 10 | Default shift-register poll interval |
 
 ### 14.2 Voltage Thresholds
@@ -2739,12 +2789,20 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-E05 | Error flag naming | Comma-separated list formatting, including the empty mask. |
 | T-E06 | Error flag naming | Truncation into an undersized buffer stays in bounds and NUL-terminated. |
 | T-E07 | Error flag naming | The reported field case: 0x02 names the critical battery flag. |
-
-**Runner:** `./tests/host/run.sh` — compiles each `tests/host/test_*.c` against the mock headers in `tests/host/stubs/` and runs it. T-L01…T-L09 include `rlc_rgb_led.c` directly so the real rendering functions are exercised, capturing and asserting every emitted pixel.
-| T-U10 | Continuity band classification | Feed known microvolt values: 0, 300, 500, 1000, 30000, 66000, 100000, 500000, 1500000, 2000000, 3190000. Verify correct band assignment (SHORT, GOOD, MARGINAL, OPEN) at each threshold. |
+| T-D01 | Debounce engine | Settle width: an 8-bit register latches after 8 consecutive readings, a 16-bit register after 16, and neither latches early. |
+| T-D02 | Debounce engine | The **first stable reading fires no callback** — in either direction. This is the fire button's fresh-press interlock (§5.3.1 rule 1, §5.5.3): a button held at power-on must not read as a press. |
+| T-D03 | Debounce engine | The first stable reading **is** visible via `rlc_debounce_get_state()` / `rlc_debounce_is_stable()` (§5.3.1 rule 2). This is the path the remote arm switch must poll; omitting it was review finding N1. |
+| T-D04 | Debounce engine | Genuine transitions after the initial determination fire exactly one callback each, with the correct state, and a held input fires no repeats. |
+| T-D05 | Debounce engine | Bounce shorter than the register width never latches; a clean run afterwards does. |
+| T-D06 | Debounce engine | NULL-safe API: init/update/get_state/is_stable on a NULL handle do not crash and report inactive. |
+| T-U10 | Continuity band classification | Feed known microvolt values: 0, 300, 500, 1000, 30000, 66000, 100000, 500000, 1500000, 2000000, 3190000. Verify correct band assignment (**CONNECTED, MARGINAL, OPEN** — three bands since v1.29) at each threshold. |
 | T-U11 | Continuity hysteresis | Feed voltage sequence oscillating near each threshold boundary. Verify no spurious band transitions within the hysteresis band. |
-| T-U12 | Continuity bands encoding | Verify 2-bit-per-channel packing into uint16: ch1 in bits 1:0 through ch8 in bits 15:14. Verify extraction for all band combinations. Verify that enum values (CONT_OPEN=0, CONT_GOOD=1, CONT_MARGINAL=2, CONT_SHORT=3) match wire encoding directly (00=OPEN, 01=GOOD, 10=MARGINAL, 11=SHORT) with no mapping required. |
+| T-U12 | Continuity bands encoding | Verify 2-bit-per-channel packing into uint16: ch1 in bits 1:0 through ch8 in bits 15:14. Verify extraction for all band combinations. Verify that enum values (`CONT_OPEN`=0, `CONT_CONNECTED`=1, `CONT_MARGINAL`=2) match wire encoding directly with no mapping required. Value 3 (`CONT_SHORT`) is deprecated and never emitted; verify it folds to the current scheme on decode. |
 | T-U13 | Struct field offset verification | Verify `offsetof()` for all packed message structs matches expected byte offsets from §6.3.3. Specifically: `rlc_payload_cmd_arm_t.integrity_crc` at offset 0, `.channel` at offset 4. Same for cmd_disarm_t and cmd_fire_t. Verify with both `#pragma pack` and `__attribute__((packed))`. |
+
+**Runner:** `./tests/host/run.sh` — compiles each `tests/host/test_*.c` against the mock headers in `tests/host/stubs/` and runs it, once per unit (`BASE` and `REMOTE`), because `RLC_STRIP_REVERSED` and other per-unit config differ. As of v1.31: **12 binaries, 265 checks**.
+
+Tests include the real production sources directly rather than mirroring their logic — `rlc_rgb_led.c` (T-L), `rlc_arm_state.c` (T-M), `rlc_continuity_class.c`, `rlc_debounce.c` (T-D) and `rlc_encoder.c` (T-Q) — so a divergence between what is tested and what runs on the target is not possible. The debounce engine was stubbed out in the harness until v1.31; that stub is removed.
 | T-U14 | CRC32-C test vector | Verify CRC32-C (Castagnoli) of ASCII `"123456789"` = `0xE3069283`. Verify that CRC input includes header + payload (excluding CRC field) + integrity key. |
 | T-U15 | Sequence number overflow | Verify that when sender sequence reaches `0xFFFFFFFF`, system initiates re-link rather than wrapping to 0. |
 | T-U16 | update_sequence wrap-around | Verify that `update_sequence` wrap from 65535 to 0 is not treated as a gap. Verify modular gap detection. |

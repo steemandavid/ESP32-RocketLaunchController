@@ -71,6 +71,18 @@ typedef struct {
 typedef bool (*rlc_link_guard_cb_t)(void);
 
 /**
+ * Base-only hook: asked to push a fresh STATUS_UPDATE right after a
+ * successful LINK_REQUEST handshake, so the remote gets real state instead
+ * of waiting up to one STATUS_UPDATE_INTERVAL_MS (m8 — this replaced a
+ * placeholder frame that hardcoded base_state = STATE_IDLE).
+ *
+ * Runs on link_task with the link state mutex held, so it MUST NOT block,
+ * take locks, or send. Setting a flag (status_update_trigger) is the
+ * intended implementation.
+ */
+typedef void (*rlc_link_status_request_cb_t)(void);
+
+/**
  * Initialise the link manager. Must be called AFTER rlc_espnow_init()
  * and after the peer has been added via rlc_espnow_add_peer().
  *
@@ -121,6 +133,9 @@ void rlc_link_set_remote_battery_mv(uint16_t mv);
  */
 void rlc_link_set_guard(rlc_link_guard_cb_t cb);
 
+/** Set the post-handshake status-push hook. See rlc_link_status_request_cb_t. */
+void rlc_link_set_status_request_cb(rlc_link_status_request_cb_t cb);
+
 /**
  * Send a STATUS_UPDATE with a pre-populated payload.
  * For use by the base unit's status_update_task to send real I/O data.
@@ -154,9 +169,11 @@ uint32_t rlc_link_get_session_token(void);
 
 /**
  * Get the next TX sequence number (thread-safe).
- * Returns 0 on counter wrap; a 0 return is not a usable seq — callers must
- * abort the send and re-link (the anti-replay check compares seq numbers,
- * so a wrapped counter cannot produce a monotonic sequence).
+ * Returns 0 on counter wrap; a 0 return is not a usable seq and the caller
+ * MUST abort the send (the anti-replay check compares seq numbers, so a
+ * wrapped counter cannot produce a monotonic sequence). The re-link is not
+ * the caller's job: this function has already dropped the link to LOST
+ * before returning 0 (m6).
  */
 uint32_t rlc_link_next_seq(void);
 

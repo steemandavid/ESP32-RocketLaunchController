@@ -106,10 +106,26 @@ void base_app_main(void)
 {
     ESP_LOGI(TAG, "=== RLC Base Unit v%s ===", RLC_VERSION_STRING);
 
+    /* N3: reconfigure the TWDT before ANY task exists — it rebuilds the
+     * subscriber list, so a later call unsubscribes tasks that have already
+     * self-registered (this is what rebooted the remote every 11.4 s). The
+     * base's ordering was already safe by accident; make it deliberate, and
+     * identical on both units. app_main subscribes itself further down. */
+    rlc_watchdog_init();
+
     /* §9.13 Step 1: GPIO safe state FIRST — before any other init. */
     relay_init();
     siren_init();
     ESP_LOGI(TAG, "safety outputs initialised — all relays safe");
+
+    /* The strip comes up before the self-tests so a self-test failure can
+     * actually be signalled on it. Previously the halt below set
+     * LED_PATTERN_ERROR on an uninitialised strip, so a failing base halted
+     * with no visible indication at all — the remote does it in this order. */
+    rlc_rgb_led_init();
+    rlc_rgb_led_set_pixel_count(NUM_CHANNELS);  /* 8-pixel igniter strip */
+    rlc_rgb_led_set_brightness(RGB_LED_BRIGHTNESS_BASE);
+    rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
 
     /* §9.13 Step 2-3: Boot self-tests (CRC32-C, struct offsets) */
     if (rlc_selftest_run() != 0) {
@@ -117,11 +133,6 @@ void base_app_main(void)
         rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
         vTaskDelay(portMAX_DELAY);
     }
-
-    rlc_rgb_led_init();
-    rlc_rgb_led_set_pixel_count(NUM_CHANNELS);  /* 8-pixel igniter strip */
-    rlc_rgb_led_set_brightness(RGB_LED_BRIGHTNESS_BASE);
-    rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
 
     /* §9.13 Step 4: Initialise ADC calibration + battery */
     rlc_battery_init(PIN_VBAT_ADC, BASE_VBAT_DIVIDER_RATIO);
@@ -155,8 +166,8 @@ void base_app_main(void)
     arm_sense_register_fault_cb(on_arm_fault_cb);
     key_sense_register_cb(on_key_change_cb);
 
-    /* §9.13 Step 8: Configure hardware watchdog + TWDT */
-    rlc_watchdog_init();
+    /* (§9.13 Step 8: the TWDT was reconfigured at the top of this function —
+     * see the N3 note there. Nothing to do here.) */
 
     /* §9.13 Step 9: Start FreeRTOS tasks */
     /* Priority 7 — arm switch (highest safety) */
@@ -196,7 +207,17 @@ void base_app_main(void)
     /* Set link guard — reject LINK_REQUEST when FSM is busy */
     rlc_link_set_guard(base_state_is_busy);
 
+    /* m8: push a real STATUS_UPDATE straight after a handshake instead of the
+     * placeholder frame the link layer used to fabricate (base_state = IDLE,
+     * no error flags — a false "safe" if the base was in ERROR). Just sets a
+     * flag; status_update_task builds the frame on its next 100 ms tick. */
+    rlc_link_set_status_request_cb(status_update_trigger);
+
     ESP_LOGI(TAG, "base ready — Phase 3 FSM active, waiting for commands");
+
+    /* N3: subscribe app_main only now, once the slow init (NVS/Wi-Fi
+     * bring-up, peer registration retries) is behind us. */
+    rlc_watchdog_register_self();
 
     /* Housekeeping loop — watchdog + status log + LED status feeds */
     int64_t last_status_log_ms = 0;
@@ -282,10 +303,12 @@ void base_app_main(void)
             rlc_link_get_status(&ls);
             uint16_t bands = continuity_get_bands();
             char errbuf[80];
-            ESP_LOGI(TAG, "state=%d armed=%u firing=%u rssi=%d vbat=%u mv cont=0x%04x arm=%d key=%d err=0x%02x (%s)",
+            ESP_LOGI(TAG, "state=%d armed=%u firing=%u rssi=%d txfail=%lu vbat=%u mv cont=0x%04x arm=%d key=%d err=0x%02x (%s)",
                      base_fsm_get_state(), base_fsm_get_armed_channel(),
                      base_fsm_get_firing_channel(),
-                     ls.rssi_avg_dbm, rlc_battery_get_voltage_mv(),
+                     ls.rssi_avg_dbm,
+                     (unsigned long)rlc_espnow_get_send_failure_total(),
+                     rlc_battery_get_voltage_mv(),
                      bands, arm_sense_get_debounced(),
                      key_sense_get_debounced(),
                      base_fsm_get_error_flags(),

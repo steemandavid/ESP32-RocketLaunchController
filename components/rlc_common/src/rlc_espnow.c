@@ -50,6 +50,9 @@ static rlc_espnow_send_cb_t s_send_cb = NULL;
 /* FSD §6.4.1a: send failure tracking */
 static rlc_espnow_send_failure_cb_t s_send_failure_cb = NULL;
 static volatile int s_consecutive_send_failures = 0;
+/* m7: cumulative failures since boot — the diagnostic the removed per-failure
+ * ESP_LOGW used to provide, without logging from Wi-Fi task context. */
+static volatile uint32_t s_send_failure_total = 0;
 
 static QueueHandle_t s_rx_queue = NULL;
 static TaskHandle_t  s_rx_task  = NULL;
@@ -87,7 +90,14 @@ static void espnow_send_cb(const uint8_t *mac, esp_now_send_status_t status)
         s_consecutive_send_failures = 0;
     } else {
         s_consecutive_send_failures++;
-        ESP_LOGW(TAG, "send fail #%d", s_consecutive_send_failures);
+        /* m7: no ESP_LOGW here. This runs in Wi-Fi task context, and the
+         * per-failure line fired hardest exactly when the link was already
+         * struggling — logging takes the stdout lock and can block on a full
+         * UART buffer. The running total is exposed via
+         * rlc_espnow_get_send_failure_total() and printed by each unit's
+         * housekeeping status line instead; the threshold crossing is logged
+         * once, on link_task. */
+        s_send_failure_total++;
 
         if (s_consecutive_send_failures >= ESPNOW_SEND_FAIL_THRESHOLD &&
             s_send_failure_cb) {
@@ -105,6 +115,12 @@ static void espnow_send_cb(const uint8_t *mac, esp_now_send_status_t status)
     }
 }
 
+/* 5.8: deliberately NOT registered with the TWDT (FSD §9.6). It blocks on
+ * portMAX_DELAY with nothing to do between frames, so it cannot feed a
+ * watchdog while idle — subscribing it would guarantee a spurious panic on
+ * any quiet link. Liveness of the receive path is covered by link_task's own
+ * TWDT registration plus the PING drought / missed-ping detection, which is
+ * the layer that can actually tell "no frames" from "frames not delivered". */
 static void espnow_rx_task(void *arg)
 {
     (void)arg;
@@ -210,6 +226,11 @@ void rlc_espnow_register_send_cb(rlc_espnow_send_cb_t cb)
 void rlc_espnow_register_send_failure_cb(rlc_espnow_send_failure_cb_t cb)
 {
     s_send_failure_cb = cb;
+}
+
+uint32_t rlc_espnow_get_send_failure_total(void)
+{
+    return s_send_failure_total;
 }
 
 int rlc_espnow_send(const uint8_t *peer_mac, const uint8_t *data, int len)

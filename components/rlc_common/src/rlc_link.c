@@ -98,6 +98,11 @@ static uint16_t          s_linkreq_attempts = 0;
 /* App-state guard callback (for LINK_REQUEST rejection). */
 static rlc_link_guard_cb_t s_guard_cb = NULL;
 
+/* m8: base-only hook asking the application to push a real STATUS_UPDATE
+ * (see handle_link_request). Must be non-blocking — it runs on link_task
+ * with the state mutex held. */
+static rlc_link_status_request_cb_t s_status_request_cb = NULL;
+
 /* Phase 3: Command queue for state machine task. */
 static QueueHandle_t     s_cmd_queue = NULL;
 
@@ -138,6 +143,16 @@ static void set_state(rlc_link_state_t st)
 
     rlc_link_state_t prev = s_state;
     s_state = st;
+
+    /* m2: LOST -> LINKED recovery via a bare PING/PONG keeps the session
+     * (no reset_session call), so the base's expected-ping-slot tracker
+     * would still hold a timestamp from before the outage and back-fill one
+     * "miss" per elapsed 500 ms slot. Re-baseline it on every entry to
+     * LINKED; tick_base() seeds it from `now` on the next pass. */
+    if (st == RLC_LINK_STATE_LINKED) {
+        s_base_next_expected_ping_ms = 0;
+        s_last_ping_rx_ms = now_ms();
+    }
 
     /* The strip is an igniter display: link state is signalled by the amber
      * alarm wink over the channel map (fed from the housekeeping loops), not
@@ -183,6 +198,21 @@ static void reset_session(uint32_t new_token)
     s_missed_pings = 0;
     s_ping_outstanding = false;
     s_last_ping_rx_ms = now_ms();
+
+    /* m2: the health window and the base's expected-slot tracker belong to
+     * the session too. Leaving them behind meant that after any recovery
+     * tick_base() back-filled one "miss" per 500 ms slot the link had been
+     * down for, saturating the 10-slot window — so rlc_link_is_healthy()
+     * returned false and guard 10 NACKed every ARM with COMM_DEGRADED for
+     * the first ten pings of a link that was in fact perfectly healthy.
+     * (It also spun the catch-up loop once per 500 ms of downtime.)
+     * A new session starts with no evidence either way; the count-based
+     * "not enough data yet" path in rlc_link_is_healthy() then correctly
+     * reports healthy until ten real samples exist. */
+    for (int i = 0; i < HEARTBEAT_WINDOW_SIZE; i++) s_ping_window[i] = true;
+    s_ping_window_idx = 0;
+    s_ping_window_count = 0;
+    s_base_next_expected_ping_ms = 0;
 }
 
 /* Strict three-component firmware version check. */
@@ -246,33 +276,7 @@ static void send_link_ack(void)
     }
 }
 
-/* Minimal Phase-1 status update: all zero except base_state+sequence.
- * Phase 2/3 will fill in real values. */
 static uint16_t s_status_update_seq = 0;
-
-static void send_status_update(void)
-{
-    uint32_t seq;
-    if (!seq_next(&seq)) {
-        /* 5.6: overflow — wrapping s_tx_seq makes the peer reject every
-         * subsequent frame as replay. Drop the link instead (safe direction:
-         * the remote re-links and gets a fresh session with seq reset). */
-        ESP_LOGW(TAG, "seq overflow in send_status_update — dropping link");
-        set_state(RLC_LINK_STATE_LOST);
-        return;
-    }
-
-    uint8_t buf[RLC_MSG_MAX_SIZE];
-    rlc_payload_status_update_t p = {0};
-    p.base_state = STATE_IDLE;
-    p.update_sequence = s_status_update_seq++;
-
-    int len = rlc_msg_build(buf, MSG_STATUS_UPDATE,
-                            seq, s_session_token, &p, sizeof(p));
-    if (len > 0) {
-        rlc_espnow_send(s_peer_mac, buf, len);
-    }
-}
 
 void rlc_link_send_status_update(const rlc_payload_status_update_t *payload)
 {
@@ -391,8 +395,21 @@ static void handle_link_request(const uint8_t *payload, uint16_t plen)
     reset_session(new_token);
 
     send_link_ack();
-    send_status_update();
     set_state(RLC_LINK_STATE_LINKED);
+
+    /* m8: the handshake used to be followed by a Phase-1 placeholder
+     * STATUS_UPDATE — an all-zero payload with base_state hardcoded to
+     * STATE_IDLE. The app-state guard above rejects LINK_REQUESTs only for
+     * the *busy* states, so a base sitting in ERROR or LINK_LOST answered a
+     * handshake by asserting IDLE with no error flags and no continuity: a
+     * false "safe" on the remote's display and strip until the real status
+     * arrived. Removed. Instead we ask the application to push a real one:
+     * the hook only sets a flag, and status_update_task turns it into a
+     * genuine 14-byte status within its 100 ms tick. Same promptness after
+     * the handshake, without inventing the contents. */
+    if (s_status_request_cb) {
+        s_status_request_cb();
+    }
 }
 
 static void handle_link_ack(const uint8_t *payload, uint16_t plen)
@@ -914,6 +931,13 @@ void rlc_link_set_guard(rlc_link_guard_cb_t cb)
     unlock();
 }
 
+void rlc_link_set_status_request_cb(rlc_link_status_request_cb_t cb)
+{
+    lock();
+    s_status_request_cb = cb;
+    unlock();
+}
+
 /* ── Phase 3 Public APIs ───────────────────────────────────────── */
 
 void rlc_link_register_cmd_queue(QueueHandle_t q)
@@ -971,6 +995,14 @@ uint32_t rlc_link_next_seq(void)
     uint32_t seq;
     lock();
     if (!seq_next(&seq)) {
+        /* m6: the three internal senders were fixed under 5.6 to drop the
+         * link on overflow rather than wrap; this public wrapper still just
+         * returned 0, and the base's send_ack()/send_nack() do not check it.
+         * Emitting seq-0 frames the peer rejects as replay would silently
+         * stop all ACKs. Take the same safe direction: drop the link so the
+         * remote re-links onto a fresh session with the counters reset. */
+        ESP_LOGW(TAG, "seq overflow in rlc_link_next_seq — dropping link");
+        set_state(RLC_LINK_STATE_LOST);
         seq = 0;
     }
     unlock();

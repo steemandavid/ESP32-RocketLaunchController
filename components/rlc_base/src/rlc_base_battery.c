@@ -80,6 +80,13 @@ static void battery_task(void *arg)
 
 void base_battery_start_task(void)
 {
-    xTaskCreatePinnedToCore(battery_task, "battery_task", 3072, NULL, 3, NULL, 0);
+    /* m9: checked. Without this task rlc_battery_get_voltage_mv() stays 0,
+     * so guard 8 refuses every ARM (safe) but EVT_BATTERY_CRITICAL is never
+     * posted either — worth a loud line rather than silence. */
+    if (xTaskCreatePinnedToCore(battery_task, "battery_task", 3072, NULL, 3,
+                                NULL, 0) != pdPASS) {
+        ESP_LOGE(TAG, "battery task create FAILED — no VBAT monitoring");
+        return;
+    }
     ESP_LOGI(TAG, "battery task started (prio 3, core 0)");
 }
