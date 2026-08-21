@@ -137,6 +137,30 @@ Both units reflashed, all self-tests passing, linked at −24 dBm.
 
 `cont=0x5425`. **8/8 correct**, against 2/8 when this investigation began.
 
+### Documentation audit
+
+The three-band merge left several places still describing four:
+
+- `Development_Progress.md` LED strip colour table (GOOD/SHORT rows and the
+  `RLC_COLOR_CONT_GOOD` constant name), and the shape-coding note that still
+  listed the retired diamond.
+- FSD §6 protocol field table — the `continuity_bands` wire-value legend still
+  read `01 = GOOD, 11 = SHORT`. Now records CONNECTED, marks 11 as deprecated
+  and never emitted, and states explicitly that the encoding is unchanged so no
+  version bump was required.
+- FSD §10.2.2 channel-grid description and the §11 colour table's orange SHORT
+  diamond entry.
+
+**Three pending Phase 2 tests were closed by this session's work**, having been
+open since April: B2-C07 (CH2–CH8 individual loads) and B2-C09 (MARGINAL
+classification) both PASS from the eight-channel verification, and B2-C08
+(SHORT classification) is retired along with the band itself.
+
+Left alone deliberately: `archive/` holds superseded spec revisions,
+`Phase2_Code_Review.md` records what was true when written, and the
+`rlc-hw-test-base` spec describes standalone bring-up firmware with its own
+band implementation that does not share the RLC enum.
+
 ## 2026-08-20 — Encoder rotation sense; strip tests were committed red
 
 ### Rotation reversed

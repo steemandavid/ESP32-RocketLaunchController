@@ -1283,7 +1283,7 @@ Total header size: 12 bytes.
 
 | Offset | Size | Field | Description |
 |---|---|---|---|
-| 0 | 2 | `continuity_bands` | 2 bits per channel (ch1 in bits 1:0, ch2 in bits 3:2, ... ch8 in bits 15:14). Values: 00 = OPEN, 01 = GOOD, 10 = MARGINAL, 11 = SHORT. Enum values match wire encoding directly (CONT_OPEN=0, CONT_GOOD=1, CONT_MARGINAL=2, CONT_SHORT=3). |
+| 0 | 2 | `continuity_bands` | 2 bits per channel (ch1 in bits 1:0, ch2 in bits 3:2, ... ch8 in bits 15:14). Values: 00 = OPEN, 01 = CONNECTED, 10 = MARGINAL, 11 = *(deprecated SHORT, never emitted since 2026-08-21 — see §5.4.2)*. Enum values match wire encoding directly (CONT_OPEN=0, CONT_CONNECTED=1, CONT_MARGINAL=2, CONT_SHORT=3). The encoding is unchanged by the three-band merge, so no protocol version bump was required. |
 | 2 | 2 | `channel_armed_bitmask` | Bits 0–7: armed state per channel (1 = armed). Bits 8–15: reserved. |
 | 4 | 2 | `channel_firing_bitmask` | Bits 0–7: currently firing per channel (1 = firing). Bits 8–15: reserved. |
 | 6 | 1 | `base_key_switch` | 0 = key SAFE, 1 = key ARM. Debounced key switch position (GPIO 42, §5.4.3b). A **precondition** only — the fire path may still be dead. |
@@ -2098,7 +2098,7 @@ All display colours shall use the following RGB888 values (adjustable during imp
 |---|---|---|
 | Blue (continuity GOOD) | (0, 120, 255) | Continuity GOOD filled circle (●). Blue is used instead of green for red-green colour-blind accessibility (~8% of males). |
 | Red (continuity OPEN / error) | (255, 0, 0) | Continuity OPEN circle (○), error text |
-| Orange (continuity SHORT) | (255, 140, 0) | Continuity SHORT diamond (◆) |
+| ~~Orange (continuity SHORT)~~ | ~~(255, 140, 0)~~ | **Retired 2026-08-21** with the SHORT band and its diamond glyph |
 | Yellow (continuity MARGINAL / warning) | (255, 220, 0) | Continuity MARGINAL triangle (▲), warning text |
 | Cyan (selected) | (0, 220, 255) | Selected channel highlight |
 | Red background (armed) | (180, 0, 0) | Armed channel background |
@@ -2164,7 +2164,7 @@ If a firmware version mismatch is detected:
 
 Key elements:
 - **Top bar:** RSSI with graphical bar (averaged over last 3 frames), ping round-trip time, remote battery voltage with bar, base battery voltage with bar, link status indicator.
-- **Channel grid:** all 8 channels displayed with continuity band indicators. Blue filled circle (●) = GOOD. Yellow triangle (▲) = MARGINAL (with label). Red empty circle (○) = OPEN. Orange diamond (◆) = SHORT (with label). The selected channel is highlighted with `►[ CH N ]◄` cursor.
+- **Channel grid:** all 8 channels displayed with continuity band indicators. Filled circle (●) = CONNECTED. Triangle (▲) = MARGINAL (with label). Empty circle (○) = OPEN. The selected channel is highlighted with a `►[ CH N ]◄` cursor. Shape carries the meaning as well as colour, so the grid stays readable regardless of colour vision. **Three bands since 2026-08-21** — the diamond (◆) that marked SHORT is retired with that band (§5.4.2). As-built colours are dark green / light green / yellow, not the blue-based palette above; see the §10.2.0 deviation note.
 - **Status area:** base key switch state (§5.4.3b), arm relay feedback (§5.4.3), remote arm switch state.
 - **Instruction text:** context-sensitive prompt guiding the operator.
 

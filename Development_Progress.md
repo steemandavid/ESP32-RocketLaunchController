@@ -450,9 +450,9 @@ They should be verified before Phase 3 work begins, or during Phase 5 hardening.
 
 | ID | Test | Notes |
 |----|------|-------|
-| B2-C07 | CH2–CH8 individual resistor = GOOD | Only CH1 tested with resistor; others verified floating only |
-| B2-C08 | SHORT classification (~0 Ω) | Needs low-resistance short on a channel |
-| B2-C09 | MARGINAL classification (~100 Ω) | Needs ~100 Ω resistor on a channel |
+| B2-C07 | CH2–CH8 individual load = CONNECTED | **PASS 2026-08-21.** All eight channels loaded simultaneously (0.1 Ω, 14.9 Ω, 74.3 Ω, 2k16, 4k28, and three igniters) and every band verified — see "Final on-target verification". |
+| ~~B2-C08~~ | ~~SHORT classification (~0 Ω)~~ | **RETIRED 2026-08-21** — the SHORT band was merged into CONNECTED as unmeasurable at 1 mA. A 0.1 Ω load now correctly reads CONNECTED. |
+| B2-C09 | MARGINAL classification | **PASS 2026-08-21** with a 74.3 Ω load (raw 282, ~70 mV) against the 66 mV boundary. Note this sits only ~4 mV above the threshold — a load near this value is genuinely close to the line. |
 
 #### Base Unit — Arm Sense
 
@@ -869,20 +869,25 @@ is set per unit in `rlc_config.h` (verified with `tools/strip-diag`):
 
 | Continuity | Colour | Constant |
 |---|---|---|
-| GOOD | dark green `#006400` | `RLC_COLOR_CONT_GOOD` |
+| CONNECTED | dark green `#006400` | `RLC_COLOR_CONT_CONNECTED` |
 | MARGINAL | light green `#90EE90` | `RLC_COLOR_CONT_MARGINAL` |
 | OPEN | yellow `#FFFF00` | `RLC_COLOR_CONT_OPEN` |
-| SHORT | red `#FF0000` | `RLC_COLOR_CONT_SHORT` |
+| ~~SHORT~~ | ~~red `#FF0000`~~ | `RLC_COLOR_CONT_SHORT` — **deprecated 2026-08-21**, retained only so a value 3 from a pre-merge peer resolves to a colour |
 
 The constants live in `rlc_config.h` and are the **single source of truth for
 both units** — the remote display's channel grid resolves its colours from the
 same macros, so pad, handheld strip and handheld screen always agree.
 
+**Three bands since 2026-08-21** — SHORT was merged into CONNECTED, and GOOD
+renamed CONNECTED, because the band was unmeasurable at the specified 1 mA test
+current. See "Continuity Bands Reduced to Three" below.
+
 **Deviation from FSD §10.2.0**, which specifies blue for GOOD, red for OPEN and
 orange for SHORT, with blue chosen deliberately to avoid red-green ambiguity for
 colour-blind operators. The requested palette pairs green (good) with red
 (short) and moves red off OPEN. The display's shape coding (filled circle /
-triangle / ring / diamond) still carries the meaning without colour, and the
+triangle / ring — the diamond retired with the SHORT band) still carries the
+meaning without colour, and the
 palette is a one-line config change. FSD §10.2.0 should be updated to match.
 
 #### Rendering layers (FSD §11.1)
@@ -1364,6 +1369,43 @@ DevKit measures 3.35 V in circuit against its own GND, and 3.30 V on a new
 board. The bug #24 LDO replacement was probably unnecessary; that incident and
 this one are the same underlying problem — **the grounding of this system is
 bad**, and it has now produced three different misleading symptoms.
+
+---
+
+### Final On-Target Verification — All 8 Channels (2026-08-21)
+
+Both units reflashed, all self-tests passing, linked at −24 dBm. Known loads on
+every channel simultaneously:
+
+| CH | Load | raw | Band | |
+|---|---|---|---|---|
+| 1 | 0.1 Ω 10 W | 11 | CONNECTED | ✓ |
+| 2 | 14.9 Ω | 45 | CONNECTED | ✓ |
+| 3 | 74.3 Ω | 282 | MARGINAL | ✓ |
+| 4 | 2k16 | 4095 (sat) | OPEN | ✓ |
+| 5 | 4k28 | 4095 (sat) | OPEN | ✓ |
+| 6 | Klima igniter | 13 | CONNECTED | ✓ |
+| 7 | Amazon igniter | 10 | CONNECTED | ✓ |
+| 8 | Amazon igniter | 9 | CONNECTED | ✓ |
+
+`cont=0x5425`. **8/8 correct**, against 2/8 when the investigation began.
+
+This closes B2-C07 and B2-C09, and retires B2-C08 with the SHORT band.
+
+**Margin note:** CH3 at ~70 mV sits only ~4 mV above the 66 mV
+CONNECTED/MARGINAL boundary, with ±4 counts of sample noise. It classifies
+correctly and hysteresis holds it, but a load near 74 Ω is genuinely close to
+the line — worth knowing before reading too much into a band change there.
+
+**Self-test caught a real defect during this work.** The three-band merge
+updated the hysteresis classifier and its mirror but left
+`test_continuity_hysteresis()`'s vectors asserting SHORT transitions, so both
+units halted at boot refusing to run. Two things masked it: the halt is silent
+by design, and the earlier `rlc_rgb_led_set_pattern()` init-safety fix turned
+what would have been a visible reboot loop into a clean quiet halt. Also worth
+recording — **pyserial asserts DTR on open, which on this CH340 auto-reset
+circuit holds EN low**; opening with `dtr=False, rts=False` was required to see
+any output. A silent board is not necessarily an unpowered one.
 
 ---
 
