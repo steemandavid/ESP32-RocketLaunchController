@@ -43,6 +43,7 @@
 | 1.27 | 2026-08-20 | Encoder decoding brought up to what §5.5.1 already specified. The firmware had implemented **neither** the cycle-position decoder nor `ENC_DIVIDER` — it used the Gray-code level comparison the section explicitly rejects, and every accepted edge became a channel change; B also interrupted with no handler attached, losing three of four transitions. This caused the reported oversensitive channel selection and left the input open to electrical noise. Now implemented as specified with `ENC_DIVIDER` **4** (was documented as 3) and `ENC_LOCKOUT_US` 2 ms, both in §14.1. Added host tests T-Q01…T-Q06 and an as-built note to §5.5.1.
 | 1.28 | 2026-08-20 | Added `ENC_REVERSED` (§5.5.1, §14.1): the encoder's rotation sense is a board property, since which way a KY-040 counts depends on how A and B are wired. Set to 1 as built — the v1.27 decoder moved the channel selection opposite to the knob. Host test T-Q07 pins the direction explicitly so a rewire has to update the constant rather than silently inverting the operator's controls.
 | 1.29 | 2026-08-21 | Continuity reworked after bench characterisation. **SHORT merged into CONNECTED** (§5.4.2): at 1 mA a dead short and a 1.5-1.9 Ω igniter differ by 1-1.6 mV, within noise, drift and lead contact resistance; three runs on a fixed igniter implied 0.77/1.15/1.77 Ω. **`CONT_GOOD` renamed `CONT_CONNECTED`** — the band means a low-resistance path exists, not that the igniter is good. Wire encoding unchanged (value 3 retained, never emitted), so no version bump. Continuity ADC switched to **0 dB** attenuation and calibration **re-enabled** (it was hardcoded off, costing +369 mV of offset). `CONT_OPEN_UV` 1500000 → 432000 µV, finally the documented ~500 Ω. Recorded as-built hardware: snubbers on all 8 channel relays and the arm relay; 1N5819 clamps to GND and 3V3 on CH1-6 (CH7-8 pending).
+| 1.30 | 2026-08-21 | **Continuity ADC clamps completed on all eight channels** (2x 1N5819 per channel, one to GND and one to +3V3). Recorded the assessment: the 1 A part is *correct* at this node, because there is zero series resistance between the relay NC contact and the ADC pin — the clamp carries the full fault current, which a BAT85 (200 mA) or 1N5711 (15 mA) would not survive — and node impedance is set by the igniter, so leakage does not disturb the bands. This does **not** contradict bug #22, where 1N5819 is the wrong part on a 6.4 kΩ divider. Two residual gaps added to the §5.4.9 protection BOM: (a) the 3V3-side clamps inject fault current directly into the 3.3 V rail, now on eight channels instead of one; (b) 1N5819 V_f puts the pin at 3.9-4.2 V during a fault, above the 3.6 V absolute maximum. Required: a **220 Ω sense-branch series resistor per channel** between the relay NC contact and the pin/clamp junction, and an **active 3.3 V rail clamp** (TL431 shunt at ~3.57 V — a 3V6 zener is not adequate in a 3.3/3.6 V window). Both change the continuity thresholds and require recalibration. |
 
 ---
 
@@ -651,6 +652,16 @@ The ARM SENSE node connects to GPIO 21 through a voltage divider (27 kΩ series,
 > SMBJ18A-class TVS from arm relay COM to GND. Firmware currently restricts
 > firing to channel 1 via `FIRE_PROTECTED_CHANNEL_MASK`. See
 > `Development_Progress.md` bug #18.
+>
+> **UPDATE 2026-08-21 — continuity clamps complete, two gaps remain.** All eight
+> continuity ADC pins now carry 2x 1N5819 (to GND and to +3V3). Still required:
+> (a) a **220 Ω sense-branch resistor per channel** (§5.4.9), without which the
+> 3V3-side clamp dumps an unlimited arc into the 3.3 V rail on any of eight
+> channels; (b) an **active 3.3 V rail clamp** — a TL431 shunt programmed to
+> ~3.57 V (2.495 V x (1 + 4k3/10k)), cathode to 3V3, anode to GND, REF to the
+> divider mid-point, 10 nF REF-to-anode. A 3V6 zener is **not** an adequate
+> substitute: its knee is soft, a +/-5% part sits anywhere in 3.42-3.78 V, and it
+> needs ~3.9 V to sink 40 mA — above the ESP32-S3's 3.6 V absolute maximum.
 
 **Reading interpretation:**
 - **Arm relay de-energised:** ARM SENSE node is disconnected from VBAT (arm relay COM↔NC, NC unused). R2 (10 kΩ) pulls the GPIO to ~0 V. GPIO reads LOW (debounced: 0x0000 = arm relay open).
@@ -798,11 +809,21 @@ The following diagram shows the relationship between the arm key switch, arm rel
 
     CONTINUITY CIRCUIT (per channel, via channel relay NC contact):
 
-    3.3V ── R_ref1 (1.5kΩ, fusible) ── R_ref2 (1.8kΩ, fusible) ──┬── CH RELAY NC ── (COM) ── igniter ── GND
+    3.3V ── R_ref1 (1.5kΩ, fusible) ── R_ref2 (1.8kΩ, fusible) ──┬── [220Ω] ── CH RELAY NC ── (COM) ── igniter ── GND
                                                                     │
                                                                     ├── R_pull (100kΩ) ── GND
                                                                     │
+                                                                    ├── 1N5819 ── GND          [FITTED all 8 ch, 2026-08-21]
+                                                                    ├── 1N5819 ── +3.3V        [FITTED all 8 ch, 2026-08-21]
+                                                                    │
                                                                     └── ADC1 pin (GPIO 2–9)
+
+    [220Ω] = sense-branch series resistor, NOT FITTED as-built. Trialled on CH1 and removed
+    (Development_Progress.md, 2026-08-21). Required as protection: it is the only thing limiting
+    the current the 3V3-side clamp injects into the 3.3 V rail during a fault. Must sit between
+    the relay NC contact and the pin/clamp junction — on the pin side of the clamps it protects
+    nothing and adds a leakage offset instead. Changes CONT_MARGINAL_UV to ~264000 µV and
+    CONT_OPEN_UV to ~588000 µV; recalibration required.
 
     Two series fusible resistors (1.5kΩ + 1.8kΩ = 3.3kΩ total) for defence-in-depth.
     No MOSFET switch required — SPDT relay NC/NO switching provides inherent isolation.

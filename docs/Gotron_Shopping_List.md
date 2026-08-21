@@ -16,8 +16,12 @@ are the discounted web prices at those dates.
 | 2 | `R11W220` | 220 Ω 11 W wirewound ceramic, SETA RB58, Ø9×46 mm | €1.75 | €3.50 | Igniter substitute — **MARGINAL** band |
 | 2 | `R10W/100` | 100 Ω 10 W ±5 % wirewound cement | €0.50 | €1.00 | Igniter substitute — **MARGINAL**, sits just over the GOOD/MARGINAL edge (threshold + hysteresis test) |
 | 4 | `30PF1` | Rechte connectorrij 1×20 pin, **vrouwelijk**, P 2,54 mm (0.1" female header strip) | €0.79 | €3.16 | Sockets for the test resistors / harness, dev-board mounting |
+| 10 | `RC220E` | 220 Ω 1 % metal film, 1/4 W | €0.12 | €1.20 | Sense-branch series resistor, one per channel + spares — limits the fault current the 3V3 clamp injects into the rail (bug #18) |
+| 2 | `TL431` | Shunt regulator 2,495–36 V ±2 %, TO-92 | €1.07 | €2.14 | 3.3 V rail clamp at ~3.57 V (bug #24) |
+| 2 | `RC4K3` | 4,3 kΩ 1 % metal film, 1/4 W | €0.12 | €0.24 | TL431 upper divider |
+| 2 | `RC10K` | 10 kΩ 1 % metal film, 1/4 W | €0.12 | €0.24 | TL431 lower divider |
 
-**Total: €10.69** (6 line items, 17 pieces)
+**Total: €14.51** (10 line items, 33 pieces)
 
 Product URLs:
 
@@ -27,6 +31,10 @@ Product URLs:
 - R10W/100 — https://www.gotron.be/10watt-100-ohm-draadgewikkelde-weerstand.html
 - R11W220 — https://www.gotron.be/componenten/passief/weerstanden/draad/draadgewikkelde-ceramische-weerstand-220ohm-11w-seta-rb58.html
 - 30PF1 — https://www.gotron.be/rechte-connectorrij-1x20-pin-vrouwelijk-p2-54.html
+- RC220E — https://www.gotron.be/rc220e-r1-220-ohm-metaalfilmweerstand-1-4-watt.html
+- TL431 — https://www.gotron.be/u-shunt-reg-2-495-36v-2-to92.html
+- RC4K3 — https://www.gotron.be/rc4k3-r1-4-3-kohm-metaalfilmweerstand-1-4-watt.html
+- RC10K — https://www.gotron.be/rc10k-r1-10-kohm-metaalfilmweerstand-1-4-watt.html
 
 ## Notes on the selection
 
@@ -89,6 +97,22 @@ to build a plug-in igniter-substitute harness for all eight channels plus
 spares. Gotron's female range is single-row `30PF1` (1×20) and dual-row `30PF2`
 (2×20); the 1×40 `40PF1` is a **male** strip despite the similar code, so do not
 order it by mistake.
+
+**Why 1 % on the 220 Ω.** The sense-branch resistor sets a fixed ~206 mV floor on
+every channel, and the band thresholds are derived from it. A ±5 % part spreads
+that floor by ±10 mV, which is ±11 Ω on a 67 Ω boundary — 17 %. `RC220E` at 1 %
+holds it to ±2 Ω. The cheaper 1 W 5 % metal oxide (`R1W/220`, €0.12) is usable
+only if you hand-sort a matched set of eight against a DVM. Fault dissipation is
+~0.37 W for the duration of a pulse, which a 1/4 W part survives transiently;
+`R1W/220` is the safer choice on that count alone, so sorting a matched set of 1 W
+parts is a legitimate alternative.
+
+**TL431 rail clamp, not a zener.** V_clamp = 2.495 × (1 + R1/R2) = 2.495 ×
+(1 + 4k3/10k) = **3.57 V**. Cathode to 3V3, anode to GND, REF to the R1/R2
+mid-point, 10 nF from REF to anode, mounted at the DevKit's 3V3 pin. Standing
+draw ~235 µA; sinks up to 100 mA with a knee a few mV wide. The `BZX83C3V6`
+zener (€0.17) is **not** an adequate substitute in a 3.3 V / 3.6 V window: ±5 %
+tolerance spans 3.42–3.78 V and it needs ~3.9 V to sink 40 mA.
 
 **Availability caveat.** The 11 W SETA RB58 line is marked OBSOLETE / "while
 stock lasts"; 220 Ω showed >20 at Aalst only (Gent/Hasselt 1–2 days). Order

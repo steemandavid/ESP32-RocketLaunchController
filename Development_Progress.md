@@ -34,19 +34,34 @@ on-target defect log in the Phase 3 section.
 |---|-------|-------|--------|--------|
 | 26 | Continuity misclassified — ~64 Ω return-path fault + ADC calibration disabled + 12 dB attenuation | Hardware + firmware | **RESOLVED** — return repaired, calibration on, 0 dB adopted, SHORT band merged away as unmeasurable | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
 | 25 | No hardware undervoltage cut-off on either battery — firmware thresholds only, and ERROR does not disconnect the load | Hardware | OPEN | Pack protection. A unit left switched on, or one whose firmware has halted, will discharge a LiPo past the point of permanent damage and into the unsafe-to-recharge region. |
-| 24 | Base 3.3 V rail runs high — killed chip #3 at 3.68 V, and **measured ~3.72 V again on 2026-08-21 with chip #4 fitted** | Hardware | **RECURRING — chip #4 at risk now** | Nothing functionally. The base has no rail clamp and no secured ground path, so a repeat ground-lift kills chip #4 the same way. |
+| 24 | Base 3.3 V rail runs high — killed chip #3 at 3.68 V, and **measured ~3.72 V again on 2026-08-21 with chip #4 fitted** | Hardware | **RECURRING — chip #4 at risk now.** High readings now attributed to a grounding measurement artefact (DevKit reads 3.35 V against its own GND); rail clamp spec'd as a TL431 shunt at ~3.57 V, **not** the 3V6 zener originally recommended | Nothing functionally. The base has no rail clamp and no secured ground path, so a repeat ground-lift kills chip #4 the same way. The eight 3V3-side continuity clamps are now a second route to an over-rail (bug #18). |
 | 23 | Remote VBAT divider has no ADC headroom — a full 2S pack sits at 97 % of the ADC's usable ceiling | Hardware | OPEN | Accuracy only. Costs ~0.7 % at full charge; thresholds are unaffected as they sit at 71-78 % of range. |
 | 22 | Remote GPIO 1 has no overvoltage clamp — the bug #21 zener was removed and not replaced | Hardware | OPEN | Protection only. The divider's series impedance is the sole limit on an overvoltage fault. |
 | 21 | Remote VBAT sense was non-linear — 3.3 V zener leakage into a 6.4 kΩ divider | Hardware | **Zener removed 2026-08-19, sense verified and calibrated. PARTIAL — no replacement clamp fitted, so GPIO 1 is unprotected.** | Nothing functionally. Production thresholds restored. Remaining risk is overvoltage exposure on GPIO 1 until a BAT54-class clamp is fitted. |
 | 20 | Shipped crypto keys are public — AES-128-CCM and the keyed CRC32 check are ineffective against anyone who has read the source | Security | OPEN — rotation deferred by decision | Field use where an adversary is in the threat model. No effect on bench work. |
 | 19 | Base LED strip: dead 4th pixel in the chain — channel 4 stuck, channels 5-8 dark | Hardware | OPEN — needs reflow or replacement | Channels 4-8 of the base strip; T-L15 for those channels |
-| 18 | Base ESP32 destroyed by relay-arc coupling on the continuity ADC inputs | Hardware + firmware | Software fix DONE and audited. **As-built 2026-08-21: snubbers on ALL 8 channel relays + arm relay; 1N5819 clamps on CH1-6.** CH7-8 clamps pending parts | `FIRE_PROTECTED_CHANNEL_MASK` still 0x01 — needs widening to 0x3F once confirmed |
+| 18 | Base ESP32 destroyed by relay-arc coupling on the continuity ADC inputs | Hardware + firmware | Software fix DONE and audited. **As-built 2026-08-21: snubbers on ALL 8 channel relays + arm relay; 1N5819 clamps to GND and 3V3 on ALL 8 sense pins.** Still missing: 220 Ω sense-branch resistors and a 3.3 V rail clamp — without them the 3V3-side clamps inject an unlimited arc into the rail on any channel | `FIRE_PROTECTED_CHANNEL_MASK` still 0x01 — needs widening to 0xFF once confirmed |
 
 Non-blocking items tracked elsewhere: the bench battery thresholds in
 `rlc_config.h` (FSD §5.6.2 production values not yet restored), the
 unimplemented FSD §7 remote-battery arming guard / NACK `0x0C` (both in "Phase 4
 Findings — Battery Thresholds"), and the FSD §10.2.0 continuity palette
 deviation.
+
+**Full-codebase review 2026-08-21** (`Code_Review_AllPhases_20260821_1430.md`,
+commit cd4ddf0): verdict MAYBE. All Phase 1–3 review fixes verified present
+except Phase-2 M2 (self-test still runs a copy of the continuity classifier).
+Seven Major findings; four gate live-fire testing until fixed: (1) DISARM during
+the arm-verify window does not abort the pending ARM (`rlc_base_fsm.c`), (2)
+remote can command FIRE with the arm key off (retry loop + fire guards miss
+`arm_switch_is_armed()`, `rlc_remote_fsm.c`), (3) continuity ADC read failure
+classifies as CONNECTED — fails permissive, should fail to OPEN
+(`rlc_continuity.c`), (4) `ERR_VBAT_CRITICAL` latched during FIRING is dropped on
+abort exits then misfires as a spurious terminal ERROR at the next POST_FIRE
+(`rlc_base_fsm.c`). A parallel documentation audit found the remote hw-test spec
+flashing the base board's by-id and the base hw-test spec wiring the LED to
+GPIO 47 (arm relay) — both need fixing before those docs are followed on the
+bench.
 
 ---
 
@@ -1462,15 +1477,131 @@ buys linearity, only current buys resolution.**
 |---|---|
 | RC snubbers, all 8 channel relays (NO–COM) | **FITTED** |
 | RC snubber, arm relay (NO–COM) | **FITTED** |
-| 1N5819 clamps to GND and 3V3, CH1–CH6 sense pins | **FITTED** |
-| 1N5819 clamps, CH7–CH8 | Pending — lack of parts |
+| 1N5819 clamps to GND and 3V3, **all 8 sense pins** | **FITTED** (CH7–CH8 completed 2026-08-21) |
+| 220 Ω sense-branch series resistor, all channels | **NOT FITTED** — required, see below |
+| 3.3 V rail clamp | **NOT FITTED** — required, see below |
 | 220 Ω sense-branch offset, CH1 | Trialled then **removed** |
 | Continuity ground return | Repaired, all grounds within 0.3 Ω |
 
 This is most of the bug #18 protection BOM. **`FIRE_PROTECTED_CHANNEL_MASK` is
-still `0x01`** and now understates the hardware: channels 1–6 have both clamps
-and snubbers. Widening it to `0x3F` is a fire-path safety gate change and is
-left for explicit confirmation rather than assumed.
+still `0x01`** and now understates the hardware: all eight channels have both
+clamps and snubbers. Widening it to `0xFF` is a fire-path safety gate change and
+is left for explicit confirmation rather than assumed.
+
+---
+
+### 1N5819 Continuity Clamps — Assessment, All 8 Channels (2026-08-21)
+
+**Verdict: the right part at this node, and it does protect the pins. Two gaps
+remain, and one of them got eight times larger when the clamps went from one
+channel to eight.**
+
+**Why 1N5819 is correct here, and why that does not contradict bug #22.** There
+is **zero series resistance** between the relay NC contact and the ADC pin — the
+sense node *is* the pin — so the clamp carries the entire fault current, limited
+only by the arc and the pack. The 1 A rating is the feature: a BAT85 (200 mA) or
+1N5711 (15 mA) would fail on the first real event. On the remote VBAT node
+(bug #22) the divider limits fault current to ~110 µA, leakage dominates, and
+1N5819 is the wrong part. Same part, opposite conclusions, because the nodes are
+not alike. Both entries should be read together before either is "corrected".
+
+**Leakage, against the 0 dB thresholds:**
+
+| Path | Reverse bias | Effect | Direction |
+|---|---|---|---|
+| 3V3-side, load connected | ~3.2 V | error = I_leak x R_load; at the 67 Ω boundary 20 µA → 1.3 mV, 200 µA → 13 mV | *upward* — a good igniter drifts toward MARGINAL. Conservative: MARGINAL warns, only OPEN blocks arming |
+| GND-side, channel open | 3.19 V | pulls the open node down; OPEN stops saturating the 950 mV full scale only above **~700 µA** | would eventually read MARGINAL instead of OPEN — unsafe direction, but an order of magnitude away at 25 °C |
+
+1N5819 leakage is 1 mA max at 40 V / 25 °C and 10 mA at 100 °C, and roughly
+doubles per 10 °C. At ~3.2 V reverse and bench temperature there is an order of
+magnitude of margin; a base box in direct sun is the case to check, not the
+bench.
+
+**Two-minute verification, worth repeating hot:** disconnect all igniters and
+measure each node with a DVM. Expect 3.194 V; total GND-side leakage is
+`(3.3 − V)/3300 − V/100k`.
+
+**Gap 1 — the rail injection path, now x8.** During a fault the 3V3-side diode
+dumps the arc **into the 3.3 V rail**. Nothing on that rail can sink amps, so the
+rail rises and takes out everything on it. Fixes, in priority order:
+
+1. **220 Ω sense-branch resistor per channel** (see the assessment below) — the
+   single highest-value change, since it converts an unlimited injection into
+   ~41 mA.
+2. **Active rail clamp** — TL431 shunt at ~3.57 V. A 3V6 zener is not adequate:
+   soft knee, ±5% tolerance spanning 3.42–3.78 V, and ~3.9 V needed to sink
+   40 mA, above the 3.6 V absolute maximum. This corrects the "3.6 V zener
+   clamp" recommendation recorded under bug #24.
+3. **The rail's own load already helps.** The ESP32-S3 plus LED strip draws well
+   over 41 mA whenever the base is live, so with the 220 Ω fitted the LDO simply
+   backs off and the rail does not rise at all for a single-channel fault. The
+   TL431 is belt-and-braces for that case; it earns its place if several
+   channels ever fault together.
+
+Note that a rail clamp does **not** address the bug #24 ground-lift incident: a
+shunt referenced to a lifted ground moves with it. That one is answered by the
+repaired return (all grounds within 0.3 Ω) and secured connectors, and the
+3.71 V reading is now understood as a grounding measurement artefact.
+
+**Gap 2 — the clamp level is above absolute maximum.** 1N5819 V_f is ~0.6 V at
+1 A and ~0.9 V at surge, so during a fault the pin sees 3.9–4.2 V against the
+ESP32-S3's 3.6 V maximum. Damage-limiting, not damage-proof: it turns a
+guaranteed kill at 12 V into a survivable excursion. The 220 Ω fixes this too —
+at 41 mA the diode drops ~0.25 V and the pin sits at ~3.55 V, inside the limit.
+
+---
+
+### Re-adding the 220 Ω Sense-Branch Resistor — Consequences (2026-08-21)
+
+The 220 Ω trialled on CH1 and removed for lack of resolution gain is, in its
+*protection* role, the missing piece above. Its position is the same one that
+produced the measured 206 mV floor: **R_ref → [ADC pin + both clamps + R_pull] →
+220 Ω → relay NC**. It must not go between the node and the pin — there it
+limits nothing and turns clamp leakage into a pin offset instead.
+
+**What it buys**
+
+| Effect | Before | After |
+|---|---|---|
+| Fault current into the 3V3 rail | unlimited (arc/pack) | (12.6 − 3.6)/220 ≈ **41 mA** |
+| Pin voltage during fault | 3.9–4.2 V (over abs max) | ~3.55 V (inside abs max) |
+| ADC low-end linearity | igniters sit at 2 mV, raw ~9, in the worst INL region | floor lifted to 206 mV — measured stable at 3 counts noise, matching the model within 3 mV |
+| Test current | 1.00 mA | 0.9375 mA (no-fire margin improves slightly) |
+
+**What it costs**
+
+- **Every threshold moves.** With `V = 3.3 x (220 + R)/(3520 + R)`:
+
+  | Load | Node | Meaning |
+  |---|---|---|
+  | 0 Ω (short) | 205.8 mV | new floor |
+  | 2 Ω igniter | 207.6 mV | CONNECTED |
+  | 67.4 Ω | 264.2 mV | **new `CONT_MARGINAL_UV` ≈ 264000 µV** (was 66000) |
+  | 500 Ω | 587.5 mV | **new `CONT_OPEN_UV` ≈ 588000 µV** (was 432000) |
+  | open | 3.194 V | saturates → OPEN, unchanged |
+
+  Fit it without moving the constants and **no channel can ever read CONNECTED**
+  — everything sits above 66 mV, so the display shows MARGINAL permanently.
+  Arming would still work (only OPEN blocks), which makes this a silent
+  degradation rather than an obvious failure. Change both constants in the same
+  commit as the hardware.
+- **Sensitivity drops 6.25 %** (3.3 kΩ → 3.52 kΩ total): 0.9375 mV/Ω instead of
+  1.0. The CONNECTED band spans 58 mV instead of 66 mV. Immaterial at 0.23 mV/LSB.
+- **All eight channels must get it, matched.** A ±5 % part spreads the floor by
+  ±10 mV, which is ±11 Ω on a 67 Ω boundary — 17 %. Use 1 % metal film
+  (`RC220E`), or hand-sort a matched set of 5 % parts against a DVM.
+- **Clamp leakage now develops across it.** The 3V3-side leakage flows out
+  through 220 Ω + R_load rather than R_load alone: +4.4 mV at 20 µA, +44 mV at
+  200 µA. Measure the floor **hot**, not just at bench temperature.
+- **Dissipation during a fault** is 9 V²/220 ≈ 0.37 W. A 1/4 W part survives a
+  1 s pulse; prefer 1 W, and fusible would be better still, consistent with
+  R_ref1/R_ref2.
+- **It does not restore the SHORT band.** Proven, twice over: an offset buys
+  linearity, only current buys resolution.
+
+**Recalibration is mandatory** — re-run the known-load sweep on all eight
+channels and derive the two constants from measurement rather than from the
+formula above.
 
 ---
 
