@@ -578,47 +578,55 @@ static int test_continuity_hysteresis(void)
 {
     int failures = 0;
 
-    /* Test 1: GOOD near SHORT boundary — should stay GOOD within hysteresis */
+    /* Three bands since 2026-08-21 — the SHORT vectors that lived here were
+     * removed with the band itself (see rlc_protocol.h). What remains covers
+     * the two boundaries that are actually measurable. */
+
+    /* Test 1: CONNECTED just past MARGINAL — should hold within hysteresis */
     rlc_continuity_band_t band = CONT_CONNECTED;
-
-    /* Voltage just above SHORT threshold but within hysteresis — should stay GOOD */
-    band = test_classify_hysteresis(CONT_SHORT_UV + CONT_HYSTERESIS_SHORT_UV / 2, band);
+    band = test_classify_hysteresis(CONT_MARGINAL_UV + CONT_HYSTERESIS_MARGINAL_UV / 2, band);
     if (band != CONT_CONNECTED) {
-        ESP_LOGE(TAG, "FAIL: hysteresis GOOD near SHORT boundary — got %d, expected GOOD", band);
+        ESP_LOGE(TAG, "FAIL: hysteresis CONNECTED near MARGINAL — got %d, expected CONNECTED", band);
         failures++;
     }
 
-    /* Voltage below SHORT threshold minus hysteresis — should transition to SHORT */
-    band = test_classify_hysteresis(CONT_SHORT_UV - CONT_HYSTERESIS_SHORT_UV - 1, band);
-    if (band != CONT_SHORT) {
-        ESP_LOGE(TAG, "FAIL: hysteresis GOOD->SHORT transition — got %d, expected SHORT", band);
+    /* ...and should transition once clear of the hysteresis band */
+    band = test_classify_hysteresis(CONT_MARGINAL_UV + CONT_HYSTERESIS_MARGINAL_UV + 1, band);
+    if (band != CONT_MARGINAL) {
+        ESP_LOGE(TAG, "FAIL: hysteresis CONNECTED->MARGINAL — got %d, expected MARGINAL", band);
         failures++;
     }
 
-    /* Test 2: OPEN near MARGINAL boundary — should stay OPEN within hysteresis */
+    /* Test 2: MARGINAL falling back to CONNECTED */
+    band = test_classify_hysteresis(CONT_MARGINAL_UV - CONT_HYSTERESIS_MARGINAL_UV / 2, band);
+    if (band != CONT_MARGINAL) {
+        ESP_LOGE(TAG, "FAIL: hysteresis MARGINAL stability — got %d, expected MARGINAL", band);
+        failures++;
+    }
+    band = test_classify_hysteresis(CONT_MARGINAL_UV - CONT_HYSTERESIS_MARGINAL_UV - 1, band);
+    if (band != CONT_CONNECTED) {
+        ESP_LOGE(TAG, "FAIL: hysteresis MARGINAL->CONNECTED — got %d, expected CONNECTED", band);
+        failures++;
+    }
+
+    /* Test 3: OPEN near the MARGINAL boundary — should hold within hysteresis */
     band = CONT_OPEN;
-
-    /* Voltage just below OPEN threshold but within hysteresis — should stay OPEN */
     band = test_classify_hysteresis(CONT_OPEN_UV - CONT_HYSTERESIS_OPEN_UV / 2, band);
     if (band != CONT_OPEN) {
-        ESP_LOGE(TAG, "FAIL: hysteresis OPEN near MARGINAL boundary — got %d, expected OPEN", band);
+        ESP_LOGE(TAG, "FAIL: hysteresis OPEN stability — got %d, expected OPEN", band);
         failures++;
     }
-
-    /* Voltage below OPEN threshold minus hysteresis — should transition to MARGINAL */
     band = test_classify_hysteresis(CONT_OPEN_UV - CONT_HYSTERESIS_OPEN_UV - 1, band);
     if (band != CONT_MARGINAL) {
-        ESP_LOGE(TAG, "FAIL: hysteresis OPEN->MARGINAL transition — got %d, expected MARGINAL", band);
+        ESP_LOGE(TAG, "FAIL: hysteresis OPEN->MARGINAL — got %d, expected MARGINAL", band);
         failures++;
     }
 
-    /* Test 3: SHORT near GOOD boundary — should stay SHORT within hysteresis */
-    band = CONT_SHORT;
-
-    /* Voltage just above SHORT threshold but within hysteresis — should stay SHORT */
-    band = test_classify_hysteresis(CONT_SHORT_UV + CONT_HYSTERESIS_SHORT_UV / 2, band);
-    if (band != CONT_SHORT) {
-        ESP_LOGE(TAG, "FAIL: hysteresis SHORT stability — got %d, expected SHORT", band);
+    /* Test 4: a deprecated SHORT value from a pre-merge peer must fold into
+     * the current scheme rather than persisting. */
+    band = test_classify_hysteresis(1000, CONT_SHORT);
+    if (band != CONT_CONNECTED) {
+        ESP_LOGE(TAG, "FAIL: deprecated SHORT not folded — got %d, expected CONNECTED", band);
         failures++;
     }
 

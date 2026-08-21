@@ -92,11 +92,50 @@ scheme before the label fix:
 
 **8/8 correct** — up from 2/8 at the start of this investigation.
 
-The label fix itself was flashed but **not re-verified on target**: both units
-went silent afterwards with their ports free and unheld, which points at the
-bench being powered down rather than a firmware fault. The change is a
-two-string edit confirmed by inspection and the host suite, but it is worth a
-glance at the next power-up.
+### Both units were halting at boot — caught and fixed
+
+The silence after the label fix was **not** the bench being powered down, as
+first assumed. Both units were halting in `rlc_selftest`:
+
+```
+E FAIL: hysteresis GOOD->SHORT transition — got 1, expected SHORT
+E FAIL: hysteresis SHORT stability — got 1, expected SHORT
+E self-tests FAILED — halting
+```
+
+The three-band merge updated the hysteresis *classifier* and its mirror, but
+left `test_continuity_hysteresis()`'s **vectors** still asserting SHORT
+transitions. The self-test did exactly its job — refusing to run firmware whose
+classifier and its own expectations disagree.
+
+Two things had masked it. The halt is silent by design, and the 2026-08-21 fix
+that made `rlc_rgb_led_set_pattern()` safe before init turned what would have
+been a visible reboot loop into a clean, quiet halt. And pyserial asserts DTR on
+open, which on this CH340 auto-reset circuit held EN low — opening with
+`dtr=False, rts=False` was needed to see any output at all. Worth remembering:
+**a silent board is not necessarily an unpowered one.**
+
+Vectors rewritten for three bands, covering the two boundaries that are
+actually measurable (CONNECTED↔MARGINAL, MARGINAL↔OPEN) plus a new case
+asserting that a deprecated SHORT value from a pre-merge peer folds into
+CONNECTED rather than persisting.
+
+### Final on-target verification
+
+Both units reflashed, all self-tests passing, linked at −24 dBm.
+
+| CH | Load | raw | Band | |
+|---|---|---|---|---|
+| 1 | 0.1 Ω | 11 | CONNECTED | ✓ |
+| 2 | 14.9 Ω | 45 | CONNECTED | ✓ |
+| 3 | 74.3 Ω | 282 | MARGINAL | ✓ |
+| 4 | 2k16 | 4095 | OPEN | ✓ |
+| 5 | 4k28 | 4095 | OPEN | ✓ |
+| 6 | Klima igniter | 13 | CONNECTED | ✓ |
+| 7 | Amazon igniter | 10 | CONNECTED | ✓ |
+| 8 | Amazon igniter | 9 | CONNECTED | ✓ |
+
+`cont=0x5425`. **8/8 correct**, against 2/8 when this investigation began.
 
 ## 2026-08-20 — Encoder rotation sense; strip tests were committed red
 
