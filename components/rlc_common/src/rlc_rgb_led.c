@@ -115,7 +115,7 @@ static void led_off(void)
 static uint32_t band_colour(uint8_t band)
 {
     switch (band) {
-        case CONT_GOOD:     return RLC_COLOR_CONT_GOOD;
+        case CONT_CONNECTED:     return RLC_COLOR_CONT_CONNECTED;
         case CONT_MARGINAL: return RLC_COLOR_CONT_MARGINAL;
         case CONT_SHORT:    return RLC_COLOR_CONT_SHORT;
         default:            return RLC_COLOR_CONT_OPEN;

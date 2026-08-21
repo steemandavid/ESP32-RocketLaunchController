@@ -135,10 +135,12 @@
  * blue for GOOD to avoid red-green ambiguity for colour-blind operators.
  * Shape coding on the display (circle/triangle/ring/diamond) still carries
  * the meaning independently of colour. */
-#define RLC_COLOR_CONT_GOOD        0x006400   /* darkgreen  — 0.5-20 Ω, normal igniter */
-#define RLC_COLOR_CONT_MARGINAL    0x90EE90   /* lightgreen — 20-500 Ω, high resistance */
-#define RLC_COLOR_CONT_OPEN        0xFFFF00   /* yellow     — >500 Ω or no igniter */
-#define RLC_COLOR_CONT_SHORT       0xFF0000   /* red        — <0.5 Ω, wiring fault */
+#define RLC_COLOR_CONT_CONNECTED   0x006400   /* darkgreen  — low-resistance path present */
+#define RLC_COLOR_CONT_MARGINAL    0x90EE90   /* lightgreen — high resistance, may not fire */
+#define RLC_COLOR_CONT_OPEN        0xFFFF00   /* yellow     — no path, blocks arming */
+/* DEPRECATED with the CONT_SHORT band (2026-08-21). Retained only so a
+ * value 3 from a pre-merge peer still resolves to a colour. */
+#define RLC_COLOR_CONT_SHORT       0xFF0000   /* red — no longer produced */
 
 /* Alarm-wink colours. Deliberately chosen to be unmistakable for any
  * continuity colour above, so a wink can never be read as a channel state. */
@@ -201,10 +203,21 @@
 #define CONT_ADC_FULLSCALE_MV          950
 
 #define CONT_SAMPLE_INTERVAL_MS        100     /* Per-channel ADC interval */
+
+/* Bench diagnostic: interval in ms for the compact per-channel raw ADC line.
+ * 0 disables it. A full round-robin sweep takes NUM_CHANNELS x
+ * CONT_SAMPLE_INTERVAL_MS (800 ms), so there is nothing to gain below that.
+ * Set to 0 for field use — it is noise in the log. */
+#define CONT_TRACE_INTERVAL_MS         1000
 #define CONT_OVERSAMPLE_COUNT          64      /* ADC samples averaged per reading */
 
 /* Thresholds in microvolts (µV) — multiply ADC millivolts by 1000 */
-#define CONT_SHORT_UV                  500     /* Below = SHORT (< 0.5 Ω) */
+/* DEPRECATED 2026-08-21 — the SHORT band was merged into CONNECTED and this
+ * threshold is no longer referenced. Kept only as a record of the boundary
+ * that was attempted. Measured evidence for the merge: at 1 mA a dead short
+ * and a 1.5-1.9 ohm igniter differ by 1-1.6 mV, and three experiments on one
+ * fixed igniter returned 0.77 / 1.15 / 1.77 ohm. */
+#define CONT_SHORT_UV                  500     /* unused */
 #define CONT_MARGINAL_UV               66000   /* Above = MARGINAL (> ~20 Ω) */
 /* 432000 uV is what 500 ohm produces through the 3.3k/100k divider, so this is
  * the ">500 ohm" boundary FSD §5.4.2 documents. It previously sat at 1500000
@@ -216,7 +229,7 @@
 #define CONT_OPEN_UV                   432000  /* Above = OPEN (> ~500 Ω) */
 
 /* Hysteresis bands (µV) — prevents oscillation at boundaries */
-#define CONT_HYSTERESIS_SHORT_UV       200
+#define CONT_HYSTERESIS_SHORT_UV       200     /* unused, see CONT_SHORT_UV */
 #define CONT_HYSTERESIS_MARGINAL_UV    5000
 #define CONT_HYSTERESIS_OPEN_UV        50000
 

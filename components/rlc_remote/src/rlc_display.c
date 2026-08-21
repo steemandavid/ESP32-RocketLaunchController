@@ -69,7 +69,7 @@ static const char *TAG = "rlc_disp";
 #define C_DGREY      0x303030
 /* Continuity colours come from rlc_config.h so the display and the base
  * unit's 8-pixel strip always show the same colour for the same state. */
-#define C_GOOD       RLC_COLOR_CONT_GOOD
+#define C_GOOD       RLC_COLOR_CONT_CONNECTED
 #define C_OPEN       RLC_COLOR_CONT_OPEN
 #define C_SHORT      RLC_COLOR_CONT_SHORT
 #define C_MARGINAL   RLC_COLOR_CONT_MARGINAL
@@ -320,14 +320,6 @@ static void fill_triangle_up(int cx, int cy, int r, uint32_t colour)
     }
 }
 
-/* Diamond centred on (cx, cy) */
-static void fill_diamond(int cx, int cy, int r, uint32_t colour)
-{
-    for (int dy = -r; dy <= r; dy++) {
-        int half = r - (dy < 0 ? -dy : dy);
-        fill_rect(cx - half, cy + dy, 2 * half + 1, 1, colour);
-    }
-}
 
 /* ── Text ─────────────────────────────────────────────────────── */
 
@@ -403,7 +395,7 @@ static int pct_from_range(int value, int lo, int hi)
 static uint32_t continuity_colour(uint8_t band)
 {
     switch (band) {
-        case CONT_GOOD:     return C_GOOD;
+        case CONT_CONNECTED:     return C_GOOD;
         case CONT_MARGINAL: return C_MARGINAL;
         case CONT_SHORT:    return C_SHORT;
         default:            return C_OPEN;
@@ -413,24 +405,28 @@ static uint32_t continuity_colour(uint8_t band)
 static const char *continuity_label(uint8_t band)
 {
     switch (band) {
-        case CONT_GOOD:     return "GOOD";
-        case CONT_MARGINAL: return "MARGINAL";
-        case CONT_SHORT:    return "SHORT";
-        default:            return "OPEN";
+        /* "CONNECTED", not "GOOD": the band means current can flow, which a
+         * dead short satisfies too. Claiming the igniter is good would be an
+         * assertion the measurement cannot support. */
+        case CONT_CONNECTED: return "CONNECTED";
+        case CONT_MARGINAL:  return "MARGINAL";
+        case CONT_SHORT:     return "CONNECTED";  /* deprecated, folded in */
+        default:             return "OPEN";
     }
 }
 
 /* Continuity glyph per FSD §10.2.2:
- * GOOD = filled circle, MARGINAL = triangle, OPEN = empty circle,
- * SHORT = diamond. Shape carries the meaning as well as colour, so the
- * screen stays readable for colour-blind operators. */
+ * CONNECTED = filled circle, MARGINAL = triangle, OPEN = empty circle.
+ * Shape carries the meaning as well as colour, so the screen stays readable
+ * for colour-blind operators. The diamond that marked SHORT is retired with
+ * that band; a deprecated value from a pre-merge peer draws as CONNECTED. */
 static void draw_continuity_glyph(int cx, int cy, int r, uint8_t band)
 {
     uint32_t c = continuity_colour(band);
     switch (band) {
-        case CONT_GOOD:     fill_circle(cx, cy, r, c);        break;
+        case CONT_CONNECTED:
+        case CONT_SHORT:    fill_circle(cx, cy, r, c);        break;
         case CONT_MARGINAL: fill_triangle_up(cx, cy, r, c);   break;
-        case CONT_SHORT:    fill_diamond(cx, cy, r, c);       break;
         default:            draw_circle(cx, cy, r, 3, c);     break;
     }
 }
@@ -645,13 +641,12 @@ static void draw_legend(void)
     fill_rect(0, y, DW, CHAR_H(2), C_BLACK);
 
     struct { uint8_t band; const char *txt; } items[] = {
-        { CONT_GOOD,     "GOOD" },
-        { CONT_MARGINAL, "MARGINAL" },
-        { CONT_OPEN,     "OPEN" },
-        { CONT_SHORT,    "SHORT" },
+        { CONT_CONNECTED, "CONNECTED" },
+        { CONT_MARGINAL,  "MARGINAL" },
+        { CONT_OPEN,      "OPEN" },
     };
     int x = 8;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 3; i++) {
         draw_continuity_glyph(x + 6, y + 8, 6, items[i].band);
         draw_text(x + 18, y, items[i].txt, 2, C_GREY);
         x += 18 + text_width(items[i].txt, 2) + 18;

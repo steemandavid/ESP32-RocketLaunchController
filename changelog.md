@@ -1,5 +1,74 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-21 — Continuity: three bands, SHORT merged away as unmeasurable
+
+### The decision
+
+`CONT_SHORT` is merged into `CONT_CONNECTED`, and `CONT_GOOD` is renamed
+`CONT_CONNECTED`.
+
+Three controlled experiments compared a real igniter against a deliberate short
+on CH1:
+
+| Experiment | Separation | Implied igniter R |
+|---|---|---|
+| back-to-back | 6.78 counts (t=7.7) | 1.77 Ω |
+| across power cycles | 2.93 counts (t=2.2) | 0.77 Ω |
+| both states stable | 4.42 counts (t=7.1) | 1.15 Ω |
+
+The igniter is 1.5–1.9 Ω on a DVM. The effect is real and always correctly
+signed, but its **magnitude varied 2.3× for a setup that never changed**. At
+0.888 mV/Ω the signal, the noise, the shorting lead's own contact resistance and
+run-to-run drift are all ~2–6 counts. A midway threshold misclassifies 19 % of
+single readings.
+
+**A band that cannot be measured must not be reported.**
+
+### The rename
+
+`GOOD` asserted igniter health the measurement cannot support, and was actively
+wrong on a shorted pair of leads. `CONNECTED` states only what is known: a
+low-resistance path exists.
+
+The 2-bit wire encoding is **unchanged** — value 3 stays in the enum and still
+decodes on display, it is simply never emitted — so no protocol version bump was
+needed and a pre-merge peer still interoperates.
+
+### The 220 Ω offset trial, and why it was removed
+
+Fitted on CH1, then removed. It did exactly what was predicted: CH1 became
+stable at 206 mV with 3 counts of noise, matching the 209 mV model to within
+3 mV, curing the ADC's low-end collapse. But it added no resolution, because
+lifting a short and an igniter by the same amount does not separate them.
+
+Worth recording because the reasoning generalises: **an offset buys linearity,
+only current buys resolution.**
+
+Raising the current to ~3.4 mA would have made the band genuinely measurable
+(~14.5 counts). Declined: it cuts the no-fire margin from 50× to 15× for a band
+that never blocked arming.
+
+### As-built hardware
+
+| Item | Status |
+|---|---|
+| RC snubbers, all 8 channel relays + arm relay | **FITTED** |
+| 1N5819 clamps to GND and 3V3, CH1–CH6 | **FITTED** |
+| 1N5819 clamps, CH7–CH8 | Pending parts |
+| Continuity ground return | Repaired, grounds within 0.3 Ω |
+
+Most of the bug #18 protection BOM is now in place. **`FIRE_PROTECTED_CHANNEL_MASK`
+remains `0x01`** and now understates the hardware — channels 1–6 have clamps and
+snubbers. Widening it to `0x3F` is a fire-path safety gate change and was left
+for explicit confirmation rather than assumed.
+
+### Code
+
+Enum, classifier, hysteresis, self-test vectors and mirrors, display labels,
+glyph table and legend all updated. The diamond glyph that marked SHORT is
+removed along with its `fill_diamond()` helper. FSD **v1.29**. Full host suite
+green.
+
 ## 2026-08-20 — Encoder rotation sense; strip tests were committed red
 
 ### Rotation reversed

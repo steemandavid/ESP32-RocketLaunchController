@@ -220,6 +220,53 @@ void base_app_main(void)
         rlc_rgb_led_set_key_warning(key_sense_get_debounced() && !armed_ch && !firing_ch);
 
         int64_t now = esp_timer_get_time() / 1000;
+
+#if CONT_TRACE_INTERVAL_MS > 0
+        /* Compact raw-ADC trace for bench work: one line per sweep, raw counts
+         * only, so a load can be swapped on a channel and the change watched
+         * directly. CH1 also carries mV and band since that is the channel
+         * currently under test. */
+        static int64_t last_trace_ms = 0;
+        if (now - last_trace_ms >= CONT_TRACE_INTERVAL_MS) {
+            char tbuf[128];
+            int tn = 0;
+            for (int c = 1; c <= NUM_CHANNELS && tn < (int)sizeof(tbuf) - 12; c++) {
+                tn += snprintf(tbuf + tn, sizeof(tbuf) - tn, "%s%ld",
+                               c == 1 ? "" : " ", (long)continuity_get_raw(c));
+            }
+            /* Rolling window over SWEEPS, purely a reading aid so a single
+             * outlier cannot be mistaken for a real change. The per-value
+             * figure is already the CONT_OVERSAMPLE_COUNT (64) burst average
+             * the band classifier acts on; this adds nothing to that decision,
+             * it only makes the number easier to read by eye. Watch spread:
+             * while it is wide the window still straddles a load change. */
+            #define TRACE_WIN 8
+            static int32_t win[TRACE_WIN];
+            static int win_n = 0, win_i = 0;
+            int32_t r1 = continuity_get_raw(1);
+            win[win_i] = r1;
+            win_i = (win_i + 1) % TRACE_WIN;
+            if (win_n < TRACE_WIN) win_n++;
+            int32_t wmin = win[0], wmax = win[0];
+            int64_t wsum = 0;
+            for (int k = 0; k < win_n; k++) {
+                wsum += win[k];
+                if (win[k] < wmin) wmin = win[k];
+                if (win[k] > wmax) wmax = win[k];
+            }
+            int32_t wmean10 = (int32_t)((wsum * 10) / win_n);
+
+            static const char *tb[] = { "OPEN", "GOOD", "MARG", "SHRT" };
+            ESP_LOGI(TAG, "TRACE %s | ch1 now %ld  mean %ld.%ld  min %ld max %ld "
+                          "spread %ld (n=%d)  %ld uV  %s",
+                     tbuf, (long)r1, (long)(wmean10/10), (long)(wmean10%10),
+                     (long)wmin, (long)wmax, (long)(wmax-wmin), win_n,
+                     (long)continuity_get_uv(1),
+                     tb[continuity_get_channel(1) & 3]);
+            last_trace_ms = now;
+        }
+#endif
+
         if (now - last_status_log_ms >= 5000) {
             rlc_link_status_t ls;
             rlc_link_get_status(&ls);

@@ -30,7 +30,7 @@
  * Shape coding on the channel grid (filled circle / triangle / ring /
  * diamond) carries the meaning independently of colour.
  */
-#define DISP_COLOR_CONT_GOOD      RLC_COLOR_CONT_GOOD
+#define DISP_COLOR_CONT_GOOD      RLC_COLOR_CONT_CONNECTED
 #define DISP_COLOR_CONT_OPEN      RLC_COLOR_CONT_OPEN
 #define DISP_COLOR_CONT_SHORT     RLC_COLOR_CONT_SHORT
 #define DISP_COLOR_CONT_MARGINAL  RLC_COLOR_CONT_MARGINAL

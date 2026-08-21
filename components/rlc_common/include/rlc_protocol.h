@@ -62,11 +62,24 @@ typedef enum {
 /* Enum values intentionally match 2-bit wire encoding in STATUS_UPDATE */
 
 typedef enum {
-    CONT_OPEN     = 0,  /* > 500 Ω or no igniter — blocks arming */
-    CONT_GOOD     = 1,  /* 0.5–20 Ω — normal igniter */
-    CONT_MARGINAL = 2,  /* 20–500 Ω — high resistance, warning only */
-    CONT_SHORT    = 3,  /* < 0.5 Ω — possible wiring fault, info only */
+    CONT_OPEN      = 0,  /* no low-resistance path — blocks arming */
+    CONT_CONNECTED = 1,  /* a low-resistance path is present */
+    CONT_MARGINAL  = 2,  /* high resistance — may not fire, warning only */
+
+    /* DEPRECATED 2026-08-21. Retained so the 2-bit wire encoding is
+     * unchanged and a pre-merge peer's value 3 still decodes, but the base
+     * no longer produces it. Bench measurement showed a dead short and a
+     * 1.5-1.9 ohm igniter differ by only 1-1.6 mV at the specified 1 mA
+     * test current — the same size as noise, run-to-run drift and the
+     * contact resistance of the shorting lead itself. Three experiments
+     * returned 0.77, 1.15 and 1.77 ohm for one physically fixed igniter.
+     * A band that cannot be measured must not be reported. */
+    CONT_SHORT     = 3,
 } rlc_continuity_band_t;
+
+/* CONT_CONNECTED deliberately does NOT claim the igniter is good — only that
+ * current can flow. A dead short across the terminals lands in this band and
+ * is indistinguishable from a healthy e-match at any safe test current. */
 
 /* ── FSM States (transmitted in STATUS_UPDATE) ────────────────── */
 

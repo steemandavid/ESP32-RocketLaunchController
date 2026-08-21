@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.28 (2026-08-20)
+**Spec:** RLC-FSPEC-001 v1.29 (2026-08-21)
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -32,7 +32,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
-| 26 | Continuity misclassified — ~64 Ω return-path fault + ADC calibration disabled + 12 dB attenuation | Hardware + firmware | **Return repaired, calibration on, 0 dB adopted: 5/8 → correct. Residual: igniters under ~5 Ω still read SHORT** | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
+| 26 | Continuity misclassified — ~64 Ω return-path fault + ADC calibration disabled + 12 dB attenuation | Hardware + firmware | **RESOLVED** — return repaired, calibration on, 0 dB adopted, SHORT band merged away as unmeasurable | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
 | 25 | No hardware undervoltage cut-off on either battery — firmware thresholds only, and ERROR does not disconnect the load | Hardware | OPEN | Pack protection. A unit left switched on, or one whose firmware has halted, will discharge a LiPo past the point of permanent damage and into the unsafe-to-recharge region. |
 | 24 | Base 3.3 V rail runs high — killed chip #3 at 3.68 V, and **measured ~3.72 V again on 2026-08-21 with chip #4 fitted** | Hardware | **RECURRING — chip #4 at risk now** | Nothing functionally. The base has no rail clamp and no secured ground path, so a repeat ground-lift kills chip #4 the same way. |
 | 23 | Remote VBAT divider has no ADC headroom — a full 2S pack sits at 97 % of the ADC's usable ceiling | Hardware | OPEN | Accuracy only. Costs ~0.7 % at full charge; thresholds are unaffected as they sit at 71-78 % of range. |
@@ -40,7 +40,7 @@ on-target defect log in the Phase 3 section.
 | 21 | Remote VBAT sense was non-linear — 3.3 V zener leakage into a 6.4 kΩ divider | Hardware | **Zener removed 2026-08-19, sense verified and calibrated. PARTIAL — no replacement clamp fitted, so GPIO 1 is unprotected.** | Nothing functionally. Production thresholds restored. Remaining risk is overvoltage exposure on GPIO 1 until a BAT54-class clamp is fitted. |
 | 20 | Shipped crypto keys are public — AES-128-CCM and the keyed CRC32 check are ineffective against anyone who has read the source | Security | OPEN — rotation deferred by decision | Field use where an adversary is in the threat model. No effect on bench work. |
 | 19 | Base LED strip: dead 4th pixel in the chain — channel 4 stuck, channels 5-8 dark | Hardware | OPEN — needs reflow or replacement | Channels 4-8 of the base strip; T-L15 for those channels |
-| 18 | Base ESP32 destroyed by relay-arc coupling on the continuity ADC inputs | Hardware + firmware | Software fix DONE and audited; hardware protection fitted on **channel 1 only** | All fire testing on channels 2-8, enforced in firmware by `FIRE_PROTECTED_CHANNEL_MASK` |
+| 18 | Base ESP32 destroyed by relay-arc coupling on the continuity ADC inputs | Hardware + firmware | Software fix DONE and audited. **As-built 2026-08-21: snubbers on ALL 8 channel relays + arm relay; 1N5819 clamps on CH1-6.** CH7-8 clamps pending parts | `FIRE_PROTECTED_CHANNEL_MASK` still 0x01 — needs widening to 0x3F once confirmed |
 
 Non-blocking items tracked elsewhere: the bench battery thresholds in
 `rlc_config.h` (FSD §5.6.2 production values not yet restored), the
@@ -1364,6 +1364,71 @@ DevKit measures 3.35 V in circuit against its own GND, and 3.30 V on a new
 board. The bug #24 LDO replacement was probably unnecessary; that incident and
 this one are the same underlying problem — **the grounding of this system is
 bad**, and it has now produced three different misleading symptoms.
+
+---
+
+### Continuity Bands Reduced to Three; SHORT Merged Away (2026-08-21)
+
+**Decision: `CONT_SHORT` merged into `CONT_CONNECTED`, and `CONT_GOOD` renamed
+`CONT_CONNECTED`.**
+
+**Why.** Three controlled experiments were run on CH1 with a fitted 220 Ω
+sense-branch offset resistor, comparing a real igniter against a deliberate
+short:
+
+| Experiment | Separation | Implied igniter R |
+|---|---|---|
+| Run 1, back-to-back | 6.78 counts (t=7.7) | 1.77 Ω |
+| Run 2, across power cycles | 2.93 counts (t=2.2) | 0.77 Ω |
+| Run 3, both states stable | 4.42 counts (t=7.1) | 1.15 Ω |
+
+The igniter measures **1.5–1.9 Ω** on a DVM. The effect is statistically real
+and always in the right direction, but the **magnitude is not reproducible** —
+it varied 2.3× for a setup that never physically changed. At 0.888 mV/Ω one ohm
+is 3.8 counts, and the signal (≈6 counts), single-reading noise (sd ≈2.5),
+lead contact resistance (≈3.8 counts per ohm of clip) and run-to-run drift
+(≈2 counts) are all the same size. A midway threshold misclassifies **19 % of
+single readings**; an 8-sweep average would cut that to 0.7 % but the
+threshold's own position is uncertain by ±2 counts, which dominates.
+
+**A band that cannot be measured must not be reported**, so it was removed
+rather than shipped as a guess.
+
+**Naming.** `GOOD` was factually wrong — it asserts igniter health the
+measurement cannot support, and is actively misleading on a shorted pair of
+leads. `CONNECTED` states only what is known: current can flow.
+
+**Wire compatibility.** The 2-bit encoding is unchanged. Value 3 is retained in
+the enum and decoded on display, simply never emitted, so no protocol version
+bump was needed and a pre-merge peer still interoperates.
+
+**The 220 Ω offset trial.** Fitted on CH1 only, then removed. It did exactly
+what was predicted: fixed the ADC's low-end non-linearity (CH1 became stable at
+206 mV with 3 counts of noise, matching the 209 mV model to within 3 mV) but
+added no resolution, because lifting a short and an igniter by the same amount
+does not separate them. Recorded because the reasoning generalises: **an offset
+buys linearity, only current buys resolution.**
+
+**Rejected alternative.** Raising the test current to ~3.4 mA (750 Ω ∥ 1.5 kΩ +
+680 Ω ∥ 1.8 kΩ) would give 2.25 mV/Ω and make the band genuinely measurable at
+~14.5 counts separation. It was declined because it cuts the no-fire margin from
+50× to 15× for a purely informational band that never blocked arming.
+
+### As-Built Hardware Update (2026-08-21)
+
+| Item | Status |
+|---|---|
+| RC snubbers, all 8 channel relays (NO–COM) | **FITTED** |
+| RC snubber, arm relay (NO–COM) | **FITTED** |
+| 1N5819 clamps to GND and 3V3, CH1–CH6 sense pins | **FITTED** |
+| 1N5819 clamps, CH7–CH8 | Pending — lack of parts |
+| 220 Ω sense-branch offset, CH1 | Trialled then **removed** |
+| Continuity ground return | Repaired, all grounds within 0.3 Ω |
+
+This is most of the bug #18 protection BOM. **`FIRE_PROTECTED_CHANNEL_MASK` is
+still `0x01`** and now understates the hardware: channels 1–6 have both clamps
+and snubbers. Widening it to `0x3F` is a fire-path safety gate change and is
+left for explicit confirmation rather than assumed.
 
 ---
 

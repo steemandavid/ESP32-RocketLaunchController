@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.28
-**Date:** 2026-08-20
+**Version:** 1.29
+**Date:** 2026-08-21
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -42,6 +42,7 @@
 | 1.26 | 2026-08-20 | Recorded bug #25 as §5.6.2a: **no hardware undervoltage cut-off is fitted on either pack, and none was ever specified.** Pack protection rests entirely on firmware thresholds, which do not disconnect the load — the ERROR state halts operation while regulators, backlight, LEDs and MCU keep drawing — and which only apply while firmware runs. Noted that `BASE_VBAT_CRITICAL_MV` sits exactly at 3.00 V/cell, leaving no margin before permanent capacity loss. Required trip points and the ordering constraint (hardware cut-off must sit above the firmware threshold) documented. Also recorded the channel-1 continuity ADC clamp as-built: 2x 1N5819, one to GND and one to +3.3 V.
 | 1.27 | 2026-08-20 | Encoder decoding brought up to what §5.5.1 already specified. The firmware had implemented **neither** the cycle-position decoder nor `ENC_DIVIDER` — it used the Gray-code level comparison the section explicitly rejects, and every accepted edge became a channel change; B also interrupted with no handler attached, losing three of four transitions. This caused the reported oversensitive channel selection and left the input open to electrical noise. Now implemented as specified with `ENC_DIVIDER` **4** (was documented as 3) and `ENC_LOCKOUT_US` 2 ms, both in §14.1. Added host tests T-Q01…T-Q06 and an as-built note to §5.5.1.
 | 1.28 | 2026-08-20 | Added `ENC_REVERSED` (§5.5.1, §14.1): the encoder's rotation sense is a board property, since which way a KY-040 counts depends on how A and B are wired. Set to 1 as built — the v1.27 decoder moved the channel selection opposite to the knob. Host test T-Q07 pins the direction explicitly so a rewire has to update the constant rather than silently inverting the operator's controls.
+| 1.29 | 2026-08-21 | Continuity reworked after bench characterisation. **SHORT merged into CONNECTED** (§5.4.2): at 1 mA a dead short and a 1.5-1.9 Ω igniter differ by 1-1.6 mV, within noise, drift and lead contact resistance; three runs on a fixed igniter implied 0.77/1.15/1.77 Ω. **`CONT_GOOD` renamed `CONT_CONNECTED`** — the band means a low-resistance path exists, not that the igniter is good. Wire encoding unchanged (value 3 retained, never emitted), so no version bump. Continuity ADC switched to **0 dB** attenuation and calibration **re-enabled** (it was hardcoded off, costing +369 mV of offset). `CONT_OPEN_UV` 1500000 → 432000 µV, finally the documented ~500 Ω. Recorded as-built hardware: snubbers on all 8 channel relays and the arm relay; 1N5819 clamps to GND and 3V3 on CH1-6 (CH7-8 pending).
 
 ---
 
@@ -601,14 +602,20 @@ The 100 kΩ pull-down resistor (R_pull) serves a critical function: **without it
 
 The ADC voltage is converted to a continuity band using threshold comparison with hysteresis. The V_adc values below assume R_ref = R_ref1 + R_ref2 = 3.3 kΩ, R_pull = 100 kΩ, V_supply = 3.3V:
 
+**THREE bands (revised 2026-08-21).** `CONT_SHORT` was merged into `CONT_CONNECTED`; see the deviation note below.
+
 | Band | Enum | R_ign range | V_adc range | Meaning | Display | Arming |
 |---|---|---|---|---|---|---|
-| `CONT_OPEN` | 0 | > 500 Ω / ∞ | > `CONT_OPEN_UV` (default: 1500000 µV) | No igniter connected or broken wire. Pulled to ~3.19V by R_pull. | Red ○ | **Blocks arming** (NACK 0x04) |
-| `CONT_GOOD` | 1 | 0.5–20 Ω | `CONT_SHORT_UV` to `CONT_MARGINAL_UV` (default: 66000 µV) | Normal e-match or igniter connected. Safe to fire. | Green ● | Arming permitted |
-| `CONT_MARGINAL` | 2 | 20–500 Ω | `CONT_MARGINAL_UV` to `CONT_OPEN_UV` (default: 1500000 µV) | High resistance connection — corroded clips, loose contact, damaged leads. May fail to fire. | Yellow ▲ + "MARGINAL" | Warning, does not block arming |
-| `CONT_SHORT` | 3 | < 0.5 Ω | < `CONT_SHORT_UV` (default: 500 µV) | Terminals shorted — no igniter, just wire. Possible wiring fault. | Orange ◆ + "SHORT" | Info warning, does not block arming |
+| `CONT_OPEN` | 0 | > ~500 Ω / ∞ | > `CONT_OPEN_UV` (432000 µV) | No igniter connected or broken wire. Pulled to ~3.19 V by R_pull, which saturates the 0 dB ADC range. | Yellow ○ | **Blocks arming** (NACK 0x04) |
+| `CONT_CONNECTED` | 1 | < ~67 Ω | < `CONT_MARGINAL_UV` (66000 µV) | **A low-resistance path is present.** Deliberately does *not* assert the igniter is good — a dead short across the terminals is in this band and is indistinguishable from a healthy e-match. | Dark green ● | Arming permitted |
+| `CONT_MARGINAL` | 2 | ~67–500 Ω | `CONT_MARGINAL_UV` to `CONT_OPEN_UV` | High resistance — corroded clips, loose contact, damaged leads. May fail to fire. | Light green ▲ + "MARGINAL" | Warning, does not block arming |
+| ~~`CONT_SHORT`~~ | 3 | — | — | **DEPRECATED, never produced.** Value retained so the 2-bit wire encoding is unchanged and a pre-merge peer still decodes; folded into CONNECTED on display. | — | — |
 
-**Wire encoding alignment:** the enum values (CONT_OPEN=0, CONT_GOOD=1, CONT_MARGINAL=2, CONT_SHORT=3) are identical to the 2-bit wire encoding in the `continuity_bands` field of STATUS_UPDATE (00=OPEN, 01=GOOD, 10=MARGINAL, 11=SHORT). No mapping function is required — the enum value can be used directly as the wire value.
+> **Why SHORT was removed (bench evidence, 2026-08-21).** At the specified 1 mA test current a dead short and a 1.5–1.9 Ω igniter differ by only 1–1.6 mV — the same magnitude as ADC noise, run-to-run drift, and the contact resistance of the shorting lead itself. Three controlled experiments on one physically fixed igniter returned implied resistances of **0.77, 1.15 and 1.77 Ω**, and the measured separation varied 2.9–6.8 counts for a setup that never changed. A midway threshold misclassifies ~19 % of single readings. Adding a 220 Ω sense-branch offset resistor was trialled: it fixed the ADC's low-end non-linearity but, as predicted, could not add resolution, and was removed. Raising the test current to ~3.4 mA would make the band measurable but costs the no-fire margin (50× → 15×), which was judged not worth it for a purely informational band. **A band that cannot be measured must not be reported.**
+
+> **Naming.** The band is `CONNECTED`, not `GOOD`. "GOOD" would assert igniter health that the measurement cannot support, and would be actively wrong on a shorted pair of leads.
+
+**Wire encoding alignment:** the enum values (CONT_OPEN=0, CONT_CONNECTED=1, CONT_MARGINAL=2, CONT_SHORT=3 deprecated) are identical to the 2-bit wire encoding in the `continuity_bands` field of STATUS_UPDATE. No mapping function is required. The encoding is **unchanged** by the three-band merge — value 3 is simply no longer emitted — so no protocol version bump was required.
 
 **Hysteresis:** each threshold has a configurable hysteresis band (default: ±200 µV for SHORT boundary, ±5000 µV for MARGINAL boundary, ±50000 µV for OPEN boundary). A band transition is only registered when the averaged voltage crosses the threshold + hysteresis in the transition direction. This prevents oscillation at band boundaries.
 

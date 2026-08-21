@@ -57,11 +57,14 @@ static void (*s_on_change_cb)(void) = NULL;
 
 /* ── Band classification with hysteresis (FSD §5.4.2, §14.5) ─── */
 
+/* Three bands only. SHORT was merged into CONNECTED on 2026-08-21 — see the
+ * rlc_continuity_band_t comment: the distinction is below the measurement
+ * floor at the specified 1 mA test current, so reporting it would be
+ * guessing. CONT_SHORT_UV is consequently unused. */
 static rlc_continuity_band_t classify_initial(int32_t uv)
 {
     /* First reading — simple thresholds, no hysteresis */
-    if (uv < CONT_SHORT_UV)      return CONT_SHORT;
-    if (uv < CONT_MARGINAL_UV)   return CONT_GOOD;
+    if (uv < CONT_MARGINAL_UV)   return CONT_CONNECTED;
     if (uv < CONT_OPEN_UV)       return CONT_MARGINAL;
     return CONT_OPEN;
 }
@@ -70,51 +73,37 @@ static rlc_continuity_band_t classify_with_hysteresis(int32_t uv,
                                                        rlc_continuity_band_t current)
 {
     switch (current) {
-    case CONT_SHORT:
-        /* Stay SHORT unless voltage rises above boundary + hysteresis */
-        if (uv > CONT_SHORT_UV + CONT_HYSTERESIS_SHORT_UV) {
-            /* Crossed into GOOD range */
-            if (uv < CONT_MARGINAL_UV) return CONT_GOOD;
-            if (uv < CONT_OPEN_UV)     return CONT_MARGINAL;
-            return CONT_OPEN;
-        }
-        return CONT_SHORT;
-
-    case CONT_GOOD:
-        /* Down to SHORT? */
-        if (uv < CONT_SHORT_UV - CONT_HYSTERESIS_SHORT_UV)
-            return CONT_SHORT;
+    case CONT_CONNECTED:
         /* Up to MARGINAL? */
         if (uv > CONT_MARGINAL_UV + CONT_HYSTERESIS_MARGINAL_UV) {
             if (uv < CONT_OPEN_UV) return CONT_MARGINAL;
             return CONT_OPEN;
         }
-        return CONT_GOOD;
+        return CONT_CONNECTED;
 
     case CONT_MARGINAL:
-        /* Down to GOOD? */
-        if (uv < CONT_MARGINAL_UV - CONT_HYSTERESIS_MARGINAL_UV) {
-            if (uv < CONT_SHORT_UV) return CONT_SHORT;
-            return CONT_GOOD;
-        }
+        /* Down to CONNECTED? */
+        if (uv < CONT_MARGINAL_UV - CONT_HYSTERESIS_MARGINAL_UV)
+            return CONT_CONNECTED;
         /* Up to OPEN? */
         if (uv > CONT_OPEN_UV + CONT_HYSTERESIS_OPEN_UV)
             return CONT_OPEN;
         return CONT_MARGINAL;
 
     case CONT_OPEN:
-        /* Stay OPEN unless voltage drops below boundary - hysteresis */
+        /* Stay OPEN unless the reading drops below boundary - hysteresis */
         if (uv < CONT_OPEN_UV - CONT_HYSTERESIS_OPEN_UV) {
-            if (uv < CONT_MARGINAL_UV) {
-                if (uv < CONT_SHORT_UV) return CONT_SHORT;
-                return CONT_GOOD;
-            }
+            if (uv < CONT_MARGINAL_UV) return CONT_CONNECTED;
             return CONT_MARGINAL;
         }
         return CONT_OPEN;
-    }
 
-    return CONT_OPEN;  /* Should never reach here */
+    case CONT_SHORT:
+        /* Deprecated band — a unit that booted before the merge, or a stale
+         * cached value, is folded into the current scheme on first update. */
+        return classify_initial(uv);
+    }
+    return classify_initial(uv);
 }
 
 /* ── ADC burst sampling ────────────────────────────────────────── */

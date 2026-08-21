@@ -85,10 +85,10 @@ int main(void)
     printf("T-L02 continuity map colours\n");
     reset();
     /* ch1=GOOD(01) ch2=MARGINAL(10) ch3=SHORT(11) ch4=OPEN(00), rest OPEN */
-    rlc_rgb_led_set_channel_bands(0x0000 | (CONT_GOOD<<0) | (CONT_MARGINAL<<2) | (CONT_SHORT<<4));
+    rlc_rgb_led_set_channel_bands(0x0000 | (CONT_CONNECTED<<0) | (CONT_MARGINAL<<2) | (CONT_SHORT<<4));
     at_ms(0);
     led_render_status(0);
-    expect_pix("ch1 GOOD -> darkgreen",  px(1), scaled(RLC_COLOR_CONT_GOOD, 100));
+    expect_pix("ch1 GOOD -> darkgreen",  px(1), scaled(RLC_COLOR_CONT_CONNECTED, 100));
     expect_pix("ch2 MARGINAL -> lightgreen", px(2), scaled(RLC_COLOR_CONT_MARGINAL, 100));
     expect_pix("ch3 SHORT -> red",       px(3), scaled(RLC_COLOR_CONT_SHORT, 100));
     expect_pix("ch4 OPEN -> yellow",     px(4), scaled(RLC_COLOR_CONT_OPEN, 100));
@@ -132,14 +132,14 @@ int main(void)
     /* ── T-L06: stale data dims the whole map ── */
     printf("T-L06 stale map dimming\n");
     reset();
-    rlc_rgb_led_set_channel_bands((CONT_GOOD<<0));
+    rlc_rgb_led_set_channel_bands((CONT_CONNECTED<<0));
     rlc_rgb_led_set_stale(true);
     led_render_status(0);
     expect_pix("stale ch1 dimmed to STALE_DIM_PCT", px(1),
-               scaled(RLC_COLOR_CONT_GOOD, RLC_STRIP_STALE_DIM_PCT));
+               scaled(RLC_COLOR_CONT_CONNECTED, RLC_STRIP_STALE_DIM_PCT));
     rlc_rgb_led_set_stale(false);
     led_render_status(0);
-    expect_pix("fresh ch1 at full brightness", px(1), scaled(RLC_COLOR_CONT_GOOD, 100));
+    expect_pix("fresh ch1 at full brightness", px(1), scaled(RLC_COLOR_CONT_CONNECTED, 100));
 
     /* ── T-L07: cursor pulse on the selected channel only ── */
     printf("T-L07 channel-of-interest cursor pulse\n");

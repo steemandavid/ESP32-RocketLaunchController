@@ -152,10 +152,19 @@ so the "pad is live" signal is never diluted into a data display.
 
 Known open items before any field use:
 
+- The continuity sense reports three bands — **CONNECTED**, **MARGINAL**,
+  **OPEN** — not four. A `SHORT` band was specified but proved unmeasurable at
+  the 1 mA test current: a dead short and a 1.5 Ω igniter differ by about a
+  millivolt, which is the same size as the noise. The band is named CONNECTED
+  rather than GOOD because it means only that current can flow, not that the
+  igniter is sound.
 - Fire testing is restricted to **channel 1 only** — channels 2–8 lack the
   Schottky clamps and contact snubber added after two base ESP32s were destroyed
   by relay-arc coupling (tracked as bug #18). The restriction is enforced in
-  firmware by `FIRE_PROTECTED_CHANNEL_MASK`, not just by procedure.
+  firmware by `FIRE_PROTECTED_CHANNEL_MASK`, not just by procedure. As of
+  2026-08-21 the hardware has moved ahead of the gate — snubbers are fitted on
+  all eight channels and the arm relay, and clamps on channels 1–6 — so the mask
+  is due to widen once confirmed.
 - **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
   ever specified. Protection is firmware-only, and the ERROR state halts
   operation without disconnecting the load — so a unit left switched on, or one

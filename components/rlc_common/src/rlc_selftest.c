@@ -472,7 +472,7 @@ static int test_integrity_crc(void)
 
 /* Verify the production enum matches the wire encoding spec (§5.4.2) */
 _Static_assert(CONT_OPEN == 0, "CONT_OPEN must be 0 (wire encoding)");
-_Static_assert(CONT_GOOD == 1, "CONT_GOOD must be 1 (wire encoding)");
+_Static_assert(CONT_CONNECTED == 1, "CONT_CONNECTED must be 1 (wire encoding)");
 _Static_assert(CONT_MARGINAL == 2, "CONT_MARGINAL must be 2 (wire encoding)");
 _Static_assert(CONT_SHORT == 3, "CONT_SHORT must be 3 (wire encoding)");
 
@@ -484,8 +484,7 @@ _Static_assert(CONT_SHORT == 3, "CONT_SHORT must be 3 (wire encoding)");
  */
 static rlc_continuity_band_t selftest_classify_uv(int32_t uv)
 {
-    if (uv < CONT_SHORT_UV)      return CONT_SHORT;
-    if (uv < CONT_MARGINAL_UV)   return CONT_GOOD;
+    if (uv < CONT_MARGINAL_UV)   return CONT_CONNECTED;
     if (uv < CONT_OPEN_UV)       return CONT_MARGINAL;
     return CONT_OPEN;
 }
@@ -496,18 +495,24 @@ static int test_continuity_classification(void)
 
     /* Test the threshold classification logic using config constants */
     struct { int32_t uv; rlc_continuity_band_t expected; } tests[] = {
-        { 0,        CONT_SHORT },    /* Zero ohm dead short */
-        { 300,      CONT_SHORT },    /* Below SHORT threshold */
-        { 500,      CONT_GOOD },     /* At SHORT boundary */
-        { 1000,     CONT_GOOD },     /* Solid good reading */
-        { 30000,    CONT_GOOD },     /* Still good */
+        { 0,        CONT_CONNECTED }, /* dead short — a path is present */
+        { 300,      CONT_CONNECTED },
+        { 500,      CONT_CONNECTED },
+        { 1000,     CONT_CONNECTED },
+        { 30000,    CONT_CONNECTED },
         { 66000,    CONT_MARGINAL }, /* At MARGINAL boundary */
-        { 100000,   CONT_MARGINAL }, /* Marginal */
+        { 100000,   CONT_MARGINAL },
         { 400000,   CONT_MARGINAL }, /* Still marginal, just under OPEN */
         { 432000,   CONT_OPEN },     /* At OPEN boundary (~500 ohm) */
-        { 900000,   CONT_OPEN },     /* Definitely open */
+        { 900000,   CONT_OPEN },
         { 3190000,  CONT_OPEN },     /* Open-circuit rest voltage */
     };
+
+    /* Vectors are expressed against the config constants deliberately: they
+     * caught the 2026-08-21 OPEN threshold move at boot rather than in the
+     * field. Keep them in step when the thresholds change. SHORT is absent
+     * because the band was merged into CONNECTED — see rlc_protocol.h. */
+
 
     /* Vectors are expressed against the config constants deliberately: they
      * caught the 2026-08-21 OPEN threshold move at boot rather than in the
@@ -542,44 +547,31 @@ static rlc_continuity_band_t test_classify_hysteresis(int32_t uv,
                                                        rlc_continuity_band_t current)
 {
     switch (current) {
-    case CONT_SHORT:
-        if (uv > CONT_SHORT_UV + CONT_HYSTERESIS_SHORT_UV) {
-            if (uv < CONT_MARGINAL_UV) return CONT_GOOD;
-            if (uv < CONT_OPEN_UV)     return CONT_MARGINAL;
-            return CONT_OPEN;
-        }
-        return CONT_SHORT;
-
-    case CONT_GOOD:
-        if (uv < CONT_SHORT_UV - CONT_HYSTERESIS_SHORT_UV)
-            return CONT_SHORT;
+    case CONT_CONNECTED:
         if (uv > CONT_MARGINAL_UV + CONT_HYSTERESIS_MARGINAL_UV) {
             if (uv < CONT_OPEN_UV) return CONT_MARGINAL;
             return CONT_OPEN;
         }
-        return CONT_GOOD;
+        return CONT_CONNECTED;
 
     case CONT_MARGINAL:
-        if (uv < CONT_MARGINAL_UV - CONT_HYSTERESIS_MARGINAL_UV) {
-            if (uv < CONT_SHORT_UV) return CONT_SHORT;
-            return CONT_GOOD;
-        }
+        if (uv < CONT_MARGINAL_UV - CONT_HYSTERESIS_MARGINAL_UV)
+            return CONT_CONNECTED;
         if (uv > CONT_OPEN_UV + CONT_HYSTERESIS_OPEN_UV)
             return CONT_OPEN;
         return CONT_MARGINAL;
 
     case CONT_OPEN:
         if (uv < CONT_OPEN_UV - CONT_HYSTERESIS_OPEN_UV) {
-            if (uv < CONT_MARGINAL_UV) {
-                if (uv < CONT_SHORT_UV) return CONT_SHORT;
-                return CONT_GOOD;
-            }
+            if (uv < CONT_MARGINAL_UV) return CONT_CONNECTED;
             return CONT_MARGINAL;
         }
         return CONT_OPEN;
-    }
 
-    return CONT_OPEN;
+    case CONT_SHORT:
+    default:
+        return selftest_classify_uv(uv);
+    }
 }
 
 static int test_continuity_hysteresis(void)
@@ -587,11 +579,11 @@ static int test_continuity_hysteresis(void)
     int failures = 0;
 
     /* Test 1: GOOD near SHORT boundary — should stay GOOD within hysteresis */
-    rlc_continuity_band_t band = CONT_GOOD;
+    rlc_continuity_band_t band = CONT_CONNECTED;
 
     /* Voltage just above SHORT threshold but within hysteresis — should stay GOOD */
     band = test_classify_hysteresis(CONT_SHORT_UV + CONT_HYSTERESIS_SHORT_UV / 2, band);
-    if (band != CONT_GOOD) {
+    if (band != CONT_CONNECTED) {
         ESP_LOGE(TAG, "FAIL: hysteresis GOOD near SHORT boundary — got %d, expected GOOD", band);
         failures++;
     }
@@ -647,11 +639,11 @@ static int test_continuity_bands_encoding(void)
     /* Verify 2-bit-per-channel packing:
      * ch1 in bits 1:0, ch2 in bits 3:2, ..., ch8 in bits 15:14 */
     rlc_continuity_band_t bands[8] = {
-        CONT_GOOD,     /* ch1: 01 */
+        CONT_CONNECTED,     /* ch1: 01 */
         CONT_SHORT,    /* ch2: 11 */
         CONT_OPEN,     /* ch3: 00 */
         CONT_MARGINAL, /* ch4: 10 */
-        CONT_GOOD,     /* ch5: 01 */
+        CONT_CONNECTED,     /* ch5: 01 */
         CONT_OPEN,     /* ch6: 00 */
         CONT_SHORT,    /* ch7: 11 */
         CONT_MARGINAL, /* ch8: 10 */
