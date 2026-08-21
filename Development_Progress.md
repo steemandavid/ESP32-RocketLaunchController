@@ -34,7 +34,7 @@ on-target defect log in the Phase 3 section.
 |---|-------|-------|--------|--------|
 | 26 | Six of eight continuity channels read raw ADC 0 regardless of load — the GOOD band is unmeasurable and real igniters classify as SHORT | Hardware (suspected) | OPEN — decisive test identified | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
 | 25 | No hardware undervoltage cut-off on either battery — firmware thresholds only, and ERROR does not disconnect the load | Hardware | OPEN | Pack protection. A unit left switched on, or one whose firmware has halted, will discharge a LiPo past the point of permanent damage and into the unsafe-to-recharge region. |
-| 24 | Base ESP32 chip #3 destroyed — 3.3 V rail floated to 3.68 V after accidental ground disconnect | Hardware | Chip replaced (chip #4); rail protection OPEN | Nothing functionally. The base has no rail clamp and no secured ground path, so a repeat ground-lift kills chip #4 the same way. |
+| 24 | Base 3.3 V rail runs high — killed chip #3 at 3.68 V, and **measured ~3.72 V again on 2026-08-21 with chip #4 fitted** | Hardware | **RECURRING — chip #4 at risk now** | Nothing functionally. The base has no rail clamp and no secured ground path, so a repeat ground-lift kills chip #4 the same way. |
 | 23 | Remote VBAT divider has no ADC headroom — a full 2S pack sits at 97 % of the ADC's usable ceiling | Hardware | OPEN | Accuracy only. Costs ~0.7 % at full charge; thresholds are unaffected as they sit at 71-78 % of range. |
 | 22 | Remote GPIO 1 has no overvoltage clamp — the bug #21 zener was removed and not replaced | Hardware | OPEN | Protection only. The divider's series impedance is the sole limit on an overvoltage fault. |
 | 21 | Remote VBAT sense was non-linear — 3.3 V zener leakage into a 6.4 kΩ divider | Hardware | **Zener removed 2026-08-19, sense verified and calibrated. PARTIAL — no replacement clamp fitted, so GPIO 1 is unprotected.** | Nothing functionally. Production thresholds restored. Remaining risk is overvoltage exposure on GPIO 1 until a BAT54-class clamp is fitted. |
@@ -1308,6 +1308,33 @@ safety path that was not warranted by the evidence.
 
 ---
 
+### Bug #24 RECURRENCE — rail measured high again with chip #4 (2026-08-21)
+
+DVM measurements taken while diagnosing bug #26 put the **continuity supply at
+~3.72 V**, from two independent readings:
+
+| Measurement | Implies supply |
+|---|---|
+| CH2 open-circuit rest voltage **3.60 V** (FSD §5.4.2 predicts 3.19 V) | 3.72 V |
+| CH7 open-circuit rest voltage **3.60 V** | 3.72 V |
+| 16.9 mV across a 14.9 Ω load | 3.76 V |
+
+Bug #24 recorded chip #3 destroyed with the rail at **3.68 V**. This is the same
+condition, with chip #4 fitted, **live on the bench**.
+
+The ESP32-S3 GPIO absolute maximum is VDD + 0.3 V, so an open continuity channel
+at 3.60 V is at or over the limit on all eight ADC pins simultaneously.
+
+**This plausibly explains bug #26 as well:** six ADC channels reading a hard 0
+regardless of input is consistent with input-stage damage from sustained
+overvoltage. CH4 and CH5 — the two that still work — happened to carry
+low-value loads holding them well below the rail.
+
+**Action: measure the 3.3 V rail directly and do not power the base until it is
+back at 3.3 V.**
+
+---
+
 ### Bug #26 — Six continuity channels read raw ADC 0 (2026-08-21, OPEN)
 
 **Bench test.** Known loads on all eight channels:
@@ -1343,13 +1370,28 @@ was reverted; 12 dB at least reads the high end correctly.
 R_pull, reading 0 **regardless of what is connected** — which matches the data
 exactly, since 0.1 Ω, 14.9 Ω, 74.3 Ω and three igniters all read identical 0.
 
-**Decisive test (10 seconds, not yet run): disconnect the load from CH2 and
-read the channel.**
+**Decisive test RUN 2026-08-21 — R_ref hypothesis DISPROVED.** DVM on the pin:
 
-- Reads ~3.19 V (OPEN) → R_ref is present and the front end works; the fault is
-  elsewhere and the ADC-floor question reopens.
-- Stays at 0 → **R_ref missing or open on that channel** — a wiring/populating
-  fault, and the fix is hardware.
+| Channel | Load | Pin voltage | ADC reports |
+|---|---|---|---|
+| CH2 | 14.9 Ω | **16.9 mV** | raw 0, SHORT |
+| CH2 | none | **3.60 V** | OPEN ✓ |
+| CH7 | Amazon igniter | **0.75 mV** | raw 0, SHORT |
+| CH7 | none | **3.60 V** | OPEN ✓ |
+
+The front end works: R_ref is present, the pin rests high when open, and the
+sense voltage is genuinely there. **The ADC simply does not respond to 16.9 mV**
+— not at 12 dB, and not at 0 dB where it should have read ~73 counts.
+
+So the ESP32-S3 ADC cannot resolve the GOOD band on this circuit at any
+attenuation. A 2 Ω igniter develops ~2 mV; even a perfect 12-bit converter on
+the 0 dB range is ~8 counts, and this one reads 0 at 17 mV. **The fix must
+raise the sense voltage — more test current, or amplification — not tune
+thresholds or ADC settings.**
+
+Note the open-circuit rest voltage of **3.60 V against the 3.19 V the FSD
+predicts**: see the bug #24 recurrence entry above. That overvoltage may itself
+be why six channels read a hard 0.
 
 Working channels are GPIO 5 and 6; dead are GPIO 2, 4, 7, 8, 9, 10. No firmware
 conflict on those pins (relays are 11–18, arm relay 47, siren 40, key sense 42,
