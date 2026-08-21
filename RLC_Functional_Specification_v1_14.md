@@ -590,7 +590,7 @@ Each output, when driven active, energises an SPDT relay that switches the ignit
 | ADC resolution | 12-bit |
 | Sampling interval | 100 ms per channel in round-robin sequence (ch1, ch2, ..., ch8, ch1, ...). Each sample consists of 64 rapid consecutive ADC readings averaged (burst sampling). Full-system update period: 800 ms. |
 | Oversampling | 64-sample moving average per channel for noise reduction |
-| Conversion | `adc_cali_raw_to_voltage()` calibration API (same as battery ADC, §5.4.8) |
+| Conversion | `adc_cali_raw_to_voltage()` calibration API (same as battery ADC, §5.4.7) |
 
 The continuity sensing circuit is external and **uses the SPDT relay's NC (normally closed) contact**. When the relay is de-energised (default state), the NC contact routes the igniter high-side to the continuity sense circuit. The igniter low-side is connected directly to ground, completing the sense current path. This means continuity sensing is inherently mutually exclusive with firing — the relay physically disconnects the sense circuit when energised for firing, and reconnects it when de-energised. Each channel has an independent sensing circuit:
 
@@ -892,14 +892,44 @@ The DIVIDER_RATIO constant must be defined in configuration to match the externa
 
 **ADC1 allocation summary (base unit):** GPIO 1 = battery voltage, GPIO 2 = ch1 continuity, GPIO 10 = ch2 continuity, GPIO 4–9 = ch3–ch8 continuity. This uses all 10 available ADC1 pins (GPIO 1–10). No spare ADC1 pins remain. ADC2 (GPIO 11–20) remains unavailable due to ESP-NOW/Wi-Fi conflict.
 
-#### 5.4.8 Siren Output
+#### 5.4.8 Siren Output (GPIO 40)
+
+**Base unit only.** The siren is the *pad* warning — loud, next to the rocket,
+on the unit that actually closes the fire path. The remote has a separate
+buzzer (§5.5.7, GPIO 16) for operator feedback; the two are different devices
+with different drivers and **opposite polarity**, which is easy to get
+backwards when wiring both.
 
 | Parameter | Value |
 |---|---|
+| GPIO | **40** (`PIN_SIREN`) |
+| Unit | Base only — `PIN_SIREN` is defined inside `#ifdef CONFIG_RLC_UNIT_BASE` |
 | Signal type | Digital output, active HIGH (GPIO HIGH = MOSFET on = siren activated) |
 | Quantity | 1 |
-| Function | Loud alarm: pulsing during ARMED, continuous during PRE_FIRE and FIRING, pulsed during LINK_LOST |
+| Function | Loud alarm: pulsing during ARMED, continuous during PRE_FIRE and FIRING, pulsed during LINK_LOST, 3 short blasts on ERROR |
 | Driver | Via dedicated IRLZ44N MOSFET (same low-side switch topology as relay drivers, see §5.4.10) |
+| Gate network | 150 Ω series (GPIO→gate) + **10 kΩ gate pull-down (gate→GND)** |
+| Flyback diode | Required — cathode to VBAT+, anode to MOSFET drain (1N4007, or 1N5819/SS14) |
+
+**The 10 kΩ gate pull-down is not optional on this output.** ESP32-S3 GPIOs are
+high-impedance from power-on until `siren_init()` configures them. Without the
+pull-down, capacitive coupling through Cgd can partially turn the MOSFET on
+during the power-on transient — and a siren that sounds by itself at boot is
+the one output where that behaviour is genuinely dangerous at a pad, because it
+trains operators to disbelieve it.
+
+**Note (GPIO 40 is also MTDO).** GPIO 39–42 are the ESP32-S3's pin-based JTAG
+signals; GPIO 42 is already committed to key sense (§5.4.3b). The board uses
+USB Serial/JTAG, so this is harmless — but pin-based JTAG debugging is not
+available on this hardware.
+
+> **AS-BUILT (2026-08-21): the siren is NOT CONNECTED.** The driver has not
+> been fitted, so GPIO 40 currently drives nothing. This blocks verification of
+> review finding N2 (§12.3): both of its failure modes — a siren stuck on after
+> disarm, and a siren that falls silent through the PRE_FIRE countdown — are
+> *silent* failures, and neither is observable with the output disconnected.
+> The N2 fix therefore rests on code inspection alone. Fit the driver above and
+> re-run the two siren tests before treating N2 as closed.
 
 #### 5.4.9 Arm Relay Output (GPIO 47)
 

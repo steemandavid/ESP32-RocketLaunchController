@@ -118,6 +118,31 @@ tolerance spans 3.42–3.78 V and it needs ~3.9 V to sink 40 mA.
 stock lasts"; 220 Ω showed >20 at Aalst only (Gent/Hasselt 1–2 days). Order
 these when ordering the rest.
 
+## Bug #27 — base siren driver (needed, part codes NOT yet looked up)
+
+Added 2026-08-21. The base siren is not connected: GPIO 40 drives nothing and
+the IRLZ44N driver has not been fitted, so the pad currently has **no audible
+warning during ARMED / PRE_FIRE / FIRING**. See Development_Progress bug #27
+and FSD §5.4.8.
+
+The design already calls for 10 IRLZ44N (8 channels + arm relay + siren), so
+check the parts bin before ordering — the siren MOSFET may already be on hand
+even though it is not installed.
+
+| Qty | Part | Purpose |
+|---|---|---|
+| 1 | IRLZ44N (or equivalent logic-level N-channel MOSFET) | Low-side siren switch, GPIO 40 |
+| 1 | 150 Ω 1/4 W | Gate series resistor (GPIO → gate) |
+| 1 | 10 kΩ 1/4 W | **Gate pull-down (gate → GND) — boot safety, not optional** |
+| 1 | 1N4007, or 1N5819 / SS14 | Flyback diode across the siren coil (cathode VBAT+, anode drain) |
+| 1 | 12 V siren / sounder | The device itself, if not already sourced |
+
+> **Part codes and prices are deliberately blank** — they have not been checked
+> against Gotron stock, and every other row in this document carries a verified
+> code. Look them up before ordering rather than trusting a guess here. Note
+> `RC10K` (10 kΩ, €0.12) is already on the order above for the TL431 divider,
+> so that one line may just need its quantity raised.
+
 ## Optional additions (not ordered — codes recorded for later)
 
 | Part code | Description | Price | Reads as | Use |

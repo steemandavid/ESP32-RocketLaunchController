@@ -33,6 +33,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
+| 27 | Base siren not connected — GPIO 40 drives nothing, IRLZ44N driver not fitted | Hardware | OPEN | Verification of review finding N2 (siren stale-callback race). Both N2 failure modes are *silent* — stuck on after disarm, silent through the PRE_FIRE countdown — so neither is observable with the output disconnected, and the fix rests on code inspection alone. Also means the pad has **no audible warning at all** during ARMED/PRE_FIRE/FIRING: the remote's buzzer is operator feedback, not a pad warning, and is in the wrong place to serve as one. |
 | 26 | Continuity misclassified — ~64 Ω return-path fault + ADC calibration disabled + 12 dB attenuation | Hardware + firmware | **RESOLVED** — return repaired, calibration on, 0 dB adopted, SHORT band merged away as unmeasurable | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
 | 25 | No hardware undervoltage cut-off on either battery — firmware thresholds only, and ERROR does not disconnect the load | Hardware | OPEN | Pack protection. A unit left switched on, or one whose firmware has halted, will discharge a LiPo past the point of permanent damage and into the unsafe-to-recharge region. |
 | 24 | Base 3.3 V rail runs high — killed chip #3 at 3.68 V, and **measured ~3.72 V again on 2026-08-21 with chip #4 fitted** | Hardware | **RECURRING — chip #4 at risk now.** High readings now attributed to a grounding measurement artefact (DevKit reads 3.35 V against its own GND); rail clamp spec'd as a TL431 shunt at ~3.57 V, **not** the 3V6 zener originally recommended | Nothing functionally. The base has no rail clamp and no secured ground path, so a repeat ground-lift kills chip #4 the same way. The eight 3V3-side continuity clamps are now a second route to an over-rail (bug #18). |
@@ -1326,6 +1327,69 @@ last good reading on total ADC failure.
 already a robust median that is sufficient, and making it a median too would
 slow the response to a genuine voltage collapse — a behavioural change in a
 safety path that was not warranted by the evidence.
+
+---
+
+### Bug #27 — Base siren not connected (2026-08-21, OPEN)
+
+Surfaced while closing out the 1.1.1 review round: the operator ran the
+arm→PRE_FIRE→FIRING sequence to verify N2 and reported that **the siren is not
+wired**. GPIO 40 currently drives nothing — the IRLZ44N driver has not been
+fitted.
+
+**Two separate consequences, and the second is the bigger one.**
+
+1. **N2 cannot be verified.** Both of its failure modes are *silent* ones — a
+   siren stuck on after `siren_off()`, and a siren that falls quiet through the
+   whole 2 s PRE_FIRE countdown. Neither is observable with the output
+   disconnected, so the N2 fix rests on code inspection alone. Bench tests 2
+   and 3 from the review are blocked on this.
+
+2. **The pad has no audible warning at all.** ARMED pulse, PRE_FIRE/FIRING
+   continuous, LINK_LOST 4-cycle and ERROR 3-blast patterns are all produced in
+   firmware and all go nowhere. The remote's buzzer (§5.5.7, GPIO 16) is
+   operator feedback in the operator's hand — it is in the wrong physical
+   location to warn anyone standing near the igniter, which is the siren's
+   entire purpose. This is a safety-function gap, not just a test-coverage gap,
+   and it is independent of any firmware finding.
+
+**Fix — FSD §5.4.8 / §5.4.10, base unit, GPIO 40, active HIGH:**
+
+```
+              VBAT+ (12 V)
+                   │
+             ┌─────┴─────┐
+             │   SIREN   │◄── flyback diode: cathode VBAT+, anode drain
+             └─────┬─────┘     (1N4007, or 1N5819/SS14)
+                   │ drain
+           ┌───────┴───────┐
+           │    IRLZ44N    │
+           │ gate    source│
+           └──┬─────────┬──┘
+    150 Ω     │         │
+GPIO 40 ──/\/\──┤       │
+                │       │
+          10 kΩ ⌇       │
+                │       │
+               GND     GND
+```
+
+- **10 kΩ gate pull-down is mandatory here.** GPIOs are high-impedance from
+  power-on until `siren_init()` runs; without it, Cgd coupling can partially
+  turn the MOSFET on during the power-on transient. A siren that sounds by
+  itself at boot trains operators to disbelieve it — the worst outcome for a
+  warning device.
+- **Flyback diode is mandatory.** A siren is an inductive load; the
+  de-energise spike will kill the MOSFET without it.
+- Polarity is **active HIGH** (MOSFET), the opposite of the remote's buzzer
+  (**active LOW**, BC547 inverts). Easy to get backwards when wiring both.
+- GPIO 40 is also the ESP32-S3's MTDO. Harmless — the board uses USB
+  Serial/JTAG, and GPIO 42 (MTMS) is already committed to key sense — but
+  pin-based JTAG is not available on this hardware.
+
+**Retest when fitted:** review bench tests 2 (siren continuous across
+ARMED→PRE_FIRE) and 3 (stops and stays stopped after disarm / arm timeout /
+CEASE_FIRE), plus the LINK_LOST 4-cycle and ERROR 3-blast patterns.
 
 ---
 

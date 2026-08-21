@@ -140,6 +140,45 @@ fix rests on code inspection until the driver is fitted (IRLZ44N low-side per
 FSD §5.4.8/§5.4.10, 150 Ω gate series + 10 kΩ gate pull-down for boot safety,
 flyback diode across the coil) and tests 2 and 3 are re-run.
 
+### Commit
+
+`f76ff2d` — 26 files, +1457/−141. Firmware, host tests, review document and all
+four doc files in one commit.
+
+### Session closeout — bug #27 raised, two FSD defects fixed
+
+Answering "what pin does the siren go on?" exposed that **§5.4.8 Siren Output
+never stated its GPIO** — the parameter table gave signal type, quantity,
+function and driver, but not the pin, while its sibling §5.4.9 names it right
+in the heading ("Arm Relay Output (GPIO 47)"). The number was only recoverable
+from Appendix C.1 or `pin_config.h`. That is a documentation defect in the one
+section someone reads *while holding a soldering iron*. §5.4.8 now leads with
+GPIO 40, states base-only scope, and carries the full gate network (150 Ω
+series, 10 kΩ pull-down, flyback diode), the boot-safety rationale, and the
+GPIO 40 = MTDO note.
+
+Also found and fixed while in there: **a stale cross-reference** — the
+continuity ADC table cited "same as battery ADC, **§5.4.8**", which is the
+siren. Battery ADC is §5.4.7. Almost certainly a leftover from the v1.12
+section renumbering.
+
+**Bug #27 opened: base siren not connected.** Promoted out of the session
+narrative into the Open Bugs index, because it is not merely a test-coverage
+gap. Beyond blocking N2 verification, it means **the pad has no audible warning
+at all** during ARMED/PRE_FIRE/FIRING — every siren pattern the firmware
+produces goes nowhere. The remote's buzzer is operator feedback in the
+operator's hand and is in the wrong physical location to substitute. That is a
+safety-function gap independent of any firmware finding, which is why it now
+has a number and a detailed entry with the drive circuit.
+
+Added a bug #27 section to `docs/Gotron_Shopping_List.md` listing what is
+needed (IRLZ44N, 150 Ω, 10 kΩ, flyback diode, the sounder). **Part codes and
+prices deliberately left blank** — every other row in that document carries a
+verified Gotron code, and guessing would be worse than an obvious gap. Noted
+that `RC10K` is already on the order for the TL431 divider, so that line may
+only need its quantity raised, and that the design already calls for 10
+IRLZ44N so the parts bin is worth checking first.
+
 ---
 
 ## 2026-08-21 — All findings from Code_Review_AllPhases_20260821_1430.md fixed
