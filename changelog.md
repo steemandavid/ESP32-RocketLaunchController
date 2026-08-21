@@ -1,5 +1,79 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-21 — Full-codebase review + documentation audit (no code changes)
+
+### What ran
+
+`/codereviewer all code` at commit cd4ddf0, plus a parallel documentation
+consistency audit. Read-only review: three parallel review agents (base /
+remote / common+tests+tools) fed by a context agent, every Major finding
+re-verified in source before inclusion. Host tests executed during the review:
+10 binaries, 217 checks, all pass.
+
+**Output:** `Code_Review_AllPhases_20260821_1430.md` — verdict **MAYBE**, with
+a summary also added to `Development_Progress.md` and the README docs table.
+
+### The four findings that gate live-fire
+
+1. **DISARM during the 200 ms arm-verify window is ACKed "already safe" but
+   does not abort the pending ARM** (`rlc_base_fsm.c:362`). The base can
+   complete IDLE→ARMED after the remote displayed "disarmed". CEASE_FIRE in
+   the same window does call `abort_arm_verify()` — DISARM must too.
+2. **The remote can command FIRE with the arm key OFF** — three compounding
+   gaps in `rlc_remote_fsm.c`: `wait_for_ack()` swallows the switch-off event,
+   the ARM retry loop re-sends without re-checking `arm_switch_is_armed()`,
+   and the ARMED fire guards never check the key. The hardware key-in-coil-path
+   AND gate still blocks actual firing, which is why this is Major, not
+   Critical.
+3. **Continuity ADC read failure classifies as CONNECTED** —
+   `sample_channel()` returns 0 on any `adc_oneshot_read` failure and 0 µV is
+   the only arming-permitting band (`rlc_continuity.c:111`). Fails permissive;
+   must fail to OPEN (or hold the previous band).
+4. **`ERR_VBAT_CRITICAL` latched during FIRING is dropped on the operator-abort
+   exits** (CEASE_FIRE / arm-sense-lost / key-off / DISARM), then detonates as
+   a spurious power-cycle-terminal ERROR at the *next* POST_FIRE entry
+   (`rlc_base_fsm.c:558, 605`).
+
+### The other three Majors (assurance / infrastructure)
+
+- Boot self-test still runs a **copy** of the continuity classifier
+  (`rlc_selftest.c:485`) — the Phase-2 M2 anti-pattern, now including the
+  rewritten three-band vectors; `test_armstate.c` mirrors display logic the
+  same way.
+- **C3 timestamp is not captured in the ESP-NOW callback** — it is stamped in
+  the worker task behind two queues (`rlc_link.c:803`) while three comments
+  claim otherwise; it feeds the 500 ms dead-man window.
+- **Send-failure handler blocks the WiFi task** — portMAX_DELAY state mutex +
+  10 ms queue send from `espnow_send_cb` context (`rlc_link.c:626`), an ABBA
+  shape against `link_task` at the exact moment the link is failing.
+
+32 minors and 14 infos are in the review doc, including: `rlc_link.h` documents
+the busy-guard polarity inverted vs. the implementation; display and buzzer
+tasks are not TWDT-registered (a hung SPI transaction freezes "ARMED" on screen
+forever); root cause found for the known TWDT "task not found" boot bursts
+(tasks reset before their creator registers them); remote selected-channel can
+go stale vs. the encoder after LINK_LOST. Every Phase 1–3 review fix was
+re-verified present except M2 above.
+
+### Documentation audit highlights (30 findings)
+
+Dangerous: the **remote** hw-test spec's flash command targets the **base**
+board's by-id (`RLC_Remote_Hardware_Test_Specification.md:339`, MAC
+44:1B:F6:81:F1:70 is base chip #4); the **base** hw-test spec wires the LED to
+**GPIO 47 — the arm-relay pin** (`RLC_Base_Hardware_Test_Specification.md:241`).
+The FSD's v1.29 three-band rollout missed ~13 spots (§3 glossary four-band text,
+§14.5 still 1500000 µV, §7.2.4 "2000 ms" pulse, 15-vs-5 link retries, §10.2.2
+SHORT glyph, T-A15/T-U10/T-U12). `Phase3_Code_Review_002.md` still stands at
+FAIL with no closure note though all its fixes landed. Full list in the review
+doc §8 cross-reference; none fixed this session.
+
+### Notes
+
+- No code was modified this session — review artifacts and doc pointers only.
+- The 220 Ω sense-resistor / TL431 rail-clamp analysis (FSD v1.30,
+  `Development_Progress.md`, shopping list) was authored outside this review
+  session and committed as found.
+
 ## 2026-08-21 — Continuity: three bands, SHORT merged away as unmeasurable
 
 ### The decision
