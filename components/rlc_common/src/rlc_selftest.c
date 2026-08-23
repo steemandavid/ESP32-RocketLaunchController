@@ -495,17 +495,19 @@ static int test_continuity_classification(void)
         { 500,      CONT_CONNECTED },
         { 1000,     CONT_CONNECTED },
         { 30000,    CONT_CONNECTED },
-        { 66000,    CONT_MARGINAL }, /* At MARGINAL boundary */
-        { 100000,   CONT_MARGINAL },
-        { 400000,   CONT_MARGINAL }, /* Still marginal, just under OPEN */
-        { 432000,   CONT_OPEN },     /* At OPEN boundary (~500 ohm) */
+        { 205000,   CONT_CONNECTED }, /* A real igniter through the 217 ohm sense branch */
+        { 260000,   CONT_CONNECTED }, /* Just under the boundary */
+        { 261000,   CONT_MARGINAL }, /* At MARGINAL boundary (~67 ohm) */
+        { 300000,   CONT_MARGINAL },
+        { 580000,   CONT_MARGINAL }, /* Still marginal, just under OPEN */
+        { 586000,   CONT_OPEN },     /* At OPEN boundary (~500 ohm) */
         { 900000,   CONT_OPEN },
         { 3190000,  CONT_OPEN },     /* Open-circuit rest voltage */
     };
 
     /* Vectors are expressed against the config constants deliberately: they
-     * caught the 2026-08-21 OPEN threshold move at boot rather than in the
-     * field. Keep them in step when the thresholds change. SHORT is absent
+     * caught the 2026-08-21 OPEN threshold move — and the 2026-08-23 sense
+     * resistor rebase — at boot rather than in the field. Keep them in step when the thresholds change. SHORT is absent
      * because the band was merged into CONNECTED — see rlc_protocol.h. */
 
     const int count = sizeof(tests) / sizeof(tests[0]);

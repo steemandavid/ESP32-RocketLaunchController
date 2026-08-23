@@ -164,13 +164,15 @@ Known open items before any field use:
   millivolt, which is the same size as the noise. The band is named CONNECTED
   rather than GOOD because it means only that current can flow, not that the
   igniter is sound.
-- Fire testing is restricted to **channel 1 only** — channels 2–8 lack the
-  Schottky clamps and contact snubber added after two base ESP32s were destroyed
-  by relay-arc coupling (tracked as bug #18). The restriction is enforced in
-  firmware by `FIRE_PROTECTED_CHANNEL_MASK`, not just by procedure. As of
-  2026-08-21 the hardware has moved ahead of the gate — snubbers are fitted on
-  all eight channels and the arm relay, and clamps on channels 1–6 — so the mask
-  is due to widen once confirmed.
+- The bug #18 firmware gate `FIRE_PROTECTED_CHANNEL_MASK` was widened from
+  channel 1 only to **all eight channels** on 2026-08-23, once the protection BOM
+  was complete everywhere: RC snubbers on all eight channel relays and the arm
+  relay, 2× 1N5819 clamps on every continuity sense pin, and a 217 Ω
+  sense-branch resistor per channel. Channels 2–8 have nonetheless **never been
+  fired** — treat the first shot on each as a test.
+- **Fire testing is on hold** pending bug #28: the base ARM RELAY LED lights with
+  the key switch in SAFE while the relay stays de-energised, which points at a
+  sneak path around one leg of the hardware AND gate.
 - **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
   ever specified. Protection is firmware-only, and the ERROR state halts
   operation without disconnecting the load — so a unit left switched on, or one
@@ -204,7 +206,7 @@ Known open items before any field use:
 
 | Document | Contents |
 |---|---|
-| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.31 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
+| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.32 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
 | `Development_Progress.md` | Per-phase task and test tracking, hardware reference, bug history |
 | `RLC_Project_Summary.md` | Plain-language overview written for club members |
 | `changelog.md` | Session-by-session development log |

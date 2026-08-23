@@ -71,8 +71,15 @@
  * (Dev-Progress bug #18). ARM is NACKed and the channel relay refuses to
  * close for any channel not in this mask.
  *
- * Set to 0xFF once all eight channels are protected. */
-#define FIRE_PROTECTED_CHANNEL_MASK    0x01  /* channel 1 only (2026-07-21) */
+ * Widened to 0xFF on 2026-08-23 by explicit operator decision, once the
+ * protection BOM was complete on all eight channels: RC snubber across every
+ * channel relay contact and the arm relay, 2x 1N5819 (to GND and to +3V3) on
+ * every sense pin, and a 217 Ω sense-branch series resistor per channel that
+ * limits an arc into the 3V3-side clamp to ~41 mA and holds the pin at ~3.55 V,
+ * inside the ESP32-S3's 3.6 V absolute maximum. The TL431 rail clamp is still
+ * unfitted (bug #24); with the 217 Ω in place it protects against a
+ * multi-channel fault rather than a single-channel one. */
+#define FIRE_PROTECTED_CHANNEL_MASK    0xFF  /* all 8 channels (2026-08-23) */
 
 #define CHANNEL_IS_PROTECTED(ch) \
     (((ch) >= 1) && ((ch) <= NUM_CHANNELS) && \
@@ -196,6 +203,14 @@
 
 #define CONT_R_REF_OHM                 3300    /* Total series resistance (1.5k + 1.8k fusible) */
 #define CONT_R_PULL_OHM                100000  /* Pull-down per channel (Ω) */
+/* Sense-branch series resistor, fitted on all 8 channels 2026-08-23 (bug #18
+ * gap 1/gap 2 — it limits an arc into the 3V3-side 1N5819 to ~41 mA and keeps
+ * the pin inside 3.6 V during a fault). It sits between the ADC pin/clamp
+ * junction and the relay NC contact, so it is *in the sense current path* and
+ * offsets every reading by ~204 mV. The thresholds below are re-derived for it;
+ * changing this part means re-deriving them again. Marked 217 Ω; measured
+ * 216-219 Ω back-calculated from three known loads. */
+#define CONT_R_SENSE_OHM               217
 /* ADC attenuation for the continuity inputs.
  *
  * 0 dB (0-950 mV full scale, ~0.23 mV/LSB) rather than the 12 dB used
@@ -228,7 +243,10 @@
  * and a 1.5-1.9 ohm igniter differ by 1-1.6 mV, and three experiments on one
  * fixed igniter returned 0.77 / 1.15 / 1.77 ohm. */
 #define CONT_SHORT_UV                  500     /* unused */
-#define CONT_MARGINAL_UV               66000   /* Above = MARGINAL (> ~67 Ω at 1 mA) */
+/* Re-derived 2026-08-23 for CONT_R_SENSE_OHM. V = 3.3 * Rx / (R_REF + Rx),
+ * Rx = (R_SENSE + R_ign) ∥ R_PULL. At R_ign = 67 Ω that is 261 mV, up from the
+ * 66 mV this threshold held when the sense branch was a plain wire. */
+#define CONT_MARGINAL_UV               261000  /* Above = MARGINAL (> ~67 Ω) */
 /* 432000 uV is what 500 ohm produces through the 3.3k/100k divider, so this is
  * the ">500 ohm" boundary FSD §5.4.2 documents. It previously sat at 1500000
  * uV — ~2828 ohm, not 500 — and is unreachable at 0 dB attenuation anyway.
@@ -236,7 +254,10 @@
  * became trustworthy. OPEN is the only band that blocks arming, so this
  * tightens a safety guard: a 1 kohm connection that will not fire is now
  * refused rather than merely flagged. */
-#define CONT_OPEN_UV                   432000  /* Above = OPEN (> ~500 Ω) */
+/* 2026-08-23: 432000 -> 586000 µV, the same ~500 Ω boundary shifted by the
+ * 217 Ω sense resistor. Full scale (950 mV) is now reached at ~1117 Ω rather
+ * than ~1670 Ω; everything above the boundary is OPEN, so that costs nothing. */
+#define CONT_OPEN_UV                   586000  /* Above = OPEN (> ~500 Ω) */
 
 /* Hysteresis bands (µV) — prevents oscillation at boundaries */
 #define CONT_HYSTERESIS_SHORT_UV       200     /* unused, see CONT_SHORT_UV */

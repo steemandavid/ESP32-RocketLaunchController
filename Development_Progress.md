@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.31 (2026-08-21)
+**Spec:** RLC-FSPEC-001 v1.32 (2026-08-23)
 **Firmware:** 1.1.1
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
@@ -33,6 +33,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
+| 28 | Base ARM RELAY LED lights when the key is turned to **SAFE**, while the relay itself stays de-energised | Hardware | OPEN — new 2026-08-23, needs troubleshooting | Trust in the arm indicators, and possibly the key-switch leg of the hardware AND gate. **No fire testing until resolved.** |
 | 27 | Base siren not connected — GPIO 40 drives nothing, IRLZ44N driver not fitted | Hardware | OPEN | Verification of review finding N2 (siren stale-callback race). Both N2 failure modes are *silent* — stuck on after disarm, silent through the PRE_FIRE countdown — so neither is observable with the output disconnected, and the fix rests on code inspection alone. Also means the pad has **no audible warning at all** during ARMED/PRE_FIRE/FIRING: the remote's buzzer is operator feedback, not a pad warning, and is in the wrong place to serve as one. |
 | 26 | Continuity misclassified — ~64 Ω return-path fault + ADC calibration disabled + 12 dB attenuation | Hardware + firmware | **RESOLVED** — return repaired, calibration on, 0 dB adopted, SHORT band merged away as unmeasurable | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
 | 25 | No hardware undervoltage cut-off on either battery — firmware thresholds only, and ERROR does not disconnect the load | Hardware | OPEN | Pack protection. A unit left switched on, or one whose firmware has halted, will discharge a LiPo past the point of permanent damage and into the unsafe-to-recharge region. |
@@ -41,8 +42,8 @@ on-target defect log in the Phase 3 section.
 | 22 | Remote GPIO 1 has no overvoltage clamp — the bug #21 zener was removed and not replaced | Hardware | OPEN | Protection only. The divider's series impedance is the sole limit on an overvoltage fault. |
 | 21 | Remote VBAT sense was non-linear — 3.3 V zener leakage into a 6.4 kΩ divider | Hardware | **Zener removed 2026-08-19, sense verified and calibrated. PARTIAL — no replacement clamp fitted, so GPIO 1 is unprotected.** | Nothing functionally. Production thresholds restored. Remaining risk is overvoltage exposure on GPIO 1 until a BAT54-class clamp is fitted. |
 | 20 | Shipped crypto keys are public — AES-128-CCM and the keyed CRC32 check are ineffective against anyone who has read the source | Security | OPEN — rotation deferred by decision | Field use where an adversary is in the threat model. No effect on bench work. |
-| 19 | Base LED strip: dead 4th pixel in the chain — channel 4 stuck, channels 5-8 dark | Hardware | OPEN — needs reflow or replacement | Channels 4-8 of the base strip; T-L15 for those channels |
-| 18 | Base ESP32 destroyed by relay-arc coupling on the continuity ADC inputs | Hardware + firmware | Software fix DONE and audited. **As-built 2026-08-21: snubbers on ALL 8 channel relays + arm relay; 1N5819 clamps to GND and 3V3 on ALL 8 sense pins.** Still missing: 220 Ω sense-branch resistors and a 3.3 V rail clamp — without them the 3V3-side clamps inject an unlimited arc into the rail on any channel | `FIRE_PROTECTED_CHANNEL_MASK` still 0x01 — needs widening to 0xFF once confirmed |
+| 19 | Base LED strip: data chain breaks after pixel 3 — pixels 4-8 dark | Hardware | OPEN — **replacing the 4th LED (2026-08-23) did not fix it**, so the fault is in the strip's copper or the joints at that position, not the LED | Channels 4-8 of the base strip; T-L15 for those channels |
+| 18 | Base ESP32 destroyed by relay-arc coupling on the continuity ADC inputs | Hardware + firmware | Software fix DONE and audited. **As-built 2026-08-23: snubbers on ALL 8 channel relays + arm relay; 1N5819 clamps to GND and 3V3 on ALL 8 sense pins; 217 Ω sense-branch resistors on ALL 8 channels (thresholds recalibrated, verified on target).** Only the 3.3 V rail clamp (TL431 at ~3.57 V) is still missing, and with the 217 Ω fitted it is now belt-and-braces rather than the primary defence | Nothing further — `FIRE_PROTECTED_CHANNEL_MASK` widened to 0xFF on 2026-08-23. Only the TL431 rail clamp is still outstanding, now covering the multi-channel fault case rather than the single-channel one |
 
 Non-blocking items tracked elsewhere: the bench battery thresholds in
 `rlc_config.h` (FSD §5.6.2 production values not yet restored), the
@@ -668,13 +669,14 @@ fix and added a firmware gate against firing unprotected channels.
   channel relays OFF); `relay_fire_set(ch, true)` at the PRE_FIRE→FIRING
   transition is the only place a channel relay is ever energised. No path
   bypasses the ordering.
-- **New: `FIRE_PROTECTED_CHANNEL_MASK`** in `rlc_config.h` (currently `0x01` —
-  channel 1 only). `guard_arm()` NACKs ARM on any channel outside the mask
+- **New: `FIRE_PROTECTED_CHANNEL_MASK`** in `rlc_config.h` (`0x01`, channel 1
+  only, when this was written — widened to `0xFF` on 2026-08-23). `guard_arm()` NACKs ARM on any channel outside the mask
   (reusing `NACK_INVALID_CHANNEL`, so the wire protocol is unchanged; the real
   reason is logged on the base), and `relay_fire_set()` refuses to energise an
   unprotected channel relay as a last line of defence. De-energising is always
   allowed. `relay_init()` logs a warning each boot while the mask != `0xFF`.
-  **Bump the mask to `0xFF` once channels 2–8 get their clamps + snubbers.**
+  **Done 2026-08-23** — clamps, snubbers and 217 Ω sense resistors are fitted on
+  all eight channels and the mask is now `0xFF`.
 - **Residual exposure — the software fix only covers the break, not the make.**
   The arm relay is energised on entry to ARMED, so VBAT is already live on the
   fire bus when `relay_fire_set(ch, true)` transfers the channel contact
@@ -804,7 +806,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 
 ### Phase 3 FSD Fire Tests (§15.3)
 
-**Blocker resolved 2026-07-21** (chip #3 + clamping diodes + snubber on channel 1) — resume fire tests on **channel 1 only** until channels 2–8 receive the same protection. See bug #18. Channel-1-only is now enforced in firmware by `FIRE_PROTECTED_CHANNEL_MASK` (2026-08-17), not just by operator discipline.
+**Blocker resolved 2026-07-21** (chip #3 + clamping diodes + snubber on channel 1) — resume fire tests on **channel 1 only** until channels 2–8 receive the same protection. See bug #18. Channel-1-only was enforced in firmware by `FIRE_PROTECTED_CHANNEL_MASK` (2026-08-17), not just by operator discipline. **Superseded 2026-08-23:** protection complete on all eight channels, mask widened to 0xFF. Fire testing is nonetheless held by bug #28.
 
 | ID | Test | Status |
 |----|------|--------|
@@ -1049,6 +1051,10 @@ disproved it.)
 cut the strip after pixel 3 and splice in a replacement section. Until then the
 base shows only channels 1-3.
 
+**Superseded 2026-08-23** — the LED was replaced and the symptom did not change;
+see "Bug #19 UPDATE" below. The remaining suspect is the data path into pixel 4
+(copper or joints), not the LED.
+
 **Preceding cause, resolved:** the strip was entirely dark because its 5 V feed
 was not connected.
 
@@ -1081,7 +1087,7 @@ On-target, both units flashed and running:
 | T-L15 | Continuity change moves the right pixel | TODO | Needs a resistor on a known channel |
 | T-L16 | Alarm wink legible at arm's length in daylight | TODO | May drive a brightness change |
 | T-L17 | Remote cursor pulse follows the encoder | PASS | Cursor observed on the selected channel |
-| T-L18 | Base strip renders all 8 channels | FAIL | Bug #19 — dead pixel at channel 4; ch1-3 correct |
+| T-L18 | Base strip renders all 8 channels | FAIL | Bug #19 — chain breaks after pixel 3; ch1-3 correct. LED replaced 2026-08-23, no change |
 
 **Verified by eye on the remote (2026-08-19):** channel 1 red (SHORT), channels
 2-8 yellow (OPEN), channel 2 breathing as the selected channel — mapping,
@@ -1327,6 +1333,204 @@ last good reading on total ADC failure.
 already a robust median that is sufficient, and making it a median too would
 slow the response to a genuine voltage collapse — a behavioural change in a
 safety path that was not warranted by the evidence.
+
+---
+
+### `FIRE_PROTECTED_CHANNEL_MASK` Widened to 0xFF — All 8 Channels (2026-08-23)
+
+`0x01` → `0xFF` by explicit operator decision, closing the gate that has
+restricted fire testing to channel 1 since 2026-07-21. The protection BOM the
+gate was waiting on is now complete on every channel:
+
+| Protection | Coverage |
+|---|---|
+| RC snubber across the relay contact | all 8 channels + arm relay |
+| 2x 1N5819 clamp (GND and +3V3) on the sense pin | all 8 channels |
+| 217 Ω sense-branch series resistor | all 8 channels |
+
+The 217 Ω is what makes the difference: it converts the 3V3-side clamp from an
+unlimited arc injector into a ~41 mA source and holds the pin at ~3.55 V during
+a fault, inside the ESP32-S3's 3.6 V absolute maximum. Before it was fitted, the
+clamps alone put the pin at 3.9-4.2 V and dumped the arc straight into the rail.
+
+`relay_init()` no longer logs the `bug #18 gate ACTIVE` warning — its absence at
+boot is the confirmation that the mask is 0xFF. Both units rebuilt and reflashed;
+base verified running with all eight channels classified correctly and the link
+up (`rssi=-38`, `txfail=0`).
+
+**Still outstanding:** the TL431 rail clamp (bug #24). With the 217 Ω fitted and
+the base's own rail load exceeding 41 mA, a single-channel fault no longer lifts
+the rail; the clamp now covers the multi-channel case.
+
+**Fire testing on channels 2-8 has never been done.** The gate is open, but no
+channel other than 1 has been fired on this hardware. Treat the first shot on
+each channel as a test, not a routine firing — and see bug #28, which blocks
+fire testing entirely for now.
+
+---
+
+### Bug #28 — ARM RELAY LED lights with the key in SAFE (2026-08-23, OPEN)
+
+**Symptom.** Turning the base key switch to the **SAFE** position illuminates the
+**ARM RELAY** LED — the red one wired across the arm relay coil terminals
+(FSD §5.4.4). The relay itself does **not** pull in. Firmware is in IDLE, so the
+IRLZ44N gate on GPIO 47 is not driven.
+
+**Why this is odd.** Per §5.4.4 the coil LED is passive and sits directly across
+the coil, so it can only light when coil current flows — which requires *both*
+the key switch ON (COM→NO connects VBAT to coil+) and the MOSFET driven. In SAFE
+the coil+ node is disconnected from VBAT entirely (COM→NC), so the LED should be
+dark regardless of what the firmware does.
+
+**What the symptom implies.** An LED lighting while the relay stays out means a
+path is delivering enough current to light an LED (a few mA) but far less than
+the coil needs to pull in (a 12 V automotive relay wants on the order of 150 mA).
+That is the signature of a **high-impedance sneak path feeding the LED around
+the intended one**, not of a relay failing to operate. Candidates, cheapest test
+first:
+
+1. **LED anode on the wrong side of the key switch** — wired to the NC (SAFE)
+   node instead of across the coil, or the KEY-position red LED and the coil red
+   LED swapped. Would light in SAFE with no current path through the coil at all.
+2. **A shared "GND" that is not GND** — e.g. the green SAFE LED's return tied to
+   the coil(−)/MOSFET drain node instead of true ground, so SAFE current returns
+   through the coil LED.
+3. **Back-feed through the key sense divider** (§5.4.3b, 27 kΩ/10 kΩ on GPIO 42)
+   or the arm sense divider (§5.4.3, GPIO 21). 12 V through 27 kΩ is ~0.4 mA —
+   dim, but visible on a modern high-efficiency LED.
+
+**Measurements that separate them, in order:**
+
+- Battery disconnected: continuity-check the key SW NC and NO nodes against both
+  red LED anodes. This settles case 1 in seconds.
+- Key in SAFE, powered: measure arm relay **coil+ to GND** and **coil− to GND**.
+  If coil+ sits at ~0 V the LED is not across the coil — case 1 confirmed.
+- Check whether the LED tracks the firmware. If it lights in SAFE *only* while
+  the MOSFET is driven, the return path is shared (case 2); if it lights
+  regardless of GPIO 47, it is case 1 or 3.
+- Lift one leg of the suspect LED and re-check. If the key switch then behaves,
+  the fault is in the indicator wiring alone.
+
+**Safety framing.** Most likely this is an indicator-wiring fault and nothing
+more — the relay is not energising, so the fire path is not live, and the
+firmware's own arm sense (GPIO 21, which reads the fire bus rather than the LED)
+reported `arm=0` throughout, consistent with the relay genuinely being out. But
+the key switch is **one of the two independent legs of the hardware AND gate**
+(§5.4.4), the leg that is supposed to hold even with the ESP32 unpowered or
+crashed. A sneak path that delivers current around that switch deserves to be
+understood rather than assumed harmless, and until it is:
+
+- The arm indicators cannot be trusted to report the true state of the fire bus.
+  The operator-facing rule "green = SAFE, red coil LED = fire bus live" is
+  currently wrong on this unit.
+- **No fire testing until this is resolved**, on any channel. The mask was
+  widened to 0xFF in this same session; that is a firmware gate and it does not
+  cover a hardware-side interlock anomaly.
+
+---
+
+### 217 Ω Sense-Branch Resistors Fitted — Thresholds Recalibrated (2026-08-23)
+
+Fitted on **all eight** channels in the position the previous entry specifies
+(R_ref → [ADC pin + both clamps + R_pull] → 217 Ω → relay NC), closing both gaps
+in the 1N5819 assessment: fault current into the 3.3 V rail is now limited to
+~41 mA, and the pin sits at ~3.55 V during a fault instead of 3.9–4.2 V.
+The 1N5819 clamps on CH7/CH8 were confirmed fitted at the same time.
+
+**The resistor is in the sense current path, so every reading moved.** Firmware
+constants re-derived from V = 3.3 × Rx/(R_ref + Rx) with Rx = (217 + R_ign) ∥ 100 kΩ:
+
+| Constant | Was | Now | Boundary |
+|---|---|---|---|
+| `CONT_MARGINAL_UV` | 66000 | **261000** | unchanged at ~67 Ω |
+| `CONT_OPEN_UV` | 432000 | **586000** | unchanged at ~500 Ω |
+| `CONT_R_SENSE_OHM` | — | **217** | new, documents the part |
+
+**On-target verification, five known loads plus an open channel.** Predicted
+against measured, base running the rebuilt firmware:
+
+| Ch | Load | Predicted | Measured | Band | Correct? |
+|---|---|---|---|---|---|
+| 1 | Amazon fireworks igniter | 205 mV | 205–208 mV | CONNECTED | yes |
+| 2 | 14.9 Ω | 216 mV | 215–219 mV | CONNECTED | yes |
+| 3 | 74.3 Ω | 267 mV | 269–271 mV | MARGINAL | yes — just over the 67 Ω boundary |
+| 4 | 2k16 | saturates | 969 mV (4095) | OPEN | yes |
+| 5 | 4k28 | saturates | 969 mV (4095) | OPEN | yes |
+| 6 | Klima igniter | ~205 mV | 205–209 mV | CONNECTED | yes |
+| 7 | nothing | 3.19 V | 969 mV (4095) | OPEN | yes |
+| 8 | Amazon fireworks igniter | ~205 mV | 203–205 mV | CONNECTED | yes |
+
+Model and hardware agree within ~2 mV across the range, and back-calculating
+R_sense from the three resistive loads gives 216–219 Ω against a part marked
+217 Ω. The pre-fix capture is the predicted silent degradation exactly: every
+connected channel read `MARG`, `cont=0x882a`, and nothing could ever be
+CONNECTED. After the constant change: `cont=0x4425`, all eight correct.
+
+**The boot self-test caught it, as designed.** `test_continuity_classification()`
+carries hardcoded µV vectors against the old boundaries; with only the constants
+changed the base failed three vectors at boot and **halted** rather than running
+with a mismatched pair. Vectors updated in the same commit. This is the second
+time those vectors have earned their place.
+
+**Also fixed:** the 5 s `cont raw/uV:` diagnostic line silently dropped channel 8
+— `cbuf[160]` is exactly eight entries wide and the loop guard (`n < size − 24`)
+stopped at seven. Buffer raised to 208.
+
+**Range not affected.** Full scale (950 mV) is now reached at ~1117 Ω rather than
+~1670 Ω. Everything above 500 Ω is OPEN, so nothing measurable was lost.
+
+**Still open:** the TL431 rail clamp (bug #24). With 41 mA limiting and the
+base's own rail load exceeding that, a single-channel fault no longer lifts the
+rail on its own, so the clamp is now insurance for a multi-channel fault rather
+than the primary defence.
+
+---
+
+### Base Moved to an External Antenna (2026-08-23)
+
+The 0 Ω link on the base ESP32 was moved from the PCB antenna to the U.FL
+connector and an external antenna fitted. No firmware change is needed — the
+DevKitC-1 has no RF switch to configure.
+
+Base-side RSSI immediately after the change reads **−33 to −36 dBm** at bench
+distance, against −36/−37 dBm on the same bench earlier the same day. That is
+inside the run-to-run spread and is **not** evidence either way at this range;
+the change is expected to show up as range and margin, not as a bench number.
+Worth a proper LOS range test before it is claimed as an improvement, and worth
+confirming the link still comes up at all with the remote at distance — a
+misplaced 0 Ω link would present as a *worse* far-field link while looking
+healthy on the bench.
+
+---
+
+### Bug #19 UPDATE — LED swap did not fix it, fault is in the strip (2026-08-23)
+
+The 4th LED was removed and replaced with the LED taken from position 8. The
+symptom is unchanged: **pixels 1-3 render, 4-8 dark.** The stuck-blue behaviour
+at pixel 4 is gone (it now stays dark), which is consistent with a fresh part
+that has never latched a frame.
+
+**What this rules in and out.** A replacement part at the same position
+reproducing the same break means the original diagnosis — "dead LED controller
+*or* a broken joint between pixel 3's DOUT and pixel 4's DIN" — resolves to the
+second branch: the **data path into pixel 4**, i.e. the strip's copper or the
+solder joints at that position. Two caveats before calling it a trace fault:
+
+1. **The donor LED is unproven.** Position 8 never lit, so the LED moved into
+   position 4 was never demonstrated working. Removing and reflowing a WS2812
+   twice is also a good way to kill one.
+2. **The joints are the new variable.** A hand-reworked pad is a more likely
+   open than factory copper.
+
+**Next step, in order:** (a) with the strip powered and a frame being sent,
+scope or meter pixel 3's DOUT pad — if it is toggling, the fault is downstream
+of it; (b) continuity-check pixel 3 DOUT pad → pixel 4 DIN pad with a DVM, which
+settles copper vs joint in seconds; (c) if the copper is open, bodge a wire
+across it; (d) only if DIN is receiving data and the pixel still does not light
+is the replacement LED itself suspect. `tools/strip-diag` paints the static
+frames needed for (a).
+
+T-L18 stays **FAIL**.
 
 ---
 
@@ -1735,11 +1939,12 @@ buys linearity, only current buys resolution.**
 |---|---|
 | RC snubbers, all 8 channel relays (NO–COM) | **FITTED** |
 | RC snubber, arm relay (NO–COM) | **FITTED** |
-| 1N5819 clamps to GND and 3V3, **all 8 sense pins** | **FITTED** (CH7–CH8 completed 2026-08-21) |
-| 220 Ω sense-branch series resistor, all channels | **NOT FITTED** — required, see below |
-| 3.3 V rail clamp | **NOT FITTED** — required, see below |
-| 220 Ω sense-branch offset, CH1 | Trialled then **removed** |
+| 1N5819 clamps to GND and 3V3, **all 8 sense pins** | **FITTED** (CH7–CH8 confirmed fitted 2026-08-23) |
+| 220 Ω sense-branch series resistor, all channels | **FITTED 2026-08-23** — 217 Ω on all 8; thresholds recalibrated, see the 2026-08-23 entry |
+| 3.3 V rail clamp | **NOT FITTED** — still wanted, now belt-and-braces rather than primary |
+| 220 Ω sense-branch offset, CH1 | Trialled then removed; superseded by the 217 Ω fitted on all channels |
 | Continuity ground return | Repaired, all grounds within 0.3 Ω |
+| Base ESP32 antenna | **External** — 0 Ω link moved from the PCB antenna to the U.FL connector, external antenna fitted (2026-08-23) |
 
 This is most of the bug #18 protection BOM. **`FIRE_PROTECTED_CHANNEL_MASK` is
 still `0x01`** and now understates the hardware: all eight channels have both

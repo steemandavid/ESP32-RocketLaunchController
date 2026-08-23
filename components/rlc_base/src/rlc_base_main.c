@@ -314,7 +314,7 @@ void base_app_main(void)
                      base_fsm_get_error_flags(),
                      rlc_error_flags_str(base_fsm_get_error_flags(),
                                          errbuf, sizeof(errbuf)));
-            char cbuf[160];
+            char cbuf[208];
             int n = 0;
             for (int c = 1; c <= NUM_CHANNELS && n < (int)sizeof(cbuf) - 24; c++) {
                 /* Index 3 is the deprecated SHORT value: never produced, but a stale

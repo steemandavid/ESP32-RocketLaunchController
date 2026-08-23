@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.31
-**Date:** 2026-08-21
+**Version:** 1.32
+**Date:** 2026-08-23
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -45,6 +45,7 @@
 | 1.29 | 2026-08-21 | Continuity reworked after bench characterisation. **SHORT merged into CONNECTED** (§5.4.2): at 1 mA a dead short and a 1.5-1.9 Ω igniter differ by 1-1.6 mV, within noise, drift and lead contact resistance; three runs on a fixed igniter implied 0.77/1.15/1.77 Ω. **`CONT_GOOD` renamed `CONT_CONNECTED`** — the band means a low-resistance path exists, not that the igniter is good. Wire encoding unchanged (value 3 retained, never emitted), so no version bump. Continuity ADC switched to **0 dB** attenuation and calibration **re-enabled** (it was hardcoded off, costing +369 mV of offset). `CONT_OPEN_UV` 1500000 → 432000 µV, finally the documented ~500 Ω. Recorded as-built hardware: snubbers on all 8 channel relays and the arm relay; 1N5819 clamps to GND and 3V3 on CH1-6 (CH7-8 pending).
 | 1.30 | 2026-08-21 | **Continuity ADC clamps completed on all eight channels** (2x 1N5819 per channel, one to GND and one to +3V3). Recorded the assessment: the 1 A part is *correct* at this node, because there is zero series resistance between the relay NC contact and the ADC pin — the clamp carries the full fault current, which a BAT85 (200 mA) or 1N5711 (15 mA) would not survive — and node impedance is set by the igniter, so leakage does not disturb the bands. This does **not** contradict bug #22, where 1N5819 is the wrong part on a 6.4 kΩ divider. Two residual gaps added to the §5.4.9 protection BOM: (a) the 3V3-side clamps inject fault current directly into the 3.3 V rail, now on eight channels instead of one; (b) 1N5819 V_f puts the pin at 3.9-4.2 V during a fault, above the 3.6 V absolute maximum. Required: a **220 Ω sense-branch series resistor per channel** between the relay NC contact and the pin/clamp junction, and an **active 3.3 V rail clamp** (TL431 shunt at ~3.57 V — a 3V6 zener is not adequate in a 3.3/3.6 V window). Both change the continuity thresholds and require recalibration. |
 | 1.31 | 2026-08-21 | Applied the post-fix code review (`Code_Review_AllPhases_20260821_1523.md`). **Firmware 1.1.0 → 1.1.1.** Two Majors: **(N1)** the debounce engine's first stable reading deliberately fires no callback — required by the fire button's fresh-press interlock (§5.5.3) — but the remote's arm switch cached its state only from that callback, so a key already turned to ARM at power-up was never seen and arming was impossible until the key was toggled. §5.3 now states the contract explicitly and requires consumers to adopt the initial determination by polling. **(N2)** `esp_timer_stop()` does not cancel an already-dispatched callback, so the siren's pattern mutex was not sufficient: a stale tick could drive the siren back ON after `siren_off()` (with the timer stopped, permanently) or silence it through the whole PRE_FIRE countdown. A pattern-active flag now invalidates superseded callbacks (§5.4.7). Minors: remote now treats a critical battery in LINK_LOST as terminal, matching the base; link health window and expected-ping tracker reset with the session, so ARM is no longer refused `COMM_DEGRADED` for ~5 s after every recovery; the stale-status timeout latches instead of re-firing at 20 Hz; `rlc_link_next_seq()` drops the link on overflow like its internal siblings; the placeholder handshake `STATUS_UPDATE` (which hardcoded `base_state = IDLE`, a false "safe" if the base was in ERROR) is replaced by a real push via a new application hook; ESP-NOW send failures are counted rather than logged from Wi-Fi task context; remote input callbacks are registered before their tasks start; five unchecked `xTaskCreate` calls checked, two of them fatal; `ARM_SENSE_VERIFY_TIMEOUT_MS` and `SIREN_LINK_LOST_DURATION_MS` are now real constants (§14.1). Host tests T-D01…T-D06 added (§15.5), and the debounce engine is no longer stubbed out in the host harness. **(N3, Critical, found on target after flashing)** `esp_task_wdt_reconfigure()` rebuilds the TWDT subscriber list, and the remote called it at boot step 8 — *after* `display_start_task()`. The display and buzzer tasks were silently unsubscribed, the display logged "task not found" at 20 Hz, and the unfed watchdog triggered at 11.4 s and panicked (`LoadProhibited`) inside its own report path, rebooting the unit on every boot. §9.13 gains a step 0 (reconfigure before any task) and a step 11 (`app_main` subscribes itself after the slow init), with the ordering stated as a requirement. |
+| 1.32 | 2026-08-23 | **217 Ω sense-branch resistors fitted on all eight continuity channels**, closing both gaps the v1.30 assessment left open (arc into the 3.3 V rail limited to ~41 mA; pin held at ~3.55 V during a fault instead of 3.9–4.2 V). The resistor sits between the relay NC contact and the ADC pin/clamp junction, so it is **in the sense current path** and lifts every reading by ~204 mV. Thresholds re-derived against V = 3.3 × Rx/(R_ref + Rx), Rx = (R_sense + R_ign) ∥ R_pull: `CONT_MARGINAL_UV` 66000 → **261000** µV and `CONT_OPEN_UV` 432000 → **586000** µV, both the *same* ~67 Ω and ~500 Ω boundaries as before. New constant `CONT_R_SENSE_OHM` (§14.1). Verified on target against five known loads (igniter, 14.9 Ω, 74.3 Ω, 2k16, 4k28, open): predicted and measured agree within 2 mV and all six classify correctly. Full scale (950 mV) is now reached at ~1117 Ω instead of ~1670 Ω, which costs nothing because everything above 500 Ω is OPEN. Base ESP32 moved to an **external antenna** (0 Ω link relocated to the U.FL connector). **`FIRE_PROTECTED_CHANNEL_MASK` widened 0x01 → 0xFF** (§14.1) — the bug #18 protection BOM (snubber + 2x 1N5819 + 217 Ω) is now complete on all eight channels, so the firmware gate that restricted firing to channel 1 since 2026-07-21 is lifted. Channels 2-8 have still never been fired. New **bug #28**: the base ARM RELAY LED lights with the key in SAFE while the relay stays de-energised — an LED-current-sized sneak path around the §5.4.4 key switch. Fire testing is held until it is resolved. |
 
 ---
 
@@ -616,14 +617,14 @@ The 100 kΩ pull-down resistor (R_pull) serves a critical function: **without it
 
 ##### Continuity Band Classification
 
-The ADC voltage is converted to a continuity band using threshold comparison with hysteresis. The V_adc values below assume R_ref = R_ref1 + R_ref2 = 3.3 kΩ, R_pull = 100 kΩ, V_supply = 3.3V:
+The ADC voltage is converted to a continuity band using threshold comparison with hysteresis. The V_adc values below assume R_ref = R_ref1 + R_ref2 = 3.3 kΩ, R_sense = 217 Ω (in the sense current path, §5.4.9), R_pull = 100 kΩ, V_supply = 3.3 V:
 
 **THREE bands (revised 2026-08-21).** `CONT_SHORT` was merged into `CONT_CONNECTED`; see the deviation note below.
 
 | Band | Enum | R_ign range | V_adc range | Meaning | Display | Arming |
 |---|---|---|---|---|---|---|
-| `CONT_OPEN` | 0 | > ~500 Ω / ∞ | > `CONT_OPEN_UV` (432000 µV) | No igniter connected or broken wire. Pulled to ~3.19 V by R_pull, which saturates the 0 dB ADC range. | Yellow ○ | **Blocks arming** (NACK 0x04) |
-| `CONT_CONNECTED` | 1 | < ~67 Ω | < `CONT_MARGINAL_UV` (66000 µV) | **A low-resistance path is present.** Deliberately does *not* assert the igniter is good — a dead short across the terminals is in this band and is indistinguishable from a healthy e-match. | Dark green ● | Arming permitted |
+| `CONT_OPEN` | 0 | > ~500 Ω / ∞ | > `CONT_OPEN_UV` (586000 µV) | No igniter connected or broken wire. Pulled to ~3.19 V by R_pull, which saturates the 0 dB ADC range. | Yellow ○ | **Blocks arming** (NACK 0x04) |
+| `CONT_CONNECTED` | 1 | < ~67 Ω | < `CONT_MARGINAL_UV` (261000 µV) | **A low-resistance path is present.** Deliberately does *not* assert the igniter is good — a dead short across the terminals is in this band and is indistinguishable from a healthy e-match. | Dark green ● | Arming permitted |
 | `CONT_MARGINAL` | 2 | ~67–500 Ω | `CONT_MARGINAL_UV` to `CONT_OPEN_UV` | High resistance — corroded clips, loose contact, damaged leads. May fail to fire. | Light green ▲ + "MARGINAL" | Warning, does not block arming |
 | ~~`CONT_SHORT`~~ | 3 | — | — | **DEPRECATED, never produced.** Value retained so the 2-bit wire encoding is unchanged and a pre-merge peer still decodes; folded into CONNECTED on display. | — | — |
 
@@ -664,15 +665,17 @@ The ARM SENSE node connects to GPIO 21 through a voltage divider (27 kΩ series,
 > break, plus contact erosion trending toward a welded arm relay. Required before
 > an extended fire-test campaign: BAT54S dual Schottky (or the spec'd zener) on
 > GPIO 21 and GPIO 42, a 47 Ω/100 nF snubber across the arm relay contact, and an
-> SMBJ18A-class TVS from arm relay COM to GND. Firmware currently restricts
-> firing to channel 1 via `FIRE_PROTECTED_CHANNEL_MASK`. See
+> SMBJ18A-class TVS from arm relay COM to GND. Firmware restricted firing to
+> channel 1 via `FIRE_PROTECTED_CHANNEL_MASK` until 2026-08-23, when the mask was
+> widened to 0xFF with the protection BOM complete on all eight channels. See
 > `Development_Progress.md` bug #18.
 >
 > **UPDATE 2026-08-21 — continuity clamps complete, two gaps remain.** All eight
 > continuity ADC pins now carry 2x 1N5819 (to GND and to +3V3). Still required:
 > (a) a **220 Ω sense-branch resistor per channel** (§5.4.9), without which the
 > 3V3-side clamp dumps an unlimited arc into the 3.3 V rail on any of eight
-> channels; (b) an **active 3.3 V rail clamp** — a TL431 shunt programmed to
+> channels — **DONE 2026-08-23, 217 Ω fitted on all eight; thresholds re-derived,
+> see v1.32**; (b) an **active 3.3 V rail clamp** — a TL431 shunt programmed to
 > ~3.57 V (2.495 V x (1 + 4k3/10k)), cathode to 3V3, anode to GND, REF to the
 > divider mid-point, 10 nF REF-to-anode. A 3V6 zener is **not** an adequate
 > substitute: its knee is soft, a +/-5% part sits anywhere in 3.42-3.78 V, and it
@@ -2681,8 +2684,9 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `CONT_SAMPLE_INTERVAL_MS` | 100 | ADC sampling interval per channel (ms) |
 | `CONT_OVERSAMPLE_COUNT` | 64 | Number of ADC samples averaged per reading |
 | `CONT_SHORT_UV` | 500 | Threshold: below this = SHORT band (µV). With hysteresis ±200 µV. |
-| `CONT_MARGINAL_UV` | 66000 | Threshold: above this = MARGINAL band (µV). Corresponds to ~20 Ω. With hysteresis ±5000 µV. |
-| `CONT_OPEN_UV` | 1500000 | Threshold: above this = OPEN band (µV). With hysteresis ±50000 µV. |
+| `CONT_R_SENSE_OHM` | 217 | Sense-branch series resistor per channel (Ω), between the relay NC contact and the ADC pin/clamp junction. Fitted 2026-08-23. In the sense current path, so it offsets every reading by ~204 mV — the two thresholds below are derived from it. |
+| `CONT_MARGINAL_UV` | 261000 | Threshold: above this = MARGINAL band (µV). Corresponds to ~67 Ω through the 217 Ω sense branch. With hysteresis ±5000 µV. |
+| `CONT_OPEN_UV` | 586000 | Threshold: above this = OPEN band (µV). Corresponds to ~500 Ω through the 217 Ω sense branch. With hysteresis ±50000 µV. |
 | `CONT_HYSTERESIS_SHORT_UV` | 200 | Hysteresis band for SHORT/GOOD boundary (µV) |
 | `CONT_HYSTERESIS_MARGINAL_UV` | 5000 | Hysteresis band for GOOD/MARGINAL boundary (µV) |
 | `CONT_HYSTERESIS_OPEN_UV` | 50000 | Hysteresis band for MARGINAL/OPEN boundary (µV) |

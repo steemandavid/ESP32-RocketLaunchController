@@ -1,5 +1,135 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-23 — Sense resistors fitted: thresholds recalibrated, fire gate opened, two hardware bugs
+
+### What was done in hardware (by the operator, before this session)
+
+| Change | Effect |
+|---|---|
+| 217 Ω sense-branch resistors on **all 8** continuity channels | Closes both bug #18 gaps — arc into the 3V3 rail limited to ~41 mA, pin held at ~3.55 V |
+| 1N5819 clamps confirmed on CH7/CH8 | Clamp coverage complete (already recorded 2026-08-21) |
+| LED 4 on the base strip removed, LED from position 8 fitted in its place | Symptom unchanged — bug #19 |
+| 0 Ω link moved from PCB antenna to U.FL; external antenna fitted on the base ESP | No firmware change needed |
+
+### 1. The 217 Ω broke continuity classification, silently
+
+The resistor sits **in the sense current path** (R_ref → [ADC pin + clamps +
+R_pull] → 217 Ω → relay NC), so every reading rose by ~204 mV. With the old
+thresholds every connected channel read `MARG` and **nothing could ever read
+CONNECTED** — `cont=0x882a` on the pre-fix capture. Arming would still have
+worked (only OPEN blocks), which is exactly the silent degradation the
+2026-08-21 note predicted for this part.
+
+Constants re-derived from `V = 3.3 × Rx/(R_ref + Rx)`, `Rx = (217 + R_ign) ∥ 100 kΩ`,
+keeping the same physical boundaries:
+
+| Constant | Was | Now | Boundary |
+|---|---|---|---|
+| `CONT_MARGINAL_UV` | 66000 | **261000** | unchanged, ~67 Ω |
+| `CONT_OPEN_UV` | 432000 | **586000** | unchanged, ~500 Ω |
+| `CONT_R_SENSE_OHM` | — | **217** | new |
+
+**Verified on target** against the operator's known loads. Predicted vs measured
+agreed within ~2 mV across the whole range, and R_sense back-calculated from the
+three resistors gives 216–219 Ω against a part marked 217 Ω:
+
+| Ch | Load | Predicted | Measured | Band |
+|---|---|---|---|---|
+| 1 | Amazon fireworks igniter | 205 mV | 205–208 | CONNECTED |
+| 2 | 14.9 Ω | 216 mV | 215–219 | CONNECTED |
+| 3 | 74.3 Ω | 267 mV | 269–271 | MARGINAL (correctly — just over 67 Ω) |
+| 4 | 2k16 | saturates | 969 (4095) | OPEN |
+| 5 | 4k28 | saturates | 969 (4095) | OPEN |
+| 6 | Klima igniter | ~205 mV | 205–209 | CONNECTED |
+| 7 | nothing | 3.19 V | 969 (4095) | OPEN |
+| 8 | Amazon fireworks igniter | ~205 mV | 203–205 | CONNECTED |
+
+`cont=0x4425` after the change — all eight correct.
+
+**The boot self-test caught the mismatch and halted the base.**
+`test_continuity_classification()` carries hardcoded µV vectors; changing only
+the constants failed three of them at boot and the base refused to run rather
+than operating with a mismatched pair. Vectors updated in the same change.
+Second time those vectors have earned their keep.
+
+**Side fix:** the 5 s `cont raw/uV:` diagnostic line silently dropped channel 8
+— `cbuf[160]` holds exactly eight entries and the loop guard (`n < size − 24`)
+stopped at seven. Buffer raised to 208.
+
+Full scale (950 mV) is now reached at ~1117 Ω instead of ~1670 Ω. Nothing
+measurable was lost: everything above 500 Ω is OPEN.
+
+### 2. `FIRE_PROTECTED_CHANNEL_MASK` widened 0x01 → 0xFF
+
+By explicit operator decision, closing the gate that has restricted fire testing
+to channel 1 since 2026-07-21. The protection BOM is complete on every channel:
+RC snubbers (8 channel relays + arm relay), 2× 1N5819 per sense pin, 217 Ω
+sense-branch resistor per channel. The 217 Ω is what tipped it — it is the part
+that keeps the pin inside the 3.6 V absolute maximum during a fault.
+
+`relay_init()` no longer emits the `bug #18 gate ACTIVE` warning; its absence at
+boot confirms the mask. Still outstanding: the TL431 rail clamp (bug #24), now
+covering the multi-channel fault case rather than the single-channel one.
+
+**Channels 2–8 have still never been fired.**
+
+### 3. Bug #28 (NEW) — ARM RELAY LED lights with the key in SAFE
+
+Turning the base key to SAFE illuminates the red ARM RELAY LED (the one across
+the arm relay coil, FSD §5.4.4) while the relay itself stays de-energised.
+Firmware in IDLE, so GPIO 47 is not driven; the firmware's own arm sense
+(GPIO 21, reading the fire bus rather than the LED) reported `arm=0` throughout.
+
+An LED lighting while the relay stays out means a path delivering a few mA where
+the coil needs ~150 mA — a **high-impedance sneak path around the intended one**.
+Candidates and the measurements that separate them are written up in
+`Development_Progress.md`. Most likely indicator wiring only, but the key switch
+is one of the two independent legs of the hardware AND gate, so **fire testing
+is on hold until it is resolved.**
+
+### 4. Bug #19 update — the LED swap did not fix it
+
+Pixels 1–3 still render, 4–8 dark. A replacement part at the same position
+reproducing the same break points at the data path into pixel 4 (copper or
+joints) rather than the LED. Two caveats before calling it a trace fault: the
+donor LED came from position 8, which never lit, so it was never proven working;
+and a hand-reworked pad is a likelier open than factory copper. Next step is a
+DVM continuity check from pixel 3 DOUT to pixel 4 DIN. T-L18 stays FAIL.
+
+### 5. External antenna — not yet proven
+
+Base RSSI reads −33 to −38 dBm after the change, against −36/−37 on the same
+bench earlier the same day. Inside run-to-run spread; proves nothing at bench
+distance. Needs an LOS range test — a misplaced 0 Ω link looks healthy on the
+bench and fails in the far field.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `components/rlc_common/include/rlc_config.h` | `CONT_R_SENSE_OHM` added; two thresholds rebased; mask 0x01 → 0xFF |
+| `components/rlc_common/src/rlc_selftest.c` | Classification vectors rebased to the new boundaries |
+| `components/rlc_base/src/rlc_base_main.c` | `cbuf` 160 → 208 (ch8 was dropped) |
+| `RLC_Functional_Specification_v1_14.md` | → v1.32: recalibration, mask widening, bug #28 |
+| `Development_Progress.md` | Bug #28 added; bugs #18/#19 updated; three new dated sections |
+| `README.md`, `rlc-hw-test-base/RLC_Base_Hardware_Test_Specification.md` | Stale thresholds and channel-1-only text corrected |
+
+### Verification
+
+- Both units rebuilt and reflashed, no warnings.
+- Base running: self-tests pass, all 8 channels classify correctly, link up
+  (`rssi=-38`, `txfail=0`), no watchdog trips.
+- Host renderer tests: 30 checks, 0 failures.
+
+### Notes / gotchas
+
+- **Any change to the sense-branch resistor requires re-deriving both thresholds
+  *and* the self-test vectors.** Changing only the constants bricks the boot.
+- The base's UART console needs an RTS-toggle reset after flashing before it
+  starts emitting; opening the port with `stty` alone can leave it silent.
+
+---
+
 ## 2026-08-21 — Post-fix re-review, firmware 1.1.1, both units flashed and tested
 
 ### What ran

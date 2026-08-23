@@ -223,13 +223,17 @@ All digital outputs SHALL use configurable polarity defined in `pin_config.h`:
 
 Thresholds use microvolt integer constants (matching main FSD §14.5):
 
+Values current as of 2026-08-23, after the 217 Ω sense-branch resistors were
+fitted on all eight channels (they sit in the sense current path and lift every
+reading by ~204 mV). The SHORT band was merged into CONNECTED on 2026-08-21.
+
 | Constant | Default (µV) | Band |
 |---|---|---|
-| `CONT_SHORT_UV` | 500 | Below = SHORT |
-| `CONT_MARGINAL_UV` | 66000 | Above = MARGINAL |
-| `CONT_OPEN_UV` | 1500000 | Above = OPEN |
-| `CONT_HYSTERESIS_SHORT_UV` | 200 | SHORT/GOOD boundary hysteresis |
-| `CONT_HYSTERESIS_MARGINAL_UV` | 5000 | GOOD/MARGINAL boundary hysteresis |
+| ~~`CONT_SHORT_UV`~~ | 500 | **Deprecated** — SHORT merged into CONNECTED, never produced |
+| `CONT_MARGINAL_UV` | 261000 | Above = MARGINAL (~67 Ω through the 217 Ω sense branch) |
+| `CONT_OPEN_UV` | 586000 | Above = OPEN (~500 Ω through the 217 Ω sense branch) |
+| `CONT_HYSTERESIS_SHORT_UV` | 200 | Unused, see `CONT_SHORT_UV` |
+| `CONT_HYSTERESIS_MARGINAL_UV` | 5000 | CONNECTED/MARGINAL boundary hysteresis |
 | `CONT_HYSTERESIS_OPEN_UV` | 50000 | MARGINAL/OPEN boundary hysteresis |
 
 ### 6.5 Fire Timer
