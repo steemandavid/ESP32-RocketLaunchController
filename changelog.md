@@ -1,5 +1,83 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-25 — External antennas on both units, 200 m range test, link-budget analysis
+
+### Hardware
+
+Both 0 Ω antenna links (base and remote) moved to the **external antenna**
+position and external antennas fitted. No firmware change — the DevKitC-1 has
+no RF switch.
+
+### Range test
+
+Base on the ground, remote hand-held at ~1.5 m, 200 m separation:
+**−93 dBm, link holding.** Still held with the remote also on the ground. The
+link could only be dropped by unscrewing an antenna.
+
+The test did **not** find the edge — unscrewing an antenna is a 20–30 dB step.
+To locate it, walk out until `PING miss` first appears in the base log and
+record the RSSI at the *first miss*, not at the drop.
+
+### Expected drop-out threshold: −96 to −99 dBm
+
+Nothing in the tree calls `esp_wifi_config_espnow_rate()`,
+`esp_now_set_peer_rate_config()` or `esp_wifi_set_protocol()`, so ESP-NOW runs
+at the IDF default — 1 Mbps DSSS, where the ESP32-S3 is sensitive to ~−98 dBm
+at 8–10 % PER.
+
+The link survives past that because `tick_base()` needs **3 consecutive**
+missed 500 ms slots. With per-packet loss p, a drop needs p³:
+
+| PER | P(3 in a row) | Time to drop |
+|---|---|---|
+| 10 % | 0.001 | ~8 min |
+| 30 % | 2.7 % | ~20 s |
+| 50 % | 12.5 % | seconds |
+
+So failure lands 1–3 dB below sensitivity, across a transition only ~3 dB wide
+— abrupt, with little warning. `ERR_COMM_DEGRADED` (>30 % loss over the 10-slot
+window, guard 10 → NACK `COMM_DEGRADED`) refuses arming a couple of dB earlier,
+which is the correct ordering.
+
+**The RSSI reading is not a usable warning:** uncalibrated (±3–6 dB), compressed
+in the high −90s so the last few dB may never show, and smoothed/lagged by
+`RSSI_AVERAGE_WINDOW = 3`. Also note the base displays *its* view of the
+remote's packets; the weaker direction sets the limit and need not be the one
+shown.
+
+### Key finding — the range limit is height, not radio
+
+−93 dBm at 200 m is **29 dB worse than free space** (86 dB FSPL, ~+19 dBm TX,
+~2 dBi per end → ≈ −64 dBm expected). That deficit is two-ray ground
+reflection. With h₁ ≈ 0.05 m and h₂ ≈ 1.5 m the breakpoint is ~2.5 m, so the
+path is deep in the **d⁴** regime:
+
+```
+PL = 40·log₁₀(200) − 20·log₁₀(0.05 × 1.5) = 114.5 dB  →  ≈ −92.5 dBm
+```
+
+versus −93 dBm measured. Consequences:
+
+- The ~4 dB of margin left buys only ~25 % more distance — **~250–260 m in that
+  geometry**, not 400 m.
+- Raising both units to ~1.5 m moves h₁h₂ from 0.075 to 2.25 — about **30 dB**,
+  restoring the free-space limit and pushing drop-out past a kilometre.
+
+**Getting the base off the ground is worth more than any radio change available
+to this design.**
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `RLC_Functional_Specification_v1_14.md` | → v1.33: §6.1 measured range, drop-out window, antenna row; revision entry |
+| `Development_Progress.md` | Antenna section rewritten with the range test, the d⁴ analysis and the threshold reasoning |
+| `README.md` | Range line now cites the measurement and the height caveat |
+
+No firmware changes this session.
+
+---
+
 ## 2026-08-23 — Sense resistors fitted: thresholds recalibrated, fire gate opened, two hardware bugs
 
 ### What was done in hardware (by the operator, before this session)

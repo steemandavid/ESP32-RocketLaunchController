@@ -3,7 +3,7 @@
 A two-unit wireless launch controller for model rocketry, built on the ESP32-S3.
 A **base unit** sits at the pad wired to up to 8 igniter channels; a handheld
 **remote unit** controls it over an encrypted ESP-NOW link from a safe distance
-(~200 m design target).
+(~200 m design target; measured 200 m at −93 dBm with external antennas, base on the ground — see FSD §6.1, where range near the ground is d⁴-limited and height matters far more than radio).
 
 Developed for use with **VRO — Vlaamse Raket Organisatie**.
 
@@ -206,7 +206,7 @@ Known open items before any field use:
 
 | Document | Contents |
 |---|---|
-| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.32 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
+| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.33 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
 | `Development_Progress.md` | Per-phase task and test tracking, hardware reference, bug history |
 | `RLC_Project_Summary.md` | Plain-language overview written for club members |
 | `changelog.md` | Session-by-session development log |

@@ -1,7 +1,7 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.32 (2026-08-23)
+**Spec:** RLC-FSPEC-001 v1.33 (2026-08-25)
 **Firmware:** 1.1.1
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
@@ -1486,20 +1486,61 @@ than the primary defence.
 
 ---
 
-### Base Moved to an External Antenna (2026-08-23)
+### External Antennas on Both Units — 200 m Range Test (2026-08-23 / 2026-08-25)
 
-The 0 Ω link on the base ESP32 was moved from the PCB antenna to the U.FL
-connector and an external antenna fitted. No firmware change is needed — the
+The 0 Ω link was moved from the PCB antenna to the U.FL connector on **both**
+units and external antennas fitted. No firmware change is needed — the
 DevKitC-1 has no RF switch to configure.
 
-Base-side RSSI immediately after the change reads **−33 to −36 dBm** at bench
-distance, against −36/−37 dBm on the same bench earlier the same day. That is
-inside the run-to-run spread and is **not** evidence either way at this range;
-the change is expected to show up as range and margin, not as a bench number.
-Worth a proper LOS range test before it is claimed as an improvement, and worth
-confirming the link still comes up at all with the remote at distance — a
-misplaced 0 Ω link would present as a *worse* far-field link while looking
-healthy on the bench.
+**Range test (2026-08-25).** Base on the ground, remote hand-held at ~1.5 m,
+200 m separation: **−93 dBm, link holding**. Still held with the remote also
+placed on the ground. The link could only be dropped by unscrewing an antenna.
+
+**What the test did and did not establish.** It did not find the edge —
+unscrewing an antenna is a 20–30 dB step, so it only shows the limit is
+somewhere beyond 200 m in that geometry. To locate it, walk out until `PING
+miss` first appears in the base log and record the RSSI at the *first miss*,
+not at the drop.
+
+**−93 dBm at 200 m is ground-reflection limited, not hardware limited.** Free
+space at 200 m / 2.45 GHz is 86 dB, which with ~+19 dBm TX and ~2 dBi per end
+predicts ≈ −64 dBm. The 29 dB deficit is the two-ray ground reflection: with
+h₁ ≈ 0.05 m (base on the ground) and h₂ ≈ 1.5 m the breakpoint is ~2.5 m, so
+the path is deep into the **d⁴** regime:
+
+```
+PL = 40·log₁₀(200) − 20·log₁₀(0.05 × 1.5) = 114.5 dB  →  ≈ −92.5 dBm
+```
+
+against −93 dBm measured. The consequence matters: in d⁴, the ~4 dB of margin
+left buys only ~25 % more distance — **roughly 250–260 m in that geometry**, not
+400 m. Raising both units to ~1.5 m moves h₁h₂ from 0.075 to 2.25, about
+**30 dB**, which restores the free-space limit and pushes the drop-out past a
+kilometre. **Getting the base off the ground is worth more than any radio
+change available to this design.**
+
+**Expected drop-out threshold: −96 to −99 dBm.** ESP-NOW here runs at the IDF
+default rate — nothing in the tree calls `esp_wifi_config_espnow_rate()`,
+`esp_now_set_peer_rate_config()` or `esp_wifi_set_protocol()` — so 1 Mbps DSSS,
+where the ESP32-S3 is sensitive to about −98 dBm at 8–10 % PER. The link
+survives past that point because `tick_base()` needs **3 consecutive** missed
+500 ms slots: with per-packet loss p the drop needs p³, so 10 % PER is a drop
+every ~8 minutes, 30 % PER every ~20 s, and 50 % PER within seconds. Net effect
+is failure at roughly 1–3 dB below sensitivity, over a transition only ~3 dB
+wide — abrupt, with little warning.
+
+**`ERR_COMM_DEGRADED` trips first**, at >30 % ping loss over the 10-slot window,
+and guard 10 NACKs ARM with `COMM_DEGRADED`. Arming is therefore refused a
+couple of dB before the link actually fails, which is the correct ordering.
+
+**Do not rely on the RSSI reading as a warning.** ESP32 RSSI is uncalibrated
+(±3–6 dB is normal), reported values compress in the high −90s so the last few
+dB may never appear, and `RSSI_AVERAGE_WINDOW = 3` smooths and lags it further.
+A fade deep enough to kill the link can pass without moving the number.
+
+**Note the direction asymmetry:** the base logs its view of the remote's
+packets. The weaker of the two directions sets the limit and it is not
+necessarily the one being displayed.
 
 ---
 
