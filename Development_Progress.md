@@ -1542,6 +1542,10 @@ A fade deep enough to kill the link can pass without moving the number.
 packets. The weaker of the two directions sets the limit and it is not
 necessarily the one being displayed.
 
+**Corroborated by T-S11.** The 5-consecutive-send-failure path was triggered
+on-target during the earlier RF shielding test at a reported **−98 dBm**, which
+lands inside the −96 to −99 dBm window predicted here.
+
 ---
 
 ### Bug #19 UPDATE — LED swap did not fix it, fault is in the strip (2026-08-23)
@@ -2587,7 +2591,7 @@ behaviour rather than hardware — worth a low-priority look.
 |---|------|---------|--------|
 | 1 | Complete test suite execution (all §15 tests) | §15 | TODO |
 | 2 | Watchdog stress testing | §15.4 | TODO |
-| 3 | Range testing (10 m, 50 m, 100 m, 200 m) | §15.1 | TODO |
+| 3 | Range testing (10 m, 50 m, 100 m, 200 m) | §15.1 | **200 m DONE** (2026-08-25, −93 dBm holding, base on the ground). 10/50/100 m and the drop-out point still TODO |
 | 4 | Power consumption measurement | §14 | TODO |
 | 5 | Edge case testing (rapid toggling, button mashing, power cycling) | §15 | TODO |
 | 6 | Documentation: build instructions, flash procedure, wiring diagram | §4.3 | TODO |
