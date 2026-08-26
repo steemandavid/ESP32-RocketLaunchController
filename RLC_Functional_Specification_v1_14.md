@@ -948,12 +948,11 @@ available on this hardware.
 > Schottky flyback diode across the siren (cathode VBAT+, anode drain).
 > Supersedes the 2026-08-21 "NOT CONNECTED" note. Two items remain open:
 >
-> 1. **Diode current rating.** The 1N5819 is 40 V / 1 A and carries the full
->    siren current at turn-off. Confirm the siren draws under 1 A at 12 V;
->    above ~700 mA, fit an SS34-class 3 A part instead. (v1.35 note: the ARMED
->    pulse was removed, so this diode now switches once per sequence rather
->    than at 1 Hz throughout ARMED — the repetitive-avalanche concern this item
->    originally raised no longer applies, leaving only steady current.)
+> 1. ~~**Diode current rating.**~~ **CLOSED 2026-08-26: siren measured at under
+>    200 mA steady**, so the 1 A 1N5819 has a 5x margin. The v1.35 removal of
+>    the ARMED pulse also dropped this diode from switching at 1 Hz throughout
+>    ARMED to once per sequence, retiring the repetitive-avalanche concern as
+>    well. No diode change needed.
 > 2. **Retest not yet run.** Review finding N2 (§12.3) is still verified by code
 >    inspection alone. Run bench tests 2 and 3, the LINK_LOST 4-cycle and ERROR
 >    3-blast patterns, and a silent-at-power-on check (which finally makes the

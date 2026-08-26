@@ -14,3 +14,6 @@ tools/strip-diag/sdkconfig.old
 tools/vbat-cal/build/
 tools/vbat-cal/sdkconfig
 tools/vbat-cal/sdkconfig.old
+tools/armgate-test/build/
+tools/armgate-test/sdkconfig
+tools/armgate-test/sdkconfig.old

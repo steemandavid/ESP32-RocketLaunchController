@@ -161,6 +161,31 @@ session.
   `usb-1a86_USB_Single_Serial_5B5E042156-if00`, remote
   `...5B5E043219-if00`).
 
+### Added: `tools/armgate-test` — arm-relay AND-gate verifier
+
+Standalone bring-up firmware that proves the FSD §5.4.4 hardware AND gate **at
+the ARM SENSE node**, not from the indicator LEDs — written because bug #28 and
+its sibling were both indicator-wiring faults, so after that rework the LEDs are
+exactly what cannot be the instrument.
+
+Six steps: the three table rows (key SAFE + GPIO 47 driven → sense 0; key ARM +
+GPIO 47 low → sense 0; key ARM + GPIO 47 driven → sense 1 and relay in), plus
+step 0 validating KEY SENSE itself (a stuck input would otherwise make the run
+a silent no-op reporting PASS), step 4 catching a relay that pulls in and never
+releases, and step 5 reaching the key-SAFE case from an energised relay so the
+key-switch leg is proven from both directions.
+
+Each step samples ARM SENSE every 10 ms for 2 s after a 150 ms settle and
+reports the HIGH-sample count; an unstable line fails whichever level was
+expected. The operator moves the key, the firmware moves GPIO 47, and key
+position is read from KEY SENSE — so the program waits rather than asking anyone
+to type. All eight channel relays are driven inactive at boot. Failure guidance
+maps each failing step to a fault class.
+
+Builds clean. Also measured this session: **the siren draws under 200 mA
+steady**, closing the 1N5819 rating question from bug #27 with a 5x margin —
+recorded in the FSD, `Development_Progress.md` and `README.md`.
+
 ### Owed on target — nothing below has been run yet
 
 - **T-A16 / T-A17 / T-A18** — the new continuity-loss disarm tests (T-A18 is the
@@ -171,8 +196,9 @@ session.
   makes test 2 easier to judge: any gap at the ARMED→PRE_FIRE boundary is now a
   defect rather than expected behaviour.
 - **Re-verify the hardware AND gate at the node** (not from the LEDs) before the
-  first shot, since the indicator wiring was just reworked.
-- **Measure the siren's steady current** to confirm the 1 A diode rating.
+  first shot, since the indicator wiring was just reworked — run
+  `tools/armgate-test`.
+- ~~Measure the siren's steady current~~ — **done: under 200 mA.**
 
 ---
 

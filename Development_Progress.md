@@ -1373,6 +1373,61 @@ fire testing entirely for now.
 
 ---
 
+### `tools/armgate-test` — Arm-Relay AND-Gate Verifier (2026-08-26)
+
+Standalone bring-up firmware added at `tools/armgate-test/` that proves the
+FSD §5.4.4 hardware AND gate **at the ARM SENSE node**, not from the indicator
+LEDs. Written because bug #28 and its sibling were both *indicator* wiring
+faults: after reworking that wiring, the LEDs are precisely what cannot serve
+as the instrument. Run it after any rework of the arm relay, key switch or
+indicator wiring.
+
+| Step | Key | GPIO 47 | Expect |
+|---|---|---|---|
+| 0 | SAFE→ARM→SAFE | — | KEY SENSE (GPIO 42) tracks the key |
+| 1 | SAFE | driven | relay out, ARM SENSE = 0 |
+| 2 | ARM | low | relay out, ARM SENSE = 0 |
+| 3 | ARM | driven | relay in, ARM SENSE = 1, coil LED lit |
+| 4 | ARM | low again | relay releases, ARM SENSE back to 0 |
+| 5 | ARM→SAFE | driven | key alone breaks the coil, ARM SENSE = 0 |
+
+Steps 1–3 are the three rows that matter. The other three cover failures those
+rows cannot see on their own: **step 0** validates the instrument (KEY SENSE is
+what every later step uses to know the key position, and a stuck input would
+turn the run into a silent no-op reporting PASS); **step 4** catches a relay
+that pulls in and never releases; **step 5** reaches the key-SAFE case from an
+energised relay with the software leg still asserted, proving the key-switch leg
+— the one that must hold with the ESP32 crashed or unpowered — from both
+directions.
+
+Design notes worth keeping:
+
+- **Every step samples for 2 s at 10 ms after a 150 ms settle**, and reports the
+  count of HIGH samples rather than a single level. A line that cannot hold a
+  steady level **fails whichever level was expected** — a marginal sneak path is
+  not an interlock anyone can reason about, and a single `gpio_get_level()`
+  would miss exactly the fault this tool exists to find.
+- **The operator moves the key; the firmware moves GPIO 47.** Key position is
+  read from KEY SENSE, so the program waits for the right position instead of
+  asking anyone to type. Hands stay on the hardware. The only keyboard input is
+  ENTER at the safety prompt and y/n for "is the coil LED lit" (step 3b — the
+  one check that genuinely needs eyes).
+- **All eight channel relays are driven inactive at boot** before anything else
+  runs, closing the high-impedance window between power-on and GPIO config.
+- Pins are duplicated from `pin_config.h` rather than included, so the tool
+  still builds when the firmware tree is mid-edit. Keep them in step.
+- Failure guidance is printed with the summary: which step failed maps to a
+  specific fault class (sneak path around the key switch, welded contact, coil
+  drive failure, stuck relay, indicator-only).
+
+**Safety:** it energises the arm relay, so VBAT reaches the fire bus.
+Igniters must be disconnected. Reflash `./build_base.sh flash` when done.
+
+**Also measured this session: the siren draws under 200 mA steady**, closing
+the 1N5819 rating question from bug #27 with a 5x margin.
+
+---
+
 ### Firmware 1.1.2 — Siren Continuous in ARMED (2026-08-26)
 
 **Operator finding.** The 500 ms ARMED pulse **interferes with the siren's own
@@ -1814,6 +1869,9 @@ carries the full siren current, so it is correctly rated only if the siren draws
 comfortable; a high-output horn can exceed 1 A. Measure the siren's steady
 current once with the driver on. If it is above ~700 mA, move to an SS34 or
 similar 3 A part.
+
+> **MEASURED 2026-08-26: under 200 mA steady.** The 1N5819 is correctly rated
+> with a 5x margin. This item is closed — no diode change needed.
 
 > **Update (later the same day, fw 1.1.2):** the 500 ms ARMED pulse was removed,
 > so this diode now switches **once per sequence** rather than once per second.

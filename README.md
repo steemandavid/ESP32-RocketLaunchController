@@ -181,8 +181,8 @@ Known open items before any field use:
   for the first time. It sounds **continuously** from ARMED through PRE_FIRE and
   FIRING as of firmware 1.1.2 — the old 500 ms ARMED pulse fought the siren's own
   internal modulation and came out quieter than a steady tone. The siren bench
-  retests that close review finding N2 have **not** been run yet, and the 1 A
-  diode is correctly rated only if the siren draws under 1 A — measure it once.
+  retests that close review finding N2 have **not** been run yet. The siren
+  measures under 200 mA steady, so the 1 A diode has a 5x margin.
 - **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
   ever specified. Protection is firmware-only, and the ERROR state halts
   operation without disconnecting the load — so a unit left switched on, or one
