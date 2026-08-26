@@ -24,6 +24,7 @@
 #include "rlc_version.h"
 #include "rlc_watchdog.h"
 
+#include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -485,7 +486,37 @@ static void process_event(const rlc_fsm_event_t *evt)
                 break;
             }
 
-            /* Guard 4: Link healthy */
+            /* Guard 4: base not in a terminal ERROR state.
+             *
+             * Added 2026-08-26 after on-target testing (T-A12 session). The
+             * base's ERROR handler is `break;` — deliberately inert, so it
+             * discards CMD_ARM without a NACK. Without this guard the remote
+             * sent the ARM, got nothing back, and fell through to the
+             * ACK-timeout path, which was the one failure path with no
+             * operator feedback at all: the encoder long-press did nothing,
+             * silently, with no way to tell a flat battery from a dead link
+             * from a base needing a power cycle.
+             *
+             * Refusing locally is better than relying on a NACK the base
+             * cannot send, and naming the flag tells the operator which fault
+             * to go and look at. ERROR is unrecoverable by design, so the
+             * remedy really is a power cycle. */
+            if (s_last_status.base_state == STATE_ERROR) {
+                /* "BASE ERROR: " is 12 chars and the display overlay holds
+                 * 40, so the flag text gets 26 + NUL. One flag always fits;
+                 * a rare multi-flag case truncates rather than overflowing. */
+                char errbuf[26];
+                char toast[40];
+                rlc_error_flags_str(s_last_status.error_flags, errbuf, sizeof(errbuf));
+                snprintf(toast, sizeof(toast), "BASE ERROR: %s", errbuf);
+                ESP_LOGW(TAG, "ARM rejected: base in ERROR (flags=0x%02x: %s)",
+                         s_last_status.error_flags, errbuf);
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast(toast);
+                break;
+            }
+
+            /* Guard 5: Link healthy */
             if (!rlc_link_is_healthy()) {
                 ESP_LOGW(TAG, "ARM rejected: link not healthy");
                 buzzer_play(BUZZER_BEEP_TRIPLE);
@@ -561,8 +592,13 @@ static void process_event(const rlc_fsm_event_t *evt)
             } else if (result == WAIT_FOR_ACK_STATE_HANDLED) {
                 /* R1: state already transitioned to LINK_LOST or ERROR — do nothing */
             } else {
-                /* Timeout or interrupted */
-                ESP_LOGW(TAG, "ARM failed — no response or interrupted");
+                /* Timeout. Every other outcome above tells the operator
+                 * something; until 2026-08-26 this one only wrote a log line,
+                 * so a base that never answered looked identical to a
+                 * long-press that had not registered. */
+                ESP_LOGW(TAG, "ARM failed — no response from base");
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("NO RESPONSE FROM BASE");
             }
 
         } else if (evt->type == EVT_FIRE_BUTTON_PRESSED) {

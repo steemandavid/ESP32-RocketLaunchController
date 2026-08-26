@@ -12,7 +12,14 @@
  * changed on BOTH units, so the bump is deliberate: the strict version check
  * makes a half-flashed pair refuse to link rather than run mismatched safety
  * logic. Flash base and remote together. */
-/* 1.1.3 (2026-08-26): PRE_FIRE_DELAY_MS 2000 -> 5000 by operator decision
+/* 1.1.4 (2026-08-26): remote no longer fails silently when an ARM cannot be
+ * granted. New guard refuses locally (naming the flag) when the cached status
+ * shows the base in ERROR — the base's ERROR handler is inert and NACKs
+ * nothing, so the remote had been timing out into the one failure path that
+ * gave no operator feedback. That timeout path now beeps and toasts too.
+ * Remote-only, no protocol change.
+ *
+ * 1.1.3 (2026-08-26): PRE_FIRE_DELAY_MS 2000 -> 5000 by operator decision
  * after on-target testing (T-A17: 2 s was too short to act inside — an
  * igniter fired because the abort could not be made in time). Both units run
  * a countdown against this constant, so flash them together.
@@ -26,5 +33,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  3
-#define RLC_VERSION_STRING "1.1.3"
+#define RLC_VERSION_PATCH  4
+#define RLC_VERSION_STRING "1.1.4"
