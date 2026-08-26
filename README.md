@@ -74,7 +74,7 @@ link is refused.
 | `components/rlc_remote/` | Remote FSM, encoder, fire button, arm switch, buzzer, ILI9488 display |
 | `rlc-hw-test-base/`, `rlc-hw-test-remote/` | Standalone hardware bring-up firmware with a serial CLI |
 | `tests/host/` | Host-compiled unit tests — `./tests/host/run.sh`, no hardware needed |
-| `tools/` | Bench utilities — GPIO blink, LED finder, WS2812 strip diagnostic, battery-divider calibration, test scripts |
+| `tools/` | Bench utilities — GPIO blink, LED finder, WS2812 strip diagnostic, battery-divider calibration, **`armgate-test`** (proves the §5.4.4 arm-relay AND gate at the ARM SENSE node), test scripts |
 | `archive/` | Superseded specification revisions |
 
 Both units build from **one codebase**; the unit is selected by sdkconfig
@@ -90,6 +90,25 @@ Requires **ESP-IDF v5.4.1** and an ESP32-S3 (16 MB flash, 8 MB OCT PSRAM).
 ./build_base.sh flash           # build + flash base to its default by-id port
 ./build_remote.sh flash         # build + flash remote
 ./build_remote.sh flash -p PORT # override the serial port
+
+./build_base.sh flash --inject  # TEST ONLY — see below
+```
+
+**`--inject`** builds the base with `CONFIG_RLC_FAULT_INJECTION`, a UART0
+console used to run FSD tests T-A11 and T-A13. Neither is reachable otherwise:
+link loss trips at 1.5 s, well before the staleness timeout, so interfering with
+the radio can never produce "linked but stale"; and nothing in normal operation
+emits a malformed ACK. Console keys: `s` withholds STATUS_UPDATE while
+heartbeats keep flowing, `a` corrupts the channel of one ARM ACK, `?` prints
+state.
+
+**This firmware deliberately lies to the remote and is not safe for live use.**
+It announces itself four ways — a compile `#warning`, a boot banner, a
+flash-time warning, and a build failure if the option did not reach the built
+config — and `sdkconfig.base` is never modified, so the option cannot leak into
+a later normal build. Reflash with plain `./build_base.sh flash` afterwards.
+
+```
 
 ./tests/host/run.sh             # host-compiled unit tests, no hardware needed
 ```
@@ -187,9 +206,10 @@ Known open items before any field use:
   retests are **done — all six pass**, closing review finding N2 by measurement.
   The siren measures under 200 mA steady, so the 1 A diode has a 5x margin.
 - **The arming path is verified on target as of 2026-08-26.** The FSD §15.2
-  suite ran 14 PASS / 0 FAIL, with two tests found unrunnable as written
+  suite ran **16 PASS / 0 FAIL**, with two tests found unrunnable as written
   (T-A05 contradicts T-A08; T-A15 tests a continuity band merged away in
-  August) and two awaiting a fault-injection harness. Full write-up in
+  August). The last two — T-A11 and T-A13 — were closed with the
+  `--inject` fault-injection build described above. Full write-up in
   `Test_Report_Phase3_G2.md`. **Fire testing (T-F01…T-F09) has still not been
   run**, and channels 2–8 have never been fired.
 - **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
