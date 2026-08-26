@@ -33,6 +33,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
+| 30 | Continuity-loss disarm is edge-triggered only — a band change to OPEN during the 200 ms arm-verify window is dropped and never re-delivered | Firmware | **OPEN** — found by code review 2026-08-26 (`Code_Review_Session_20260826_2159.md`, N1). Hole in bug #29's own fix: `STATE_IDLE` has no `EVT_CONTINUITY_CHANGED` branch, the M1 verify leaves the FSM in IDLE with `s_armed_channel == 0`, and `continuity_task` posts only on band *change* — so once OPEN, no event is ever regenerated. Same hole if the FSM queue is full when the event is posted. | **Fix before G3 fire testing.** Base can sit ARMED on an open igniter until the 10 s arm timeout, silently — the exact hazard bug #29 addresses. Fix is a level-triggered `continuity_get_channel()` re-check on entry to ARMED, on both ARM completion paths. |
 | 29 | Base stays ARMED when the armed channel's igniter loses continuity | Firmware + spec | **RESOLVED 2026-08-26 (fw 1.1.2)** — continuity OPEN on the armed channel now disarms from ARMED or PRE_FIRE. Was a *specification* defect as much as a code one: v1.8 removed the disarm on a rationale ("sensing disabled — stale data") that the v1.10 SPDT redesign made obsolete, while the Phase 3 test criteria kept listing it as required. | Nothing now. Retest with T-A16/T-A17/T-A18 before live fire. |
 | 28 | Base ARM RELAY LED lights when the key is turned to **SAFE**, while the relay itself stays de-energised | Hardware | **RESOLVED 2026-08-26** — indicator wiring corrected on the base. The ARM RELAY LED now lights only when the arm relay is actually energised. A second, related indicator fault was found and fixed in the same session: the arm-key red and green LEDs lit *simultaneously* with the key in SAFE; they now read red = ARMED, green = SAFE. | Nothing. **Fire testing is unblocked** — this was the last hardware gate. |
 | 27 | Base siren not connected — GPIO 40 drives nothing, IRLZ44N driver not fitted | Hardware | **RESOLVED (hardware) 2026-08-26** — IRLZ44N driver fitted on GPIO 40 with its 150 Ω gate series resistor, 10 kΩ gate pull-down, and a 1N5819 flyback diode across the siren (cathode VBAT+, anode drain). | Nothing further in hardware. **Retest still owed:** review bench tests 2 and 3, the LINK_LOST 4-cycle and ERROR 3-blast patterns, and a silent-at-power-on check. Review finding N2 remains code-inspection-only until those run. |
@@ -1372,6 +1373,53 @@ the rail; the clamp now covers the multi-channel case.
 channel other than 1 has been fired on this hardware. Treat the first shot on
 each channel as a test, not a routine firing — and see bug #28, which blocks
 fire testing entirely for now.
+
+---
+
+### Bug #30 — Continuity-loss disarm has no level-triggered backstop (2026-08-26, OPEN)
+
+Found by the post-session code review, not by testing — G2 passed 18/20 without
+touching this.
+
+**Three facts combine into a hole in bug #29's own fix:**
+
+1. The M1 non-blocking arm verify leaves the FSM in **`STATE_IDLE`** with
+   `s_arm_verify_pending` set and **`s_armed_channel` still 0**, for up to
+   `ARM_SENSE_VERIFY_TIMEOUT_MS` (200 ms).
+2. `STATE_IDLE` has **no `EVT_CONTINUITY_CHANGED` branch** — the event is
+   silently discarded there.
+3. `continuity_task` posts **only on band change**. Once a channel reads OPEN,
+   no further event is emitted for it.
+
+So an igniter that goes OPEN inside the verify window has its event dropped in
+IDLE, the verify completes, and the base enters ARMED with the band *already*
+OPEN — at which point nothing will ever post again. **The base sits ARMED on an
+open igniter until the 10 s arm timeout, silently.** Guard 2 does not help; it
+passed legitimately before the disconnection.
+
+The same hole exists if the FSM queue is full when `on_io_change()` posts: the
+10 ms blocking send fails, the event is lost, and the band has already changed
+so it is never regenerated.
+
+**Probability is low** — the disconnection must land in a 200 ms window *and*
+the round-robin must sample that channel within it. **The consequence is the
+full bug #29 hazard**, which is why it is MAJOR rather than minor.
+
+**Fix:** make it level-triggered on entry to ARMED. On both ARM completion
+paths, re-read the current band instead of waiting for a change:
+
+```c
+if (continuity_get_channel(ch) == CONT_OPEN) { /* refuse / disarm */ }
+```
+
+That closes the verify-window race *and* the dropped-event case, and is robust
+to any future missed edge. The event path stays the fast detector; the level
+check is the backstop.
+
+**The general lesson is worth keeping: an edge-triggered safety monitor needs a
+level-triggered backstop.** Bug #29 was fixed with an event, and the event is
+the only thing holding the property. Any lost or mistimed edge silently removes
+the protection, and nothing reports it.
 
 ---
 

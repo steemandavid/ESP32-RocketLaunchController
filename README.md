@@ -221,6 +221,12 @@ Known open items before any field use:
   natural response to apparent non-response is to try again, which is the wrong
   instinct at a pad. The base also **answers** commands while in terminal ERROR
   (NACK `0x0E`) rather than discarding them, so the remote can name the fault.
+- **Bug #30 — the continuity-loss disarm has no level-triggered backstop**, found
+  by code review on 2026-08-26 and **open**. An igniter going open-circuit inside
+  the 200 ms arm-verify window has its event dropped, and because the band has
+  already changed nothing re-posts it — so the base can sit ARMED on an open
+  igniter until the arm timeout. Low probability, but it is the exact hazard the
+  disarm exists to prevent. **Fix before fire testing.**
 - **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
   ever specified. Protection is firmware-only, and the ERROR state halts
   operation without disconnecting the load — so a unit left switched on, or one

@@ -1,6 +1,6 @@
 # ESP32 Rocket Launch Controller — Changelog
 
-## 2026-08-26 — Hardware bugs closed, G2 arming suite complete, firmware 1.1.1 → 1.1.6
+## 2026-08-26 — Hardware bugs closed, G2 arming suite complete, firmware 1.1.1 → 1.1.7
 
 Hardware rework by the operator closed the last three open hardware defects.
 Two firmware changes followed from testing the result.
@@ -421,9 +421,68 @@ absent from the built config, zero injection symbols in the ELF.
 
 **G2 final: 18 PASS / 0 FAIL / 2 N/A out of 20.**
 
+### Fire button ring LED now reports state (firmware 1.1.7)
+
+Reported from the bench: the ring does not go red when armed. **It never did.**
+`rlc_fire_button.c` has driven the LEDs from the debounce callback since
+`aafacd0` (Phase 2) — red while held, green while released — so the ring showed
+the operator's own finger rather than whether pressing the button would do
+anything. FSD line 1110 has specified ARMED/PRE_FIRE/FIRING since v1.13, so this
+was an unimplemented requirement, not a regression.
+
+New `fire_button_set_live()` is driven from the remote FSM **every tick**, not
+on transitions alone: the base dropping out underneath an ARMED remote arrives
+as a `STATUS_UPDATE`, not as a local state change. **Red requires both halves**
+— remote in ARMED/PRE_FIRE/FIRING *and* a fresh `STATUS_UPDATE` confirming the
+same channel armed at the base. `fire_is_live()` deliberately reuses the same
+two conditions the §8.2.4 FIRE guards check, so the ring and the guards cannot
+disagree: red exactly when a press would be accepted.
+
+The press-driven behaviour was removed rather than kept as an override. A press
+in IDLE is ignored (§8.2.3), so flashing red for it reports an action that will
+not happen — the misleading-indicator failure §7.2.9a exists to prevent.
+
+### Code review of the session's changes — one MAJOR found
+
+`Code_Review_Session_20260826_2159.md`. Three questions were posed; one found a
+real defect, two came back clean on evidence rather than assumption.
+
+**Q1 — can `armed_channel_went_open()` fire in an unconsidered state?** No — but
+the inverse is the defect, and it became **bug #30 (MAJOR, open)**. The
+continuity-loss disarm is edge-triggered with no level-triggered backstop.
+`STATE_IDLE` has no `EVT_CONTINUITY_CHANGED` branch; the M1 arm verify leaves
+the FSM in IDLE for up to 200 ms with `s_armed_channel == 0`; and
+`continuity_task` posts only on band *change*. An igniter going OPEN inside that
+window has its event dropped and never regenerated, so the base enters ARMED
+already-open and stays there until the arm timeout — **the exact hazard bug #29
+was created to prevent**. The same hole exists if the FSM queue is full when the
+event is posted. Fix is a level-triggered re-check on entry to ARMED. **Must be
+fixed before G3.**
+
+**Q2 — NACKing from ERROR vs. link sequence handling?** Clean. Same
+`rlc_link_next_seq()` path as every other NACK, which already drops the link
+rather than emitting a seq-0 frame on overflow; all calls on the FSM task; no
+new concurrency. Two observations recorded: a bounded ~5 Hz NACK burst if the
+base enters ERROR while the remote's fire-repeat is running (self-limits within
+one status interval), and the fact that NACKs to DISARM/CEASE_FIRE are *not*
+operator-visible because those sends are fire-and-forget — so the new feedback
+reaches the operator for ARM and FIRE only.
+
+**Q3 — do the new `display_toast()` calls block?** Clean. The only competing
+holder of `s_req_mutex` releases it after a ~150-byte snapshot copy, before any
+rendering or SPI. All new calls are on the FSM task with no lock held, and the
+`check_timers()` stale toast sits inside the branch that latches, so it fires
+once per episode rather than at 20 Hz.
+
+The review is a **self-review** — same agent, same session — and says so. Its
+blind spots correlate with the author's, so an independent pass before live fire
+would still be worth having.
+
 ### Still owed
 
 - ~~T-A11 and T-A13~~ — **DONE, both PASS.**
+- **Bug #30 — fix the continuity-disarm backstop before G3.** Found by review,
+  not by testing; G2 passed 18/20 without touching it.
 - **G3 fire testing (T-F01…T-F09).** Channels 2–8 have never been fired.
   Channel 1 has now fired once, unplanned, and the whole chain worked.
 - **Bug #24 — no rail clamp on the base.** Unchanged this session, and the
