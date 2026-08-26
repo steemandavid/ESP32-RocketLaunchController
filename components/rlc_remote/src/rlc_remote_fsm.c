@@ -100,6 +100,29 @@ static void cache_status(const rlc_payload_status_update_t *st)
     portEXIT_CRITICAL(&s_status_lock);
 }
 
+/**
+ * Display a NACK, enriching NACK_BASE_ERROR with the specific fault.
+ *
+ * The NACK payload is a fixed 6 bytes and carries only a reason code, so the
+ * base cannot tell us *which* error it is in. It does not need to: error_flags
+ * arrives in every STATUS_UPDATE, so the remote already knows. "BASE IN ERROR"
+ * alone would send an operator hunting; "BASE ERROR: VBAT CRITICAL" names the
+ * thing to go and look at. Falls back to the bare reason when no flags are
+ * cached — after a remote reboot, say.
+ */
+static void show_nack(uint8_t reason)
+{
+    if (reason == NACK_BASE_ERROR && s_last_status.error_flags != 0) {
+        char errbuf[26];
+        char toast[40];
+        rlc_error_flags_str(s_last_status.error_flags, errbuf, sizeof(errbuf));
+        snprintf(toast, sizeof(toast), "BASE ERROR: %s", errbuf);
+        display_nack(toast);
+        return;
+    }
+    display_nack(rlc_nack_reason_str(reason));
+}
+
 static bool is_status_fresh(void)
 {
     return (s_last_status_rx_ms > 0) &&
@@ -527,6 +550,8 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* Send CMD_ARM */
             if (send_cmd_arm(ch) != 0) {
                 ESP_LOGE(TAG, "CMD_ARM send failed");
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("ARM SEND FAILED");
                 break;
             }
 
@@ -544,6 +569,8 @@ static void process_event(const rlc_fsm_event_t *evt)
                 }
                 if (send_cmd_arm(ch) != 0) {
                     ESP_LOGE(TAG, "CMD_ARM retry %d send failed", retry + 1);
+                    buzzer_play(BUZZER_BEEP_TRIPLE);
+                    display_toast("ARM SEND FAILED");
                     break;
                 }
                 result = wait_for_ack(ch, CMD_ACK_TIMEOUT_MS, &nack_reason);
@@ -557,6 +584,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                     ESP_LOGW(TAG, "ARM ACK after key-off — sending DISARM, staying IDLE");
                     send_cmd_disarm(ch);
                     buzzer_play(BUZZER_BEEP_TRIPLE);
+                    display_toast("ARM KEY OFF - NOT ARMED");
                 } else {
                     /* ACK received with matching channel */
                     s_armed_channel = ch;
@@ -571,6 +599,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                  * on its own; also disarm in case a CMD_ARM reached it. */
                 ESP_LOGW(TAG, "ARM attempt interrupted — aborting");
                 send_cmd_disarm(ch);
+                display_toast("ARM CANCELLED");
                 /* m13: the interrupting event may have been EVT_ENCODER_ROTATE,
                  * which wait_for_ack() consumed without applying. Re-sync from
                  * the encoder — otherwise the display and strip cursor keep
@@ -583,7 +612,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 ESP_LOGW(TAG, "ARM NACK: 0x%02x (%s)",
                          nack_reason, rlc_nack_reason_str(nack_reason));
                 buzzer_play(BUZZER_BEEP_TRIPLE);
-                display_nack(rlc_nack_reason_str(nack_reason));
+                show_nack(nack_reason);
             } else if (result == -2) {
                 /* Channel mismatch. The base ACKed a channel the operator did
                  * not select, so we refuse to enter ARMED and tell it to stand
@@ -625,6 +654,8 @@ static void process_event(const rlc_fsm_event_t *evt)
                  * hazard state must not persist out of sight of this UI
                  * until the base's own 10 s arm timeout. */
                 ESP_LOGW(TAG, "base armed while remote IDLE — DISARM to reconcile");
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("BASE STATE MISMATCH - DISARMED");
                 send_cmd_disarm(0xFF);
             }
         } else if (evt->type == EVT_ENCODER_ROTATE) {
@@ -644,6 +675,8 @@ static void process_event(const rlc_fsm_event_t *evt)
              * CMD_FIRE on the wire without it, whatever led it into ARMED. */
             if (!arm_switch_is_armed()) {
                 ESP_LOGW(TAG, "FIRE rejected: arm switch OFF");
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("ARM KEY OFF - FIRE REFUSED");
                 do_disarm_and_idle();
                 break;
             }
@@ -657,6 +690,8 @@ static void process_event(const rlc_fsm_event_t *evt)
             }
             if (!(armed_mask & (1U << (s_armed_channel - 1)))) {
                 ESP_LOGW(TAG, "FIRE rejected: base no longer armed");
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("BASE NOT ARMED - FIRE REFUSED");
                 do_disarm_and_idle();
                 break;
             }
@@ -664,6 +699,8 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* M6: Guard 2: STATUS_UPDATE must be fresh (FSD §8.2.4 guard 1) */
             if (!is_status_fresh()) {
                 ESP_LOGW(TAG, "FIRE rejected: stale STATUS_UPDATE");
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("NO BASE STATUS - FIRE REFUSED");
                 do_disarm_and_idle();
                 break;
             }
@@ -671,6 +708,8 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* Guard 3: link healthy */
             if (!rlc_link_is_healthy()) {
                 ESP_LOGW(TAG, "FIRE rejected: link not healthy");
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("LINK DEGRADED - FIRE REFUSED");
                 do_disarm_and_idle();
                 break;
             }
@@ -678,6 +717,8 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* Send CMD_FIRE */
             if (send_cmd_fire(s_armed_channel) != 0) {
                 ESP_LOGE(TAG, "CMD_FIRE send failed");
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("FIRE SEND FAILED");
                 do_disarm_and_idle();
                 break;
             }
@@ -693,6 +734,8 @@ static void process_event(const rlc_fsm_event_t *evt)
                      * cancel instead of entering PRE_FIRE. */
                     ESP_LOGW(TAG, "FIRE ACK after key-off — CEASE_FIRE, staying disarmed");
                     send_cmd_cease_fire();
+                    buzzer_play(BUZZER_BEEP_TRIPLE);
+                    display_toast("ARM KEY OFF - FIRE ABORTED");
                     do_disarm_and_idle();
                 } else {
                     /* ACK — enter PRE_FIRE */
@@ -707,7 +750,8 @@ static void process_event(const rlc_fsm_event_t *evt)
                 /* NACK */
                 ESP_LOGW(TAG, "FIRE NACK: 0x%02x (%s)",
                          nack_reason, rlc_nack_reason_str(nack_reason));
-                display_nack(rlc_nack_reason_str(nack_reason));
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                show_nack(nack_reason);
                 do_disarm_and_idle();
             } else if (result == WAIT_FOR_ACK_STATE_HANDLED) {
                 /* R1: LINK_LOST or BATTERY_CRITICAL was handled inline by
@@ -715,8 +759,12 @@ static void process_event(const rlc_fsm_event_t *evt)
                  * NOT call do_disarm_and_idle() (which would stomp the alarm
                  * state back to IDLE and silence the operator alert). */
             } else {
-                /* Timeout or interrupted */
-                ESP_LOGW(TAG, "FIRE failed — aborting");
+                /* Timeout. The base never answered a FIRE — the operator is
+                 * holding the button watching nothing happen, which is the
+                 * last moment to leave them guessing. */
+                ESP_LOGW(TAG, "FIRE failed — no response from base");
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("NO RESPONSE - FIRE ABORTED");
                 do_disarm_and_idle();
             }
 
@@ -748,6 +796,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             if (s_armed_channel > 0 &&
                 !(armed_mask & (1U << (s_armed_channel - 1)))) {
                 ESP_LOGW(TAG, "STATUS_UPDATE shows base disarmed");
+            display_toast("BASE DISARMED");
                 s_armed_channel = 0;
                 rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
                 buzzer_play(BUZZER_BEEP_LONG);
@@ -788,6 +837,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 s_last_status.base_state != STATE_FIRING &&
                 s_last_status.base_state != STATE_ARMED) {
                 ESP_LOGW(TAG, "Base left PRE_FIRE/FIRING — sync to base");
+            display_toast("BASE ENDED SEQUENCE");
                 s_fire_repeat_active = false;
                 do_enter_idle();
             }
@@ -883,6 +933,8 @@ static void check_timers(void)
         if ((now_ms() - s_last_status_rx_ms) > STATUS_STALE_TIMEOUT_MS) {
             ESP_LOGW(TAG, "STATUS_UPDATE stale timeout (%lld ms)",
                      now_ms() - s_last_status_rx_ms);
+            buzzer_play(BUZZER_BEEP_TRIPLE);
+            display_toast("BASE STATUS LOST");
             if (s_state != STATE_IDLE) {
                 s_fire_repeat_active = false;
                 /* 4.11: PRE_FIRE/FIRING need CEASE_FIRE (the base is mid

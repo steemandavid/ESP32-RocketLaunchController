@@ -46,6 +46,12 @@ typedef enum {
     NACK_ARM_SENSE_FAULT       = 0x0B,
     NACK_REMOTE_BATTERY_LOW    = 0x0C,
     NACK_COMM_DEGRADED         = 0x0D,
+    /* Base is in the terminal ERROR state. Added 2026-08-26: the base used to
+     * discard every command in ERROR without replying, so the remote could
+     * only time out — and a timeout says nothing about why. The specific fault
+     * is not carried here (the NACK payload is a fixed 6 bytes); the remote
+     * names it from the error_flags in its cached STATUS_UPDATE. */
+    NACK_BASE_ERROR            = 0x0E,
 } rlc_nack_reason_t;
 
 /* ── Error Flags (bitmask in STATUS_UPDATE) ───────────────────── */
@@ -288,6 +294,7 @@ static inline const char *rlc_nack_reason_str(uint8_t reason)
         case NACK_ARM_SENSE_FAULT:        return "ARM SENSE FAULT";
         case NACK_REMOTE_BATTERY_LOW:     return "REMOTE BATTERY LOW";
         case NACK_COMM_DEGRADED:         return "COMM DEGRADED";
+        case NACK_BASE_ERROR:             return "BASE IN ERROR";
         default:                          return "UNKNOWN ERROR";
     }
 }

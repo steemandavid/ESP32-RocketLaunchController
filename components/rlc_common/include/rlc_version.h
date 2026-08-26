@@ -12,7 +12,19 @@
  * changed on BOTH units, so the bump is deliberate: the strict version check
  * makes a half-flashed pair refuse to link rather than run mismatched safety
  * logic. Flash base and remote together. */
-/* 1.1.5 (2026-08-26): remote now displays "CHANNEL MISMATCH ERROR" when the
+/* 1.1.6 (2026-08-26): no silent refusals left. The base now ANSWERS commands
+ * while in ERROR with the new NACK_BASE_ERROR (0x0E) instead of discarding
+ * them — a timeout carried no reason, so an operator could not tell a dead
+ * link from a base needing a power cycle. The remote names the specific fault
+ * from the error_flags it already caches, so the NACK payload is unchanged.
+ * Every remaining operator-facing branch that logged a refusal without saying
+ * so now beeps and toasts: the whole FIRE guard family (arm key off, base not
+ * armed, stale status, degraded link, send failure, key-off-after-ACK,
+ * no-response), the ARM send/retry failures and cancellation, base/remote
+ * state mismatch, stale-status timeout, and base-ended-sequence.
+ * New NACK code = both units must be flashed together.
+ *
+ * 1.1.5 (2026-08-26): remote now displays "CHANNEL MISMATCH ERROR" when the
  * base ACKs an ARM for a channel the operator did not select. The disarm and
  * the triple beep were already correct; only the message was missing. Found by
  * T-A13 once the fault-injection harness could produce a malformed ACK.
@@ -38,5 +50,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  5
-#define RLC_VERSION_STRING "1.1.5"
+#define RLC_VERSION_PATCH  6
+#define RLC_VERSION_STRING "1.1.6"

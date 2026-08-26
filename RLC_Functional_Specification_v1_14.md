@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.38
+**Version:** 1.39
 **Date:** 2026-08-25
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -52,6 +52,7 @@
 | 1.36 | 2026-08-26 | **`PRE_FIRE_DELAY_MS` 2000 → 5000. Firmware 1.1.2 → 1.1.3.** Operator decision taken during the G2 test campaign. T-A17 requires the operator to disconnect an igniter *during* the pre-fire countdown; at 2 s that could not be done in time and an igniter fired. The countdown was temporarily raised to 10 s to complete the test, then settled at 5 s as the operating value: long enough to act inside, short enough that holding the fire button does not invite the fatigue-release the original 2000 ms was chosen to avoid. §7.2.2, §14.1, README and the project summary updated. No logic change; both units must be flashed together because the remote runs its own local countdown against the same constant. |
 | 1.37 | 2026-08-26 | **G2 arming suite run on target; three stale tests corrected and one remote defect fixed (firmware 1.1.3 → 1.1.4).** 13 of 18 arming tests PASS (T-A01..A04, A06..A10, A14, A16..A18), T-A12 PASS, two are not runnable as written, and two await a fault-injection harness. **T-A05 reworded:** it is unreachable through the operator UI because selecting a second channel requires an encoder rotation, which T-A08 requires to disarm — the two tests contradict each other. The NACK 0x0A guard stays as defence-in-depth against a remote bug or replayed frame. **T-A15 marked superseded and T-A09's band list corrected:** both still described a SHORT band that was merged into CONNECTED on 2026-08-21 (bug #26), so neither could pass as written. **Remote defect found and fixed:** with the base in ERROR a long-press to arm produced no beep, no message and no transmission. The base's ERROR handler is inert and NACKs nothing, and the remote's ACK-timeout branch was the only failure path with no operator feedback, so a base that never answered was indistinguishable from a long-press that had not registered — and the remote never inspected `base_state == STATE_ERROR` despite receiving it in every STATUS_UPDATE. A new arming guard now refuses locally and names the flag (`BASE ERROR: VBAT CRITICAL`), and the timeout path reports `NO RESPONSE FROM BASE`. §8.2.3 guard list extended. Also demonstrated incidentally on target: **T-S03** (base below VBAT_CRITICAL → ERROR, and ERROR correctly stays latched after the voltage recovers) and **T-S14** (arm timeout at 10022 ms against a 10000 ms constant). |
 | 1.38 | 2026-08-26 | **T-A11 and T-A13 closed with a fault-injection harness; firmware 1.1.4 → 1.1.5.** Neither test is inducible from outside the firmware — link loss trips at 1.5 s, long before the staleness timeout, so "linked but stale" cannot be produced by interfering with the radio; and nothing in normal operation emits a malformed ACK. New `CONFIG_RLC_FAULT_INJECTION` build option (base only, default off, `./build_base.sh --inject`) adds a UART0 console that can withhold STATUS_UPDATE while still answering PINGs (`s`) and corrupt the channel of one ARM ACK (`a`). The build emits a `#warning`, the firmware prints a boot banner, and the build script refuses to flash if the option did not actually reach the built config. **T-A11 PASS:** remote refused locally with `NO BASE STATUS DATA` and transmitted nothing. The FSD's expected text `DATA STALE — CANNOT ARM` was wrong and has been corrected — no build has ever displayed it. **T-A13 initially PARTIAL, now PASS:** the remote correctly detected the mismatch, refused to enter ARMED and commanded a disarm (relay out 190 ms after the bad ACK), but displayed nothing — the mismatch branch beeped without saying why, the same defect class as the ACK-timeout path fixed in v1.37. Fixed in **1.1.5**: the branch now shows `CHANNEL MISMATCH ERROR`, and the retest passes end to end. |
+| 1.39 | 2026-08-26 | **No silent refusals. Firmware 1.1.5 → 1.1.6.** Two operator-driven decisions. **(1) The base now answers commands while in ERROR** with a new NACK reason `0x0E` ("BASE IN ERROR") instead of discarding them. Its ERROR handler was a bare `break;`, so the remote could only time out — and a timeout carries no reason, leaving an operator unable to distinguish a dead link from a base needing a power cycle. All four commands are answered, including DISARM: refusing a disarm on an already-safe base looks odd, but "I am in ERROR" is the operative fact in every case, and silently ACKing would report "all is well" about a unit that is out of service. The specific fault is not carried in the NACK — the payload is a fixed 6 bytes — so the remote names it from the `error_flags` it already caches, giving "BASE ERROR: VBAT CRITICAL" rather than a bare reason code. **(2) Every remaining silent branch on the remote now beeps and displays.** New §7.2.9a states this as a requirement. The FIRE guard family was the worst of it — arm key off, base not armed, stale status, degraded link, send failure, key-off-after-ACK and no-response all dropped the remote to IDLE without a word, with the operator holding a fire button watching nothing happen. Also covered: ARM send and retry failures, ARM cancellation, base/remote state mismatch, the stale-status timeout, and base-ended-sequence. An audit of the remote FSM leaves only five log-without-display sites, all legitimate: multi-arm (which displays via a different path), `do_enter_error()` (always reached through `do_enter_error_text()`), and three init failures that happen before the display task exists. New NACK code means both units must be flashed together. |
 
 ---
 
@@ -1437,8 +1438,24 @@ The remote SHALL verify that the `channel` in CMD_ACK matches the channel it req
 | `0x0A` | Another channel already armed | "CH N ALREADY ARMED" |
 | `0x0B` | Arm switch sense fault — arm sense does not confirm arm relay closed / VBAT on fire path | "ARM SENSE FAULT" |
 | `0x0C` | Remote battery below operate threshold | "REMOTE BATTERY LOW" |
+| `0x0D` | Link quality degraded (>30 % ping loss over the 10-slot window) | "COMM DEGRADED" |
+| `0x0E` | Base is in the terminal ERROR state (v1.39) | "BASE IN ERROR" |
 
 The remote shall display the human-readable text on screen for at least 3 seconds when a NACK is received.
+
+**`0x0E` and the specific fault.** The NACK payload is a fixed 6 bytes and carries only a reason code, so the base cannot say *which* error it is in. It does not need to: `error_flags` arrives in every `STATUS_UPDATE`, so the remote already holds it. On `NACK_BASE_ERROR` the remote SHALL name the fault from its cached flags — e.g. **"BASE ERROR: VBAT CRITICAL"** — falling back to the bare "BASE IN ERROR" when no flags are cached. "BASE IN ERROR" alone sends an operator hunting; naming the flag points at the thing to inspect.
+
+### 7.2.9a No silent refusals (v1.39)
+
+**Every refusal, abort or failure that an operator can trigger SHALL produce both an audible indication and a message on the remote display.** A log line is not operator feedback.
+
+This is a requirement rather than a style note because the failure mode is specific and was hit repeatedly on target: a refusal that only beeps — or does nothing at all — is indistinguishable from an input that never registered. An operator cannot tell a flat battery from a dead link from a base that needs a power cycle, and the natural response to apparent non-response is to try again, which is the wrong instinct at a launch pad.
+
+Three consequences, all applied in firmware 1.1.4–1.1.6:
+
+1. **The base answers commands in ERROR** (§7.2.9) rather than discarding them, so the remote gets a reason instead of a timeout.
+2. **Timeouts are reported.** "No response" is itself a finding worth showing.
+3. **The FIRE guard family reports.** Arm key off, base not armed, stale status, degraded link, send failure, key-off-after-ACK and no-response each drop the remote to IDLE — previously in silence, with the operator holding a fire button and nothing happening.
 
 ### 6.4 Link Management
 

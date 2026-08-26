@@ -736,7 +736,36 @@ static void process_event(const rlc_fsm_event_t *evt)
 
     /* ─── ERROR ────────────────────────────────────────────── */
     case STATE_ERROR:
-        /* Intentionally unrecoverable — requires power cycle */
+        /* The state is intentionally unrecoverable — nothing here changes it,
+         * and no command is acted on. But commands are ANSWERED (2026-08-26).
+         *
+         * Until now this was a bare `break;`: every command was discarded
+         * without a reply, so the remote could only time out, and a timeout
+         * carries no reason. An operator saw a long-press do nothing, with no
+         * way to tell a dead link from a base needing a power cycle.
+         *
+         * All four commands get the same NACK. Answering a DISARM with a
+         * refusal may look odd when the base is already safe — relay_all_safe()
+         * ran on entry to ERROR — but "I am in ERROR" is the operative fact in
+         * every case, and it is what tells the operator a power cycle is
+         * required. Silently ACKing a disarm would say "all is well" about a
+         * unit that is out of service. */
+        switch (evt->type) {
+        case EVT_CMD_ARM:
+            send_nack(MSG_CMD_ARM, evt->data.cmd.seq_number, NACK_BASE_ERROR);
+            break;
+        case EVT_CMD_FIRE:
+            send_nack(MSG_CMD_FIRE, evt->data.cmd.seq_number, NACK_BASE_ERROR);
+            break;
+        case EVT_CMD_DISARM:
+            send_nack(MSG_CMD_DISARM, evt->data.cmd.seq_number, NACK_BASE_ERROR);
+            break;
+        case EVT_CMD_CEASE_FIRE:
+            send_nack(MSG_CMD_CEASE_FIRE, evt->data.cmd.seq_number, NACK_BASE_ERROR);
+            break;
+        default:
+            break;   /* local I/O, timers, link events — nothing to answer */
+        }
         break;
 
     default:
