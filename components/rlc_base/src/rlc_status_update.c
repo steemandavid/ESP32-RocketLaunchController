@@ -69,6 +69,14 @@ static void send_update(void)
     /* State machine state */
     p.base_state = base_state_get();
 
+    /* Test builds only: report IDLE while really in ERROR, so the remote's
+     * local ERROR guard stays quiet and an ARM actually reaches the base —
+     * the only way to exercise NACK_BASE_ERROR. error_flags below is left
+     * truthful on purpose. Compiles to nothing in a normal build. */
+    if (fault_inject_lie_state() && p.base_state == STATE_ERROR) {
+        p.base_state = STATE_IDLE;
+    }
+
     /* Error flags from the FSM */
     p.error_flags = base_state_get_error_flags();
 

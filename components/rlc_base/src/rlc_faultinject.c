@@ -12,6 +12,9 @@
 #warning "CONFIG_RLC_FAULT_INJECTION is ON - this firmware deliberately lies to the remote and is NOT safe for live use"
 
 #include "rlc_config.h"
+#include "rlc_base_fsm.h"
+#include "rlc_status_update.h"
+#include "rlc_fsm_events.h"
 
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
@@ -27,12 +30,21 @@ static const char *TAG = "rlc_fi";
  * FSM task. Single-writer, and each is a single machine word, so no lock is
  * needed — but they must not be cached. */
 static volatile bool    s_suppress_status = false;
+/* Report base_state as IDLE in STATUS_UPDATE while the base is really in
+ * ERROR. Keeps error_flags truthful, so the remote can still name the fault
+ * from its cache when the NACK arrives. */
+static volatile bool    s_lie_state       = false;
 static volatile bool    s_wrong_ch_armed  = false;
 static volatile uint8_t s_wrong_ch_last   = 0;
 
 bool fault_inject_suppress_status(void)
 {
     return s_suppress_status;
+}
+
+bool fault_inject_lie_state(void)
+{
+    return s_lie_state;
 }
 
 bool fault_inject_take_wrong_channel(uint8_t *ch)
@@ -62,7 +74,8 @@ static void print_state(void)
              s_suppress_status ? "ON - remote's cached status is ageing out" : "off");
     ESP_LOGW(TAG, "[FI] wrong-channel ARM ACK     : %s  (T-A13)",
              s_wrong_ch_armed  ? "ARMED - fires on the next ARM ACK"         : "off");
-    ESP_LOGW(TAG, "[FI] keys: s = suppression, a = wrong-channel, ? = this");
+    ESP_LOGW(TAG, "[FI] keys: s = suppression, a = wrong-channel, "
+                  "e = force ERROR w/ fresh cache, ? = this");
 }
 
 static void fi_console_task(void *arg)
@@ -83,6 +96,38 @@ static void fi_console_task(void *arg)
             s_wrong_ch_armed = true;
             ESP_LOGE(TAG, "INJECT: wrong-channel ARM ACK armed (T-A13)");
             print_state();
+            break;
+        case 'e':
+            /* Drive the base into ERROR while keeping the remote's cached
+             * status showing a healthy IDLE — the only way to exercise the
+             * NACK_BASE_ERROR (0x0E) path.
+             *
+             * The remote's local guard refuses to arm whenever its cached
+             * status says ERROR, so in normal operation it never sends the
+             * command and the base never gets to answer. The gap where the
+             * base is in ERROR but the remote does not yet know is real (the
+             * base can fail between status updates) but lasts under 100 ms,
+             * which is not a test.
+             *
+             * Rather than suppressing status and racing a 4 s freshness
+             * window — which is a race, not a test — this falsifies
+             * base_state to IDLE in every subsequent STATUS_UPDATE. The
+             * remote's cache stays fresh and healthy-looking indefinitely, so
+             * it will send an ARM whenever the operator asks, with no time
+             * pressure. error_flags is left TRUTHFUL, so when the NACK comes
+             * back the remote can still name the actual fault from its
+             * cache — which is the behaviour under test. */
+            s_lie_state = true;
+            if (base_fsm_get_queue()) {
+                rlc_fsm_event_t ev = {0};
+                ev.type = EVT_BATTERY_CRITICAL;   /* existing terminal path */
+                (void)xQueueSend(base_fsm_get_queue(), &ev, pdMS_TO_TICKS(10));
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+            status_update_trigger();
+            ESP_LOGE(TAG, "INJECT: base forced to ERROR; STATUS_UPDATE keeps "
+                          "reporting IDLE so the remote will still send ARM "
+                          "-> NACK 0x0E. No time limit.");
             break;
         case '?':
             print_state();

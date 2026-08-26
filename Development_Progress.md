@@ -807,6 +807,8 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 | T-A16 | Disconnect the igniter on the armed channel while ARMED → disarm within ~1 s | **PASS** 2026-08-26 (920 ms detect, disarm +20 ms) |
 | T-A17 | Disconnect the igniter on the armed channel during the PRE_FIRE countdown → abort, no pulse | **PASS** 2026-08-26 (needed PRE_FIRE at 10 s; an igniter fired at 2 s) |
 | T-A18 | Disconnect a **non-armed** channel's igniter while another is ARMED → base stays ARMED | **PASS** 2026-08-26 (3 transitions, stayed ARMED) |
+| T-A19 | ARM while base is in terminal ERROR → NACK 0x0E, remote names the fault | **PASS** 2026-08-26 via `--inject` key `e` (`BASE ERROR: VBAT CRITICAL`) |
+| T-A20 | Every refusal reports audibly **and** on the display (§7.2.9a) | **PASS** 2026-08-26 (spot-checked: `BASE STATUS LOST`, `BASE DISARMED`, `BASE ERROR: <flag>`) |
 
 ### Phase 3 FSD Fire Tests (§15.3)
 
@@ -1395,6 +1397,7 @@ Build with `./build_base.sh flash --inject`. Console keys on UART0:
 |---|---|
 | `s` | toggle STATUS_UPDATE suppression (heartbeats untouched) — T-A11 |
 | `a` | arm a **one-shot** wrong-channel ARM ACK — T-A13 |
+| `e` | force the base into ERROR while STATUS_UPDATE keeps reporting IDLE — T-A19 |
 | `?` | print current injection state |
 
 **Four independent guards against a test build reaching the field**, because a

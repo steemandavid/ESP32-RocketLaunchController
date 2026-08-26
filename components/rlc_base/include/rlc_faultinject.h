@@ -27,6 +27,9 @@
  *
  *   s   toggle STATUS_UPDATE suppression      (T-A11)
  *   a   arm a one-shot wrong-channel ARM ACK  (T-A13)
+ *   e   force ERROR while leaving the remote's cached status fresh and
+ *       healthy — the only way to reach the NACK_BASE_ERROR (0x0E) path,
+ *       since the remote's local guard otherwise refuses to send the command
  *   ?   print current injection state
  */
 
@@ -59,10 +62,18 @@ bool fault_inject_suppress_status(void);
  */
 bool fault_inject_take_wrong_channel(uint8_t *ch);
 
+/**
+ * True while STATUS_UPDATE should report base_state as IDLE despite the base
+ * being in ERROR. `error_flags` stays truthful, so the remote can still name
+ * the fault from its cache once the NACK arrives.
+ */
+bool fault_inject_lie_state(void);
+
 #else  /* injection compiled out — these fold to nothing */
 
 static inline void fault_inject_init(void) { }
 static inline bool fault_inject_suppress_status(void) { return false; }
 static inline bool fault_inject_take_wrong_channel(uint8_t *ch) { (void)ch; return false; }
+static inline bool fault_inject_lie_state(void) { return false; }
 
 #endif /* CONFIG_RLC_FAULT_INJECTION */
