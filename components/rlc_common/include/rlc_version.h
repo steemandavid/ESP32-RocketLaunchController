@@ -12,7 +12,15 @@
  * changed on BOTH units, so the bump is deliberate: the strict version check
  * makes a half-flashed pair refuse to link rather than run mismatched safety
  * logic. Flash base and remote together. */
-/* 1.1.7 (2026-08-26): fire button ring LED reports state, not the button.
+/* 1.1.8 (2026-08-26): bug #30 — the continuity-loss disarm was edge-triggered
+ * with no level-triggered backstop, so an igniter going OPEN inside the
+ * arm-verify window (FSM still in STATE_IDLE, which does not handle the event)
+ * left the base ARMED on an open igniter with no edge left to report it. Two
+ * fixes: refuse the ARM at verify completion if the band has gone OPEN, and a
+ * periodic level check in check_timers() covering ARMED/PRE_FIRE that also
+ * catches an event dropped by a full FSM queue. Base-only.
+ *
+ * 1.1.7 (2026-08-26): fire button ring LED reports state, not the button.
  * It had driven red-while-held / green-while-released since Phase 2, so it
  * showed the operator's finger rather than whether a press would do anything.
  * Red now means the button is live: remote ARMED/PRE_FIRE/FIRING AND a fresh
@@ -56,5 +64,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  7
-#define RLC_VERSION_STRING "1.1.7"
+#define RLC_VERSION_PATCH  8
+#define RLC_VERSION_STRING "1.1.8"

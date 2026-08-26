@@ -430,6 +430,21 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* M1: Complete arm verification when sense goes HIGH */
             if (s_arm_verify_pending && evt->data.arm_state.armed) {
                 uint8_t ch = s_arm_verify_channel;
+
+                /* Bug #30: re-check continuity before completing the ARM.
+                 * guard_arm() checked it up to ARM_SENSE_VERIFY_TIMEOUT_MS ago
+                 * and the FSM has been sitting in STATE_IDLE since, where
+                 * EVT_CONTINUITY_CHANGED is not handled — so a disconnection
+                 * inside that window was dropped, and because the band has
+                 * already changed it will never be reported again. Refuse here
+                 * rather than arming and relying on an edge that has already
+                 * been consumed. */
+                if (continuity_get_channel(ch) == CONT_OPEN) {
+                    ESP_LOGW(TAG, "ARM aborted — ch %u went OPEN during arm verify", ch);
+                    abort_arm_verify(NACK_NO_CONTINUITY);
+                    return;
+                }
+
                 s_arm_verify_pending = false;
                 s_armed_channel = ch;
                 s_arm_time_ms = now_ms();
@@ -778,6 +793,35 @@ static void process_event(const rlc_fsm_event_t *evt)
 static void check_timers(void)
 {
     int64_t t = now_ms();
+
+    /* Bug #30: level-triggered backstop for the continuity-loss disarm.
+     *
+     * EVT_CONTINUITY_CHANGED is edge-triggered — continuity_task posts once,
+     * on the transition. Any edge that is lost or arrives at the wrong moment
+     * silently removes the protection, because the band has already changed
+     * and will never be reported again. Two such cases exist: an event posted
+     * during the arm-verify window, when the FSM is still in STATE_IDLE and
+     * does not handle it; and an event dropped because the FSM queue was full
+     * (on_io_change() logs, but cannot regenerate it).
+     *
+     * Re-reading the level cannot miss an edge. If the armed channel is OPEN
+     * it is OPEN on every tick until something changes it, so this converges
+     * within one 50 ms tick of any missed event.
+     *
+     * The event path stays the fast detector; this is the backstop. An
+     * edge-triggered safety monitor should always have one.
+     *
+     * Scoped exactly as armed_channel_went_open(): ARMED and PRE_FIRE only.
+     * NOT FIRING (the relay is on NO, so the sense line reads OPEN by design)
+     * and NOT POST_FIRE (where OPEN means the igniter fired). */
+    if ((s_state == STATE_ARMED || s_state == STATE_PRE_FIRE) &&
+        s_armed_channel != 0 &&
+        continuity_get_channel(s_armed_channel) == CONT_OPEN) {
+        ESP_LOGW(TAG, "Continuity OPEN on armed ch %u (level backstop) — disarm",
+                 s_armed_channel);
+        do_disarm();
+        return;   /* state is now IDLE; the rest of this pass does not apply */
+    }
 
     /* M1: Arm sense verification timeout */
     if (s_arm_verify_pending && s_arm_verify_start_ms > 0) {

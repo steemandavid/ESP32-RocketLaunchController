@@ -100,10 +100,17 @@ completion paths, re-read the current band rather than waiting for a change:
 if (continuity_get_channel(ch) == CONT_OPEN) { /* refuse / disarm */ }
 ```
 
-A level check on entry closes the verify-window race *and* the dropped-event
-case, and is robust to any future missed edge. The event-driven path remains
-the fast detector; the level check is the backstop. **An edge-triggered safety
-monitor should always have one.**
+A level check on entry closes the verify-window race. The event-driven path
+remains the fast detector; the level check is the backstop. **An edge-triggered
+safety monitor should always have one.**
+
+> **Correction (applied during the fix).** An earlier draft of this section
+> claimed an entry check also closes the dropped-event case. It does not: a
+> queue-full drop while *already* ARMED happens after entry, so nothing
+> re-examines it. Closing that requires a **periodic** level check while in
+> ARMED/PRE_FIRE, which is what was implemented — in `check_timers()`, every
+> ~50 ms. The entry check and the periodic check cover different halves; both
+> were needed.
 
 ---
 
