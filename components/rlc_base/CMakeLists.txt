@@ -10,6 +10,7 @@ if(CONFIG_RLC_UNIT_BASE)
         "src/rlc_continuity.c"
         "src/rlc_base_battery.c"
         "src/rlc_status_update.c"
+        "src/rlc_faultinject.c"
     )
 else()
     set(BASE_SRCS "")

@@ -26,6 +26,7 @@
 
 /* Phase 2 headers */
 #include "rlc_continuity.h"
+#include "rlc_faultinject.h"
 #include "rlc_arm_sense.h"
 #include "rlc_base_battery.h"
 #include "rlc_status_update.h"
@@ -198,6 +199,11 @@ void base_app_main(void)
     base_battery_start_task();
     /* Priority 3 — STATUS_UPDATE generation */
     status_update_start_task();
+
+    /* Test builds only — compiles to nothing otherwise. Started after the
+     * tasks it interferes with, so its banner is the last thing on the console
+     * and cannot scroll past unnoticed. */
+    fault_inject_init();
 
     /* §9.13 Step 10: Begin link establishment */
     if (rlc_link_init(RLC_LINK_ROLE_BASE, remote_mac) != 0) {

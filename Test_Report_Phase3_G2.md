@@ -41,16 +41,16 @@ to act inside — the direct cause of the countdown change.
 | T-A08 | Rotate encoder while armed | **PASS** | Remote sent `CMD_DISARM`; operator confirmed channel selection advanced to CH2 |
 | T-A09 | Bands visible with key in SAFE | **PASS** | ch1 206 mV CONN, ch2 215 mV CONN, ch3 268 mV MARG, ch4-8 969 mV OPEN, all with key SAFE. Band list in the FSD corrected — see §3.2 |
 | T-A10 | ARM with arm sense fault | **PASS** | `arm verify started` with no sense confirmation → `arm sense verify timeout (200 ms)` → `NACK reason=0x0b (ARM SENSE FAULT)` |
-| T-A11 | ARM with stale STATUS_UPDATE | **DEFERRED** | Not externally inducible — see §5 |
+| T-A11 | ARM with stale STATUS_UPDATE | **PASS** | Via `--inject`. Remote: `ARM rejected: stale STATUS_UPDATE` + `[TOAST] NO BASE STATUS DATA`; base: **zero** ARM frames — see §5 |
 | T-A12 | ARM with low remote battery | **PASS** | Remote at 6.8 V (between MIN_OPERATE 6600 and MIN_ARM 7000). Zero ARM frames reached the base; display "REMOTE BATTERY LOW" |
-| T-A13 | Wrong channel in CMD_ACK | **DEFERRED** | Not externally inducible — see §5 |
+| T-A13 | Wrong channel in CMD_ACK | **PASS** (after a 1.1.5 fix) | Via `--inject`. Base ACKed ch5 for a ch4 request; remote detected, toasted `CHANNEL MISMATCH ERROR`, commanded disarm; relay out 190 ms after the bad ACK — see §5 |
 | T-A14 | ARM with MARGINAL continuity | **PASS** | `IDLE -> ARMED (ch 3)` with ch3 at 269000 µV = MARGINAL. Note: the 68 Ω test load sits only 8 mV above the 261 mV threshold with 5 mV hysteresis — a valid MARGINAL but close to the boundary |
 | T-A15 | ARM with SHORT continuity | **N/A** | Band no longer exists — see §3.3 |
 | T-A16 | Disconnect armed igniter while ARMED | **PASS** | Band change and `Continuity OPEN on armed ch 1 during ARMED — disarm` in the **same millisecond**; IDLE at +20 ms; relay physically out at +170 ms. Detection latency 920 ms from arming, within the predicted ~800 ms round-robin window |
 | T-A17 | Disconnect armed igniter during PRE_FIRE | **PASS** | `Continuity OPEN on armed ch 1 during PRE_FIRE — abort`, no `Fire timer started`. A repeat `CMD_FIRE` arriving 40 ms later was NACKed `WRONG STATE`, proving the fire button was still held |
 | T-A18 | Disconnect a NON-armed channel while armed | **PASS** | Three ch2 band transitions while ch1 armed; base stayed ARMED throughout and ended only on the 10 s arm timeout. No `Continuity OPEN on armed ch 1` anywhere |
 
-**Totals: 14 PASS / 0 FAIL / 2 N/A / 2 DEFERRED out of 18.**
+**Totals: 16 PASS / 0 FAIL / 2 N/A out of 18.** (T-A05 and T-A15 are not runnable as written — see §3.)
 
 ### 1.1 Safety tests demonstrated incidentally
 
@@ -150,23 +150,78 @@ post-fire continuity read OPEN, the spent-igniter indication of §7.3.1.
 
 ---
 
-## 5. Deferred — T-A11 and T-A13 need a fault-injection harness
+## 5. T-A11 and T-A13 — closed with a fault-injection harness
 
-Neither is inducible from outside the firmware.
+Neither test is inducible from outside the firmware. **T-A11**: link loss trips
+at 3 missed pings (1.5 s), long before the staleness timeout, so interfering
+with the radio produces LINK_LOST, never "linked but stale". **T-A13**: nothing
+in normal operation emits a malformed ACK.
 
-- **T-A11 (stale STATUS_UPDATE):** link loss triggers at 1.5 s, well before the
-  5 s staleness timeout, so a stale-but-linked state cannot be produced by
-  interfering with the radio. Note the FSD says ">4s" while
-  `STATUS_STALE_TIMEOUT_MS` is 5000 — a minor drift worth reconciling.
-- **T-A13 (wrong channel in CMD_ACK):** requires the base to emit a malformed
-  ACK.
+Both injections are base-side. `CONFIG_RLC_FAULT_INJECTION` (default off, base
+only, `./build_base.sh --inject`) adds a UART0 console: `s` toggles
+STATUS_UPDATE suppression while heartbeats continue, `a` arms a one-shot
+wrong-channel ARM ACK, `?` prints state. Four independent guards keep a test
+build from being mistaken for a real one — a compile `#warning`, a boot banner,
+a flash-time warning, and `sdkconfig.base` never being modified — plus a build
+failure if the option did not reach the built config, and an automatic clean
+when switching modes.
 
-Both injections are **base-side only**: suppressing STATUS_UPDATE while
-continuing to answer PINGs reproduces T-A11 exactly, and emitting the next ARM
-ACK with a wrong channel reproduces T-A13. Agreed approach: a
-`CONFIG_RLC_FAULT_INJECTION` Kconfig option defaulting to off, driven over the
-base's UART, with a boot banner and a `#warning` so an injection build cannot be
-mistaken for a real one.
+### 5.1 T-A11 — PASS
+
+Suppression on, 10 s elapsed (past both the 4000 ms `is_status_fresh()` window
+and the 5000 ms `STATUS_STALE_TIMEOUT_MS`), link still healthy:
+
+```
+REMOTE  W rlc_rfsm: ARM rejected: stale STATUS_UPDATE
+REMOTE  I rlc_disp: [TOAST] NO BASE STATUS DATA
+BASE      0 ARM frames
+```
+
+**The FSD's expected text was wrong.** It specified `DATA STALE — CANNOT ARM`;
+no build has ever displayed that. Corrected to the actual (and clearer) message
+in v1.38.
+
+### 5.2 T-A13 — PARTIAL, then PASS after a 1.1.5 fix
+
+First run: the safety behaviour was entirely correct — base ACKed ch5 for a ch4
+request, the remote refused to enter ARMED and commanded a disarm, relay out
+190 ms later — but **the display showed nothing**. The mismatch branch logged,
+beeped and disarmed without ever toasting. Same defect class as the ACK-timeout
+path fixed in 1.1.4: a failure that beeps without saying why, leaving an
+operator with a base that briefly armed a channel nobody selected and no
+explanation.
+
+Fixed in **1.1.5**; retest passes end to end:
+
+```
+BASE    INJECT: ARM ACK channel 4 -> 5
+BASE    ACK sent: type=0x20 ch=5 seq=225
+REMOTE  ARM ACK channel mismatch
+REMOTE  [TOAST] CHANNEL MISMATCH ERROR
+BASE    ACK sent: type=0x21 ch=4 seq=226      (remote's CMD_DISARM)
+BASE    DISARMED -> IDLE                       (30 ms after the bad ACK)
+BASE    arm sense: DISARMED                    (190 ms)
+```
+
+### 5.3 Two harness bugs, both of which masqueraded as firmware failures
+
+Recorded because the failure mode is instructive.
+
+1. **`idf.py set-target` regenerates `sdkconfig` from defaults**, discarding a
+   `CONFIG_RLC_FAULT_INJECTION=y` appended before it. The result was a *normal*
+   build wearing an injection build's log messages, and T-A11 "failed" because
+   nothing was being suppressed. The option is now appended after `set-target`
+   and verified in the built config before flashing.
+2. **Stack overflow in `fi_console`** (3072 bytes, insufficient for ESP-IDF
+   stdio). The first `printf` from the task rebooted the base, silently clearing
+   every injection flag. The boot banner survived because it runs on
+   `app_main`'s larger stack — which made the harness look healthy. Raised to
+   8192 and moved to `ESP_LOG`.
+
+Both presented as a T-A11 firmware failure: the base was rebooting (`rst:0xc`)
+between the injection command and the arm attempt, so suppression was off and
+the arm correctly succeeded. **When an injection test fails, check the injection
+before the firmware.**
 
 ---
 
@@ -218,7 +273,8 @@ Before G3 fire testing:
 1. ~~Verify the 1.1.4 silent-failure fix on target~~ — **DONE 2026-08-26:
    operator confirmed the triple beep and `BASE ERROR: VBAT CRITICAL` toast
    where the long-press had previously been silent (§2).**
-2. **Build the fault-injection harness** and close T-A11 and T-A13 (§5).
+2. ~~Build the fault-injection harness and close T-A11 and T-A13~~ — **DONE,
+   both PASS (§5).**
 3. ~~Run the siren bench tests~~ — **DONE, all six PASS (§6). N2 closed.**
 4. Note that **channels 2-8 have still never been fired**. Channel 1 has now
    fired once, unplanned, and the whole chain worked.

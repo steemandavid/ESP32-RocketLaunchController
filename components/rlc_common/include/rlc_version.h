@@ -12,7 +12,12 @@
  * changed on BOTH units, so the bump is deliberate: the strict version check
  * makes a half-flashed pair refuse to link rather than run mismatched safety
  * logic. Flash base and remote together. */
-/* 1.1.4 (2026-08-26): remote no longer fails silently when an ARM cannot be
+/* 1.1.5 (2026-08-26): remote now displays "CHANNEL MISMATCH ERROR" when the
+ * base ACKs an ARM for a channel the operator did not select. The disarm and
+ * the triple beep were already correct; only the message was missing. Found by
+ * T-A13 once the fault-injection harness could produce a malformed ACK.
+ *
+ * 1.1.4 (2026-08-26): remote no longer fails silently when an ARM cannot be
  * granted. New guard refuses locally (naming the flag) when the cached status
  * shows the base in ERROR — the base's ERROR handler is inert and NACKs
  * nothing, so the remote had been timing out into the one failure path that
@@ -33,5 +38,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  4
-#define RLC_VERSION_STRING "1.1.4"
+#define RLC_VERSION_PATCH  5
+#define RLC_VERSION_STRING "1.1.5"

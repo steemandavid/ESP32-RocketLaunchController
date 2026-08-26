@@ -4,6 +4,9 @@
 # Usage:
 #   ./build_base.sh          # build only
 #   ./build_base.sh flash    # build + flash (default PORT below; override with -p <by-id>)
+#   ./build_base.sh flash --inject   # TEST ONLY: build with the fault injection
+#                                    # console (FSD T-A11/T-A13). Deliberately
+#                                    # lies to the remote — reflash normally after.
 #   ./build_base.sh -p PORT  # build and flash to custom port
 
 set -euo pipefail
@@ -19,11 +22,13 @@ PORT="/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00"   # base COM
 
 # Parse args
 DO_FLASH=false
+DO_INJECT=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         flash)    DO_FLASH=true ;;
+        --inject) DO_INJECT=true ;;
         -p)       shift; PORT="$1" ;;
-        *)        echo "Usage: $0 [flash] [-p PORT]"; exit 1 ;;
+        *)        echo "Usage: $0 [flash] [--inject] [-p PORT]"; exit 1 ;;
     esac
     shift
 done
@@ -36,6 +41,30 @@ echo "=== Building BASE unit ==="
 # Install base sdkconfig as the active one
 cp "$SDKCONFIG_BASE" "$SCRIPT_DIR/sdkconfig"
 
+# --inject: TEST-ONLY build with the fault injection console (FSD T-A11/T-A13).
+# Appended to the working copy only — sdkconfig.base is never modified, so the
+# option cannot leak into a later normal build. A build dir configured the other
+# way is wiped, because Kconfig changes do not always force a full reconfigure
+# and a stale one would silently produce the wrong firmware.
+INJECT_MARK="$SCRIPT_DIR/.build_base_inject"
+if $DO_INJECT; then
+    if [ ! -f "$INJECT_MARK" ] && [ -d "$BUILD_DIR" ]; then
+        echo "Switching to FAULT INJECTION build — cleaning build_base/"
+        rm -rf "$BUILD_DIR"
+    fi
+    touch "$INJECT_MARK"
+    echo
+    echo "***********************************************************"
+    echo "*  BUILDING WITH FAULT INJECTION - NOT SAFE FOR LIVE USE   *"
+    echo "*  Reflash a normal build (./build_base.sh flash) after.   *"
+    echo "***********************************************************"
+    echo
+elif [ -f "$INJECT_MARK" ]; then
+    echo "Previous build had FAULT INJECTION — cleaning build_base/"
+    rm -rf "$BUILD_DIR"
+    rm -f "$INJECT_MARK"
+fi
+
 # Clean build dir if it was previously configured as remote
 if [ -f "$BUILD_DIR/config/sdkconfig.h" ]; then
     CURRENT_ROLE=$(grep "CONFIG_RLC_UNIT_" "$BUILD_DIR/config/sdkconfig.h" | grep "=1" || true)
@@ -47,7 +76,24 @@ fi
 
 # Configure and build
 idf.py -B "$BUILD_DIR" set-target esp32s3 2>&1 | tail -1
+
+# MUST come after set-target: that command regenerates sdkconfig from the
+# defaults, so anything appended earlier is silently discarded and you get a
+# normal build wearing an injection build's log messages.
+if $DO_INJECT; then
+    echo "CONFIG_RLC_FAULT_INJECTION=y" >> "$SCRIPT_DIR/sdkconfig"
+fi
+
 idf.py -B "$BUILD_DIR" build 2>&1 | grep -E "warning:|error:|Generated|build complete" || true
+
+# Fail loudly rather than flashing a build that silently lacks the option.
+if $DO_INJECT; then
+    if ! grep -q "define CONFIG_RLC_FAULT_INJECTION 1" "$BUILD_DIR/config/sdkconfig.h"; then
+        echo "ERROR: --inject requested but CONFIG_RLC_FAULT_INJECTION is not in the built config!"
+        exit 1
+    fi
+    echo "Verified: CONFIG_RLC_FAULT_INJECTION is ON in the built config"
+fi
 
 # Verify the binary contains base_app_main
 NM=$(find ~/.espressif/tools/xtensa-esp-elf -name "xtensa-esp32s3-elf-nm" 2>/dev/null | head -1)
@@ -67,6 +113,9 @@ cp "$BUILD_DIR/config/sdkconfig.h" "$SCRIPT_DIR/sdkconfig.base.resolved" 2>/dev/
 cp "$SDKCONFIG_REMOTE" "$SCRIPT_DIR/sdkconfig"
 
 if $DO_FLASH; then
+    if $DO_INJECT; then
+        echo "!! Flashing a FAULT INJECTION build — reflash a normal build afterwards !!"
+    fi
     echo "=== Flashing BASE to $PORT ==="
     python3 -m esptool --chip esp32s3 -p "$PORT" -b 460800 \
         --before default_reset --after hard_reset \

@@ -1,6 +1,6 @@
 # ESP32 Rocket Launch Controller — Changelog
 
-## 2026-08-26 — Hardware bugs closed, G2 arming suite passed, firmware 1.1.1 → 1.1.4
+## 2026-08-26 — Hardware bugs closed, G2 arming suite complete, firmware 1.1.1 → 1.1.5
 
 Hardware rework by the operator closed the last three open hardware defects.
 Two firmware changes followed from testing the result.
@@ -295,13 +295,66 @@ the ROM banner still reaches UART0 so the monitor shows repeated
 `rst:0x1 (POWERON)` while nothing the app prints ever arrives. Documented in the
 tool README so the next tool in this repo doesn't repeat it.
 
+### Fault-injection harness — T-A11 and T-A13 closed (firmware 1.1.5)
+
+The last two arming tests could never be run: neither is inducible from outside
+the firmware. Link loss trips at 3 missed pings (1.5 s), long before the
+staleness timeout, so no amount of interfering with the radio produces "linked
+but stale" — it produces LINK_LOST. And nothing in normal operation emits a
+malformed ACK.
+
+Both injections turned out to be base-side, which kept the harness small.
+`CONFIG_RLC_FAULT_INJECTION` (default off, base only, `./build_base.sh
+--inject`) adds a UART0 console: `s` withholds STATUS_UPDATE while heartbeats
+keep flowing, `a` corrupts the channel of one ARM ACK, `?` prints state.
+
+**Four independent guards** keep a build that deliberately lies to the remote
+from being mistaken for a real one: a compile `#warning`, a boot banner plus an
+`ESP_LOGE`, a flash-time warning, and `sdkconfig.base` never being modified.
+The build script also cleans the build directory when switching modes and
+**fails the build** if the option did not actually reach the built config.
+
+**T-A11 PASS** — remote refused locally (`NO BASE STATUS DATA`) with zero ARM
+frames on the wire. The FSD's expected text (`DATA STALE — CANNOT ARM`) was
+wrong; no build has ever shown it. Corrected.
+
+**T-A13 PARTIAL, then PASS.** The safety behaviour was right first time: the
+base ACKed ch5 for a ch4 request, the remote refused to arm and commanded a
+disarm, relay out 190 ms later. But the display showed **nothing** — the
+mismatch branch beeped without saying why, leaving an operator with a base that
+had briefly armed a channel nobody selected and no explanation. Same defect
+class as the ACK-timeout path fixed earlier today. Fixed in 1.1.5; retest passes
+end to end.
+
+**G2 is now 16 PASS / 0 FAIL / 2 N/A.**
+
+### Two harness bugs that masqueraded as firmware failures
+
+Worth recording, because both produced a convincing false negative.
+
+1. **`idf.py set-target` regenerates `sdkconfig` from the defaults**, discarding
+   the option appended before it — producing a *normal* build wearing an
+   injection build's log messages. T-A11 duly "failed" because nothing was
+   being suppressed. The option is now appended after `set-target`, and the
+   script verifies it reached `build_base/config/sdkconfig.h` before flashing.
+2. **Stack overflow in `fi_console`** — 3072 bytes is not enough for ESP-IDF
+   stdio. The first `printf` from the task rebooted the base, silently clearing
+   every injection flag. The boot banner survived only because it runs on
+   `app_main`'s much larger stack, which made the harness look healthy. Raised
+   to 8192 and moved to `ESP_LOG`.
+
+Both presented identically: the base was rebooting (`rst:0xc`) between the
+injection command and the arm attempt, so suppression was off by the time the
+operator armed and the arm correctly succeeded. **When an injection test fails,
+check the injection before the firmware.**
+
+The base was reflashed with a normal build afterwards, verified two ways: no
+`CONFIG_RLC_FAULT_INJECTION` in the built config, and zero injection symbols in
+the ELF.
+
 ### Still owed
 
-- **T-A11 and T-A13** — the last two G2 tests. Neither is inducible from outside
-  the firmware, so a `CONFIG_RLC_FAULT_INJECTION` harness is agreed: both
-  injections are base-side (suppress STATUS_UPDATE while still answering PINGs
-  for T-A11; emit the next ARM ACK with a wrong channel for T-A13), driven over
-  the base UART, defaulting off with a boot banner and a `#warning`.
+- ~~T-A11 and T-A13~~ — **DONE, both PASS.**
 - **G3 fire testing (T-F01…T-F09).** Channels 2–8 have never been fired.
   Channel 1 has now fired once, unplanned, and the whole chain worked.
 - **Bug #24 — no rail clamp on the base.** Unchanged this session, and the

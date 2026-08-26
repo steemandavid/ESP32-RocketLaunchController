@@ -13,6 +13,7 @@
 #include "rlc_link.h"
 #include "rlc_config.h"
 #include "rlc_watchdog.h"
+#include "rlc_faultinject.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -32,6 +33,16 @@ void status_update_trigger(void)
 static void send_update(void)
 {
     if (!rlc_link_is_linked()) {
+        return;
+    }
+
+    /* T-A11 injection. Deliberately AFTER the is_linked() check and inside
+     * this function only: heartbeats live in the link task and are untouched,
+     * so the link stays healthy while the remote's cached status ages past
+     * STATUS_STALE_TIMEOUT_MS. That "linked but stale" state is exactly what
+     * T-A11 needs and is unreachable any other way — jamming the radio trips
+     * link loss at 1.5 s instead. Compiles to nothing in a normal build. */
+    if (fault_inject_suppress_status()) {
         return;
     }
 

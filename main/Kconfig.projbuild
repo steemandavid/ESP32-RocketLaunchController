@@ -17,6 +17,22 @@ menu "Rocket Launch Controller"
                 Build firmware for the remote (operator) unit.
     endchoice
 
+    config RLC_FAULT_INJECTION
+        bool "Fault injection console (TEST BUILDS ONLY - base unit)"
+        default n
+        depends on RLC_UNIT_BASE
+        help
+            Adds a UART0 console that can deliberately withhold STATUS_UPDATE
+            and emit a wrong channel in an ARM ACK, to exercise FSD tests
+            T-A11 and T-A13. Neither can be induced from outside the firmware:
+            link loss trips at 1.5 s, well before the 5 s staleness timeout, so
+            "linked but stale" is unreachable by interfering with the radio;
+            and nothing in normal operation emits a malformed ACK.
+
+            A firmware built with this option DELIBERATELY LIES TO THE REMOTE
+            and is NOT SAFE FOR LIVE USE. The build emits a #warning and the
+            running firmware prints a banner at boot. Leave this off.
+
     config RLC_SERIAL_DEBUG_LOGGING
         bool "Enable serial debug logging"
         default y

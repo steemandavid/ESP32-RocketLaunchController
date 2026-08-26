@@ -510,7 +510,7 @@ They should be verified before Phase 3 work begins, or during Phase 5 hardening.
 ## Phase 3 — State Machines and Command Processing
 
 **FSD ref:** §4.3 Phase 3, §7 (Base FSM), §8 (Remote FSM), §6.3 (Commands)
-**Status:** G2 ARMING SUITE COMPLETE 2026-08-26 — 14 PASS, 0 FAIL, 2 N/A (T-A05, T-A15), 2 deferred to a fault-injection harness (T-A11, T-A13). See `Test_Report_Phase3_G2.md`. Earlier status below is historical. ON-TARGET TESTING RESUMING (channel 1 only) — G1 partial (T-R04 PASS, T-R05 SKIP/code-reviewed, T-R06 pending). Blocker resolved 2026-07-21: base ESP32 chip #3 installed (MAC `44:1B:F6:D4:0D:68`), hardware protection fitted on **channel 1** (clamping diodes on the ADC input + snubber across the relay contact; channels 2–8 still unprotected — test channel 1 ONLY), software relay-order fix already in place. Both units reflashed; G0 re-verified with chip #3 (LINK_ACK, rssi=-35). Next: G2 arming (T-A01..T-A18) then G3 fire (T-F01..T-F09), now on any channel — see the 2026-08-26 entries.
+**Status:** G2 ARMING SUITE COMPLETE 2026-08-26 — **16 PASS, 0 FAIL, 2 N/A** (T-A05 unreachable by design, T-A15 band merged away). T-A11 and T-A13 closed with the new `CONFIG_RLC_FAULT_INJECTION` harness. See `Test_Report_Phase3_G2.md`. Earlier status below is historical. ON-TARGET TESTING RESUMING (channel 1 only) — G1 partial (T-R04 PASS, T-R05 SKIP/code-reviewed, T-R06 pending). Blocker resolved 2026-07-21: base ESP32 chip #3 installed (MAC `44:1B:F6:D4:0D:68`), hardware protection fitted on **channel 1** (clamping diodes on the ADC input + snubber across the relay contact; channels 2–8 still unprotected — test channel 1 ONLY), software relay-order fix already in place. Both units reflashed; G0 re-verified with chip #3 (LINK_ACK, rssi=-35). Next: G2 arming (T-A01..T-A18) then G3 fire (T-F01..T-F09), now on any channel — see the 2026-08-26 entries.
 
 ### Phase 3 Architecture
 
@@ -799,9 +799,9 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 | T-A08 | Rotate encoder while armed → disarm | **PASS** 2026-08-26 (channel advanced to CH2) |
 | T-A09 | Continuity bands visible with arm switch OFF | **PASS** 2026-08-26 (band list corrected — no SHORT band) |
 | T-A10 | ARM with arm relay sense fault → NACK 0x0B | **PASS** 2026-08-26 (200 ms verify timeout) |
-| T-A11 | ARM with stale STATUS_UPDATE | **DEFERRED** — not externally inducible; needs fault-injection harness |
+| T-A11 | ARM with stale STATUS_UPDATE | **PASS** 2026-08-26 via `--inject` (`NO BASE STATUS DATA`, zero ARM frames) |
 | T-A12 | ARM with low remote battery | **PASS** 2026-08-26 (remote at 6.8 V, no ARM traffic) |
-| T-A13 | Verify channel in CMD_ACK | **DEFERRED** — not externally inducible; needs fault-injection harness |
+| T-A13 | Verify channel in CMD_ACK | **PASS** 2026-08-26 via `--inject` (after the 1.1.5 fix added the missing toast) |
 | T-A14 | ARM with MARGINAL continuity → succeeds (warning) | **PASS** 2026-08-26 (ch3, 269000 uV) |
 | T-A15 | ARM with SHORT continuity → succeeds (informational) | **N/A** — SHORT band merged into CONNECTED 2026-08-21 (bug #26); not runnable, see FSD v1.37 |
 | T-A16 | Disconnect the igniter on the armed channel while ARMED → disarm within ~1 s | **PASS** 2026-08-26 (920 ms detect, disarm +20 ms) |
@@ -1370,6 +1370,76 @@ the rail; the clamp now covers the multi-channel case.
 channel other than 1 has been fired on this hardware. Treat the first shot on
 each channel as a test, not a routine firing — and see bug #28, which blocks
 fire testing entirely for now.
+
+---
+
+### Fault-Injection Harness — `CONFIG_RLC_FAULT_INJECTION` (2026-08-26)
+
+Two arming tests could never be run: **T-A11** (ARM with a stale
+STATUS_UPDATE) and **T-A13** (wrong channel in CMD_ACK). Neither is inducible
+from outside the firmware.
+
+- **T-A11.** Link loss trips at 3 missed pings (1.5 s), long before the
+  staleness timeout, so jamming or shielding the radio produces LINK_LOST —
+  never "linked but stale". The only way to reach that state is for the base to
+  keep answering PINGs while withholding STATUS_UPDATE.
+- **T-A13.** Nothing in normal operation emits a malformed ACK.
+
+Both injections are therefore **base-side**, and both live in
+`components/rlc_base/src/rlc_faultinject.c`, compiled only when
+`CONFIG_RLC_FAULT_INJECTION` is set (default **off**, base only).
+
+Build with `./build_base.sh flash --inject`. Console keys on UART0:
+
+| Key | Effect |
+|---|---|
+| `s` | toggle STATUS_UPDATE suppression (heartbeats untouched) — T-A11 |
+| `a` | arm a **one-shot** wrong-channel ARM ACK — T-A13 |
+| `?` | print current injection state |
+
+**Four independent guards against a test build reaching the field**, because a
+firmware that deliberately lies to the remote must not be mistakable for a real
+one: a `#warning` on every compile, a boot banner plus an `ESP_LOGE`, a flash-time
+warning from the build script, and `--inject` never touching `sdkconfig.base`
+(the option is appended to the working copy only). The script also **cleans the
+build directory when switching in or out of injection mode**, and **fails the
+build** if `CONFIG_RLC_FAULT_INJECTION` did not actually reach the built config.
+
+**Design notes worth keeping:**
+
+- **The one-shot channel corruption is deliberate.** A sticky version would
+  also corrupt the DISARM ACK the remote sends in response, and that two-fault
+  interaction is not what T-A13 tests.
+- **The corrupted channel is kept inside 1..NUM_CHANNELS.** An out-of-range
+  value might be rejected by a bounds check before the mismatch check ever
+  runs, testing the wrong thing.
+- **The suppression hook sits inside `send_update()`**, after the
+  `rlc_link_is_linked()` check. Heartbeats live in the link task and are
+  untouched, so the link stays healthy while the remote's cache ages out. The
+  post-handshake status push (`rlc_link_set_status_request_cb`) routes through
+  `status_update_trigger()` → the same `send_update()`, so it is suppressed too
+  — there is no second path that would silently defeat the injection.
+
+**Two harness bugs found while bringing it up, both worth recording:**
+
+1. **`idf.py set-target` regenerates `sdkconfig` from the defaults**, discarding
+   anything appended before it. The first version appended
+   `CONFIG_RLC_FAULT_INJECTION=y` too early, so it produced a *normal* build
+   wearing an injection build's log messages — and T-A11 duly "failed" because
+   nothing was being suppressed. The option is now appended **after**
+   `set-target`, and the script verifies it landed in `build_base/config/sdkconfig.h`
+   before flashing.
+2. **Stack overflow in `fi_console`.** 3072 bytes was not enough for ESP-IDF's
+   stdio; the first `printf` from the task overflowed and rebooted the base,
+   silently clearing every injection flag. The boot banner survived only
+   because it runs on `app_main`'s much larger stack, which made the harness
+   look functional. Raised to 8192 and `print_state()` moved to `ESP_LOG`.
+
+**Both bugs presented as a T-A11 firmware failure.** The base was rebooting
+(`rst:0xc` between the injection command and the arm attempt), so suppression
+was off by the time the operator armed, and the arm correctly succeeded. Worth
+remembering: **when an injection test fails, check the injection before the
+firmware.**
 
 ---
 

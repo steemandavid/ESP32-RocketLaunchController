@@ -24,6 +24,7 @@
 #include "rlc_rgb_led.h"
 #include "rlc_config.h"
 #include "rlc_watchdog.h"
+#include "rlc_faultinject.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -144,6 +145,15 @@ int base_fsm_start(void)
 
 static void send_ack(uint8_t msg_type, uint32_t seq_num, uint8_t channel)
 {
+    /* T-A13 injection: corrupt the channel of an ARM ACK so the remote's
+     * mismatch check has something to catch. Restricted to MSG_CMD_ARM — that
+     * is the ACK the test names, and corrupting a DISARM ACK would instead
+     * exercise the remote's recovery path while it is already recovering.
+     * Compiles to nothing in a normal build. */
+    if (msg_type == MSG_CMD_ARM) {
+        (void)fault_inject_take_wrong_channel(&channel);
+    }
+
     rlc_payload_cmd_ack_t p = {0};
     p.acked_msg_type = msg_type;
     p.acked_sequence_number = seq_num;

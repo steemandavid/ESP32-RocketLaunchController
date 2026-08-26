@@ -585,10 +585,18 @@ static void process_event(const rlc_fsm_event_t *evt)
                 buzzer_play(BUZZER_BEEP_TRIPLE);
                 display_nack(rlc_nack_reason_str(nack_reason));
             } else if (result == -2) {
-                /* Channel mismatch */
+                /* Channel mismatch. The base ACKed a channel the operator did
+                 * not select, so we refuse to enter ARMED and tell it to stand
+                 * down — but say so on the display too. Found by T-A13 on
+                 * 2026-08-26 (fault-injection build): the disarm worked and the
+                 * relay dropped, yet the operator saw only a triple beep, with
+                 * a base that had briefly armed a channel nobody chose. That is
+                 * precisely the case that needs naming, and FSD §15.2 T-A13
+                 * expects it named. */
                 ESP_LOGE(TAG, "ARM ACK channel mismatch");
                 send_cmd_disarm(ch);
                 buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("CHANNEL MISMATCH ERROR");
             } else if (result == WAIT_FOR_ACK_STATE_HANDLED) {
                 /* R1: state already transitioned to LINK_LOST or ERROR — do nothing */
             } else {
