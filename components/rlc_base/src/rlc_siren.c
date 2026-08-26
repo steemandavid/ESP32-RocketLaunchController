@@ -31,9 +31,9 @@ static SemaphoreHandle_t s_siren_mu = NULL;
  * so a callback can be parked on siren_lock() while a task-context call
  * reconfigures the pattern underneath it. Two failures were reachable:
  *
- *   - siren_off() left s_pulse_count at -1 (infinite, from siren_start_pulse);
- *     the stale callback then toggled the output back ON with the timer
- *     stopped, so nothing ever turned it off again;
+ *   - siren_off() left s_pulse_count at -1 (infinite, from the old ARMED
+ *     pulse pattern); the stale callback then toggled the output back ON with
+ *     the timer stopped, so nothing ever turned it off again;
  *   - siren_start_continuous() sets s_pulse_count = 0, which the stale
  *     callback read as "pattern finished" and drove the siren OFF — silence
  *     through the whole 2 s PRE_FIRE countdown, the one moment the pad
@@ -41,7 +41,13 @@ static SemaphoreHandle_t s_siren_mu = NULL;
  *
  * Every start/stop path sets this flag under the mutex. It is true only while
  * a periodic pattern is genuinely running, so a callback left over from a
- * cancelled pattern sees false and returns without touching the output. */
+ * cancelled pattern sees false and returns without touching the output.
+ *
+ * 2026-08-26: the infinite (-1) pattern is gone with the ARMED pulse, so the
+ * first failure above is no longer reachable by construction. The flag stays:
+ * link-lost and error are still finite periodic patterns, and the second
+ * failure — a stale tick from either of them silencing a PRE_FIRE that now
+ * follows an already-continuous ARMED — is unchanged. */
 static bool s_timer_active = false;
 
 static void siren_lock(void)
@@ -113,7 +119,6 @@ void siren_init(void)
 
 /* Half-periods. A "cycle" is one ON half plus one OFF half, so a pattern of
  * N cycles at half-period H lasts N * 2 * H. */
-#define SIREN_PULSE_HALF_MS      500
 #define SIREN_LINK_LOST_HALF_MS  500
 #define SIREN_ERROR_HALF_MS      200
 
@@ -122,16 +127,10 @@ void siren_init(void)
 #define SIREN_LINK_LOST_CYCLES \
     (SIREN_LINK_LOST_DURATION_MS / (2 * SIREN_LINK_LOST_HALF_MS))
 
-void siren_start_pulse(void)
-{
-    siren_lock();
-    esp_timer_stop(s_siren_timer);
-    s_pulse_count = -1;  /* Infinite */
-    siren_drive(true);
-    esp_timer_start_periodic(s_siren_timer, SIREN_PULSE_HALF_MS * 1000);
-    s_timer_active = true;
-    siren_unlock();
-}
+/* siren_start_pulse() (500 ms on/off, infinite) was removed on 2026-08-26.
+ * ARMED now uses siren_start_continuous(): chopping the supply at 1 Hz
+ * restarted the siren's internal sweep every half-second and left it less
+ * audible, not more. */
 
 void siren_start_continuous(void)
 {
@@ -159,8 +158,9 @@ void siren_off(void)
     siren_lock();
     esp_timer_stop(s_siren_timer);
     s_timer_active = false;
-    /* N2: clear the cycle count too. Leaving it at -1 (from siren_start_pulse)
-     * is what let a stale callback toggle the siren back ON for good. */
+    /* N2: clear the cycle count too. Leaving it at -1 (as the removed
+     * infinite ARMED pulse left it) is what let a stale callback toggle the
+     * siren back ON for good. Finite patterns can still park a callback. */
     s_pulse_count = 0;
     siren_drive(false);
     siren_unlock();

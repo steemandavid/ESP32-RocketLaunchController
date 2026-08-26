@@ -27,8 +27,8 @@ at any point cuts current to the igniter — it is a dead-man switch, not a latc
 4. Operator flips the remote's physical **arm switch**.
 5. Operator **long-presses** the encoder (500 ms) to send the arm command.
 6. The base checks its guard conditions and energises the arm relay; the pad
-   siren starts pulsing.
-7. Operator **presses and holds fire** → 2 s pre-fire countdown, continuous siren.
+   siren sounds continuously and stays on for the rest of the sequence.
+7. Operator **presses and holds fire** → 2 s pre-fire countdown.
 8. Channel relay closes for a fixed 1 s fire pulse.
 9. Releasing the button at any time during 6–8 cuts power immediately.
 10. Relays de-energise, the system returns to idle, and continuity is re-checked
@@ -170,9 +170,19 @@ Known open items before any field use:
   relay, 2× 1N5819 clamps on every continuity sense pin, and a 217 Ω
   sense-branch resistor per channel. Channels 2–8 have nonetheless **never been
   fired** — treat the first shot on each as a test.
-- **Fire testing is on hold** pending bug #28: the base ARM RELAY LED lights with
-  the key switch in SAFE while the relay stays de-energised, which points at a
-  sneak path around one leg of the hardware AND gate.
+- **Fire testing is unblocked as of 2026-08-26.** Bug #28 (the base ARM RELAY
+  LED lighting with the key in SAFE) turned out to be indicator wiring, not the
+  hardware AND gate, and is fixed; a second indicator fault — the key-position
+  red and green LEDs lighting simultaneously in SAFE — was fixed at the same
+  time. All three arm LEDs now report correctly. Re-verify the AND gate at the
+  node before the first shot, since the indicator wiring was just reworked.
+- **The base siren is now driven** (bug #27): IRLZ44N on GPIO 40 with its gate
+  resistor, pull-down and a 1N5819 flyback diode. The pad has an audible warning
+  for the first time. It sounds **continuously** from ARMED through PRE_FIRE and
+  FIRING as of firmware 1.1.2 — the old 500 ms ARMED pulse fought the siren's own
+  internal modulation and came out quieter than a steady tone. The siren bench
+  retests that close review finding N2 have **not** been run yet, and the 1 A
+  diode is correctly rated only if the siren draws under 1 A — measure it once.
 - **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
   ever specified. Protection is firmware-only, and the ERROR state halts
   operation without disconnecting the load — so a unit left switched on, or one
@@ -196,11 +206,13 @@ Known open items before any field use:
   offer no protection against anyone who has read the source. Only the replay
   protection, whose session token is random per link-up, still holds. The keys
   need rotating **and** moving out of tracked files before field use.
-- The base's NeoPixel strip has a **dead pixel at channel 4** (bug #19): the
-  fourth LED in the data chain no longer forwards data, so channels 4–8 are
-  unusable on that unit. Channels 1–3 and the whole remote strip are fine. The
-  fix is to reflow or replace that LED. `tools/strip-diag/` is a standalone
-  bring-up firmware for diagnosing this class of fault.
+- ~~The base's NeoPixel strip has a dead pixel (bug #19)~~ **Fixed 2026-08-26**
+  by replacing the strip; all eight pixels respond. The real fault was the
+  **third** LED's output stage: it rendered its own colour correctly but stopped
+  forwarding data, which is why the break looked like it was at pixel 4. A pixel
+  that lights is not evidence that it is passing data — probe DOUT.
+  `tools/strip-diag/` is a standalone bring-up firmware for diagnosing this
+  class of fault.
 
 ## Documentation
 

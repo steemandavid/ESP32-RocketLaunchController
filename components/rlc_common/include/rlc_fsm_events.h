@@ -33,6 +33,7 @@ typedef enum {
     EVT_ENCODER_SHORT_PRESS = 0x16,
     EVT_ENCODER_ROTATE      = 0x17,
     EVT_KEY_SWITCH_CHANGED  = 0x18,
+    EVT_CONTINUITY_CHANGED  = 0x19,
 
     /* Timer / internal events */
     EVT_FIRE_PULSE_DONE   = 0x20,
@@ -92,6 +93,17 @@ typedef struct {
         struct {
             uint8_t channel;    /* New selected channel (1-8) */
         } encoder;
+
+        /* Continuity band change on one channel (base only).
+         * Posted by continuity_task on every debounced band transition so the
+         * FSM can drop out of ARMED/PRE_FIRE when the armed igniter goes
+         * OPEN. The band is carried in the event rather than re-read from
+         * continuity_get_channel(): by the time the FSM dequeues, the sampler
+         * may already have moved the channel on again. */
+        struct {
+            uint8_t channel;    /* Channel number (1-8) */
+            uint8_t band;       /* rlc_continuity_band_t value */
+        } continuity;
 
     } data;
 } rlc_fsm_event_t;

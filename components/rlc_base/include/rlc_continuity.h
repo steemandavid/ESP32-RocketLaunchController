@@ -40,9 +40,15 @@ rlc_continuity_band_t continuity_get_channel(uint8_t ch);
 
 /**
  * Register a callback invoked when any channel's band changes.
- * Called from continuity_task context.
+ * Called from continuity_task context, so it must stay short.
+ *
+ * @param cb  receives the channel (1-8) and its new band. The arguments were
+ *            added on 2026-08-26: the FSM needs to know *which* channel moved
+ *            and where to, so that an armed igniter going OPEN can disarm the
+ *            base (FSD 7.2.7). A bare "something changed" ping was enough for
+ *            the STATUS_UPDATE trigger but not for a safety decision.
  */
-void continuity_register_change_cb(void (*cb)(void));
+void continuity_register_change_cb(void (*cb)(uint8_t ch, rlc_continuity_band_t band));
 
 /**
  * Last sampled sense voltage for a channel, in microvolts.

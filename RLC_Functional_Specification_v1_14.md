@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.33
+**Version:** 1.35
 **Date:** 2026-08-25
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -47,6 +47,8 @@
 | 1.31 | 2026-08-21 | Applied the post-fix code review (`Code_Review_AllPhases_20260821_1523.md`). **Firmware 1.1.0 → 1.1.1.** Two Majors: **(N1)** the debounce engine's first stable reading deliberately fires no callback — required by the fire button's fresh-press interlock (§5.5.3) — but the remote's arm switch cached its state only from that callback, so a key already turned to ARM at power-up was never seen and arming was impossible until the key was toggled. §5.3 now states the contract explicitly and requires consumers to adopt the initial determination by polling. **(N2)** `esp_timer_stop()` does not cancel an already-dispatched callback, so the siren's pattern mutex was not sufficient: a stale tick could drive the siren back ON after `siren_off()` (with the timer stopped, permanently) or silence it through the whole PRE_FIRE countdown. A pattern-active flag now invalidates superseded callbacks (§5.4.7). Minors: remote now treats a critical battery in LINK_LOST as terminal, matching the base; link health window and expected-ping tracker reset with the session, so ARM is no longer refused `COMM_DEGRADED` for ~5 s after every recovery; the stale-status timeout latches instead of re-firing at 20 Hz; `rlc_link_next_seq()` drops the link on overflow like its internal siblings; the placeholder handshake `STATUS_UPDATE` (which hardcoded `base_state = IDLE`, a false "safe" if the base was in ERROR) is replaced by a real push via a new application hook; ESP-NOW send failures are counted rather than logged from Wi-Fi task context; remote input callbacks are registered before their tasks start; five unchecked `xTaskCreate` calls checked, two of them fatal; `ARM_SENSE_VERIFY_TIMEOUT_MS` and `SIREN_LINK_LOST_DURATION_MS` are now real constants (§14.1). Host tests T-D01…T-D06 added (§15.5), and the debounce engine is no longer stubbed out in the host harness. **(N3, Critical, found on target after flashing)** `esp_task_wdt_reconfigure()` rebuilds the TWDT subscriber list, and the remote called it at boot step 8 — *after* `display_start_task()`. The display and buzzer tasks were silently unsubscribed, the display logged "task not found" at 20 Hz, and the unfed watchdog triggered at 11.4 s and panicked (`LoadProhibited`) inside its own report path, rebooting the unit on every boot. §9.13 gains a step 0 (reconfigure before any task) and a step 11 (`app_main` subscribes itself after the slow init), with the ordering stated as a requirement. |
 | 1.32 | 2026-08-23 | **217 Ω sense-branch resistors fitted on all eight continuity channels**, closing both gaps the v1.30 assessment left open (arc into the 3.3 V rail limited to ~41 mA; pin held at ~3.55 V during a fault instead of 3.9–4.2 V). The resistor sits between the relay NC contact and the ADC pin/clamp junction, so it is **in the sense current path** and lifts every reading by ~204 mV. Thresholds re-derived against V = 3.3 × Rx/(R_ref + Rx), Rx = (R_sense + R_ign) ∥ R_pull: `CONT_MARGINAL_UV` 66000 → **261000** µV and `CONT_OPEN_UV` 432000 → **586000** µV, both the *same* ~67 Ω and ~500 Ω boundaries as before. New constant `CONT_R_SENSE_OHM` (§14.1). Verified on target against five known loads (igniter, 14.9 Ω, 74.3 Ω, 2k16, 4k28, open): predicted and measured agree within 2 mV and all six classify correctly. Full scale (950 mV) is now reached at ~1117 Ω instead of ~1670 Ω, which costs nothing because everything above 500 Ω is OPEN. Base ESP32 moved to an **external antenna** (0 Ω link relocated to the U.FL connector). **`FIRE_PROTECTED_CHANNEL_MASK` widened 0x01 → 0xFF** (§14.1) — the bug #18 protection BOM (snubber + 2x 1N5819 + 217 Ω) is now complete on all eight channels, so the firmware gate that restricted firing to channel 1 since 2026-07-21 is lifted. Channels 2-8 have still never been fired. New **bug #28**: the base ARM RELAY LED lights with the key in SAFE while the relay stays de-energised — an LED-current-sized sneak path around the §5.4.4 key switch. Fire testing is held until it is resolved. |
 | 1.33 | 2026-08-25 | External antennas fitted on **both** units and a 200 m range test flown: **−93 dBm, link holding**, base on the ground, and the link could only be dropped by unscrewing an antenna. §6.1 records the measured range, the expected drop-out window (**−96 to −99 dBm** — 1 Mbps DSSS sensitivity ≈ −98 dBm, extended 1–3 dB because link loss needs *three consecutive* missed 500 ms slots, so failure occurs at roughly 30–50 % PER over a ~3 dB transition), and the antenna configuration. The key finding is that −93 dBm at 200 m is **two-ray ground-reflection limited, not hardware limited**: the measurement matches the d⁴ model to within 0.5 dB, the remaining margin buys only ~25 % more distance in that geometry (~250–260 m), and raising both units to ~1.5 m is worth ~30 dB. `ERR_COMM_DEGRADED` (>30 % loss over the 10-slot window) refuses arming a couple of dB before the link fails. Recorded that the RSSI reading is not a usable early warning — uncalibrated, compressed in the high −90s, and smoothed by `RSSI_AVERAGE_WINDOW`. |
+| 1.34 | 2026-08-26 | **Three base hardware defects closed by soldering rework; fire testing unblocked.** **Bug #28** (ARM RELAY LED lit with the key in SAFE) was an indicator-wiring fault, now corrected: the coil LED lights only when the arm relay is genuinely energised. A second indicator fault found at the same time — the arm-key red and green LEDs lighting *simultaneously* in SAFE — was also fixed; they now read red = ARMED, green = SAFE. The hardware AND gate of 5.4.4 was never compromised: both faults were in the indicators, not in the key switch's break of the coil circuit. The operator rule "green = SAFE, red coil LED = fire bus live" is true on this unit again, and the fire-testing hold this bug imposed is lifted. **Bug #27** (siren not connected): the IRLZ44N driver on GPIO 40 is fitted with its 150 Ω gate series resistor, 10 kΩ gate pull-down and a 1N5819 flyback diode across the siren (cathode VBAT+, anode drain) — see the revised as-built note in 5.4.8. Two items stay open there: confirm the siren draws under 1 A so the 1 A diode is correctly rated, and run the N2 retest (bench tests 2 and 3, LINK_LOST 4-cycle, ERROR 3-blast, silent-at-power-on), which is still outstanding — N2 remains code-inspection-only. **Bug #19** (base LED strip dark from pixel 4): resolved by replacing the strip. Root cause was pixel 3's *output stage* — it rendered its own colour correctly but passed no data downstream, which is why it read as healthy in every visual test. T-L18 now PASSES. No firmware change in any of the three. |
+| 1.35 | 2026-08-26 | **Firmware 1.1.1 → 1.1.2. Two on-target behaviour changes, both base-only.** **(1) The siren is continuous from ARMED through PRE_FIRE and FIRING.** The 500 ms ARMED pulse (inherited from v1.1, when the base still had a plain buzzer) fought the siren's own internal modulation: every power-up edge restarted its sweep, so the device never reached the loud part of its cycle and the pulsed ARMED warning was *less* audible than a steady tone. `siren_start_pulse()` removed; 5.4.8, 7.2.2, 7.2.3, 7.4.1, the state diagram and the transition tables updated. LINK_LOST and ERROR stay patterned — those patterns carry meaning and are short enough that the interference does not matter. Side effect: the flyback diode now switches once per sequence instead of once per second, which removes the repetitive-avalanche concern raised in v1.34. **(2) Continuity loss on the armed channel now disarms the base.** Found on target: arm a channel, pull the igniter lead, and the base stayed ARMED with the siren sounding and the fire path live, with nothing on either unit reporting it. v1.8 had removed this deliberately ("sensing disabled - stale data"), a rationale that the v1.10 SPDT redesign made obsolete - continuity is live throughout ARMED and PRE_FIRE because the channel relay sits on NC - and 4.x's own Phase 3 test criteria had listed "continuity to OPEN" as a required disarm trigger since then, so the document contradicted itself for 25 revisions. New `EVT_CONTINUITY_CHANGED` carries channel and band to the base FSM (7.3.1 step 4); 7.2.7 gains the trigger and the full requirements. Scoped deliberately: OPEN only (matching arming guard 2), armed channel only, ARMED and PRE_FIRE only - **not** FIRING, where the armed channel reads OPEN by design because its relay is on NO, and **not** POST_FIRE, where OPEN is the success indicator. Detection latency is up to ~800 ms (round-robin sampling), well inside `ARM_TIMEOUT_MS`. New tests T-A16, T-A17 and T-A18 (the last a regression guard that a non-armed channel going OPEN does *not* disarm). No wire-protocol change, but the strict version check covers all three components, so both units must be flashed together. |
 
 ---
 
@@ -187,8 +189,8 @@ The launch sequence follows a strict multi-step procedure:
 3. The remote unit is powered on, discovers the base unit, and establishes a communication link.
 4. The operator selects a channel on the remote using the rotary encoder.
 5. The operator turns the physical arm key/switch on the remote, then presses the encoder button to confirm. This sends an ARM command for the selected channel.
-6. The base unit validates that the arm sense input confirms VBAT is present on the fire path (key switch ON, arm relay energised). Only if both arm conditions are met does it enter the ARMED state. The siren begins pulsing (500 ms on / 500 ms off). The channel relay remains de-energised until the FIRING state.
-7. The operator presses and holds the fire button. The remote sends a FIRE command. The siren switches to continuous.
+6. The base unit validates that the arm sense input confirms VBAT is present on the fire path (key switch ON, arm relay energised). Only if both arm conditions are met does it enter the ARMED state. The siren begins sounding continuously. The channel relay remains de-energised until the FIRING state.
+7. The operator presses and holds the fire button. The remote sends a FIRE command. The siren continues sounding (unchanged from ARMED).
 8. The base unit energises the selected channel's SPDT relay (switching from NC/continuity to NO/fire path), applying battery power through the arm relay and channel relay to the igniter for a defined pulse duration, then automatically disarms. The siren is switched off.
 9. Disarming any switch, losing communication, selecting a different channel, or any anomaly results in immediate de-energising of all relays (arm relay + channel relays, returning to safe position).
 
@@ -343,7 +345,7 @@ Deliverables:
 Deliverables:
 - `rlc_base`: Full base state machine (BOOT → IDLE → ARMED → PRE_FIRE → FIRING → POST_FIRE, plus LINK_LOST and ERROR).
 - `rlc_base`: Command handler (CMD_ARM, CMD_DISARM, CMD_FIRE, CMD_CEASE_FIRE) with all guard conditions, ACK/NACK responses.
-- `rlc_base`: Siren control (pulsing in ARMED, continuous in PRE_FIRE/FIRING).
+- `rlc_base`: Siren control (continuous from ARMED through PRE_FIRE and FIRING; patterned only for LINK_LOST and ERROR).
 - `rlc_base`: Fire pulse via hardware timer.
 - `rlc_remote`: Full remote state machine (BOOT → LINKING → IDLE → ARMED → FIRING, plus LINK_LOST and ERROR).
 - `rlc_remote`: Command sender with ACK/NACK timeout handling and retry logic.
@@ -758,6 +760,20 @@ The arm key switch and the IRLZ44N MOSFET form a **hardware AND gate**: both mus
 
 All three LEDs are passive — they operate directly from VBAT through the switch/relay contacts and require no GPIO. They function correctly even if the ESP32-S3 is unpowered or has crashed.
 
+> **AS-BUILT (2026-08-26): all three indicator LEDs verified correct after
+> rework.** Two faults were found and fixed on the base: the coil red LED lit
+> with the key in SAFE while the relay stayed de-energised (**bug #28**), and the
+> key-position red and green LEDs lit *simultaneously* in SAFE. Both were sneak
+> paths in the indicator wiring — a return that was not true GND — and neither
+> touched the key switch's break of the coil circuit, so the hardware AND gate
+> above was never compromised. The table's three meanings now hold as written.
+>
+> Because these LEDs are the operator's only unpowered-ESP32 view of the fire
+> bus, **re-verify the AND gate at the node (not from the LEDs) after any
+> indicator rework**: key SAFE + GPIO 47 driven → relay out, ARM SENSE 0; key ON
+> + GPIO 47 low → relay out, ARM SENSE 0; key ON + GPIO 47 driven → relay in,
+> ARM SENSE 1.
+
 Both this switch AND the remote arm switch must be in the armed position for any channel to be armed.
 
 #### 5.4.5 Circuit Topology
@@ -910,7 +926,7 @@ backwards when wiring both.
 | Unit | Base only — `PIN_SIREN` is defined inside `#ifdef CONFIG_RLC_UNIT_BASE` |
 | Signal type | Digital output, active HIGH (GPIO HIGH = MOSFET on = siren activated) |
 | Quantity | 1 |
-| Function | Loud alarm: pulsing during ARMED, continuous during PRE_FIRE and FIRING, pulsed during LINK_LOST, 3 short blasts on ERROR |
+| Function | Loud alarm: **continuous throughout ARMED, PRE_FIRE and FIRING**, pulsed during LINK_LOST (500/500, 4 cycles), 3 short blasts on ERROR |
 | Driver | Via dedicated IRLZ44N MOSFET (same low-side switch topology as relay drivers, see §5.4.10) |
 | Gate network | 150 Ω series (GPIO→gate) + **10 kΩ gate pull-down (gate→GND)** |
 | Flyback diode | Required — cathode to VBAT+, anode to MOSFET drain (1N4007, or 1N5819/SS14) |
@@ -927,13 +943,21 @@ signals; GPIO 42 is already committed to key sense (§5.4.3b). The board uses
 USB Serial/JTAG, so this is harmless — but pin-based JTAG debugging is not
 available on this hardware.
 
-> **AS-BUILT (2026-08-21): the siren is NOT CONNECTED.** The driver has not
-> been fitted, so GPIO 40 currently drives nothing. This blocks verification of
-> review finding N2 (§12.3): both of its failure modes — a siren stuck on after
-> disarm, and a siren that falls silent through the PRE_FIRE countdown — are
-> *silent* failures, and neither is observable with the output disconnected.
-> The N2 fix therefore rests on code inspection alone. Fit the driver above and
-> re-run the two siren tests before treating N2 as closed.
+> **AS-BUILT (2026-08-26): the siren driver IS FITTED.** IRLZ44N on GPIO 40 with
+> the 150 Ω gate series resistor, the 10 kΩ gate pull-down, and a **1N5819**
+> Schottky flyback diode across the siren (cathode VBAT+, anode drain).
+> Supersedes the 2026-08-21 "NOT CONNECTED" note. Two items remain open:
+>
+> 1. **Diode current rating.** The 1N5819 is 40 V / 1 A and carries the full
+>    siren current at turn-off. Confirm the siren draws under 1 A at 12 V;
+>    above ~700 mA, fit an SS34-class 3 A part instead. (v1.35 note: the ARMED
+>    pulse was removed, so this diode now switches once per sequence rather
+>    than at 1 Hz throughout ARMED — the repetitive-avalanche concern this item
+>    originally raised no longer applies, leaving only steady current.)
+> 2. **Retest not yet run.** Review finding N2 (§12.3) is still verified by code
+>    inspection alone. Run bench tests 2 and 3, the LINK_LOST 4-cycle and ERROR
+>    3-blast patterns, and a silent-at-power-on check (which finally makes the
+>    10 kΩ pull-down's boot-transient behaviour observable) before closing N2.
 
 #### 5.4.9 Arm Relay Output (GPIO 47)
 
@@ -1539,7 +1563,7 @@ For the initial command:
                                         │
                                         ▼
                                   ┌──────────┐
-                                  │  ARMED   │  (siren pulses 500/500)
+                                  │  ARMED   │  (siren continuous)   
                                   └────┬─────┘
                                        │
                               CMD_FIRE received,
@@ -1619,7 +1643,7 @@ For the initial command:
   1. Record armed channel number.
   2. Energise arm relay (GPIO 47 HIGH). Verify arm sense GPIO 21 reads HIGH within `ARM_SENSE_VERIFY_TIMEOUT_MS` (200 ms — §14.1) (M1 arm relay verify — confirms contacts actually closed and VBAT on fire bus. If not HIGH, immediately disarm and set `ERR_RELAY_FAULT`).
      The wait is **non-blocking**: the FSM remains in IDLE with a pending-verify flag, so safety events are still processed inside the window. A `CMD_DISARM`, `CMD_CEASE_FIRE`, `CMD_FIRE`, key-switch-OFF, battery-critical, weld-fault or link-loss arriving during the window SHALL cancel the pending ARM, de-energise the relay and NACK with the true reason — never complete the arm behind the operator (review findings 2.1 and 4.6).
-  3. Start siren pulsing (500 ms on / 500 ms off).
+  3. Start siren, continuous (see §7.4.1 — the 500 ms ARMED pulse was removed in v1.35).
   4. Start arm timeout timer (`ARM_TIMEOUT_MS`, default: 10000 ms). If no CMD_FIRE is received before this timer expires, auto-disarm and return to IDLE.
   5. Send `CMD_ACK` (with channel field) to remote.
   6. Send `STATUS_UPDATE` with updated bitmasks.
@@ -1642,7 +1666,7 @@ For the initial command:
   2. Message integrity CRC is valid.
   3. **Key switch still ON** (key switch sense §5.4.3b reads HIGH) **AND arm sense confirms arm relay still closed** (arm sense §5.4.3 reads HIGH — defence-in-depth re-verification).
 - Actions on transition:
-  1. Switch siren from pulsing to continuous.
+  1. Siren remains continuous (already continuous since ARMED; the FSM re-asserts it so PRE_FIRE does not depend on how ARMED was entered).
   2. Start pre-fire countdown timer (`PRE_FIRE_DELAY_MS`, default: 2000 ms).
   3. Cancel arm timeout timer.
   4. Send `CMD_ACK` (with channel field) to remote.
@@ -1719,7 +1743,17 @@ This transition can be triggered from ARMED, PRE_FIRE, or FIRING (with caveats f
 - Base battery voltage drops below `VBAT_CRITICAL_MV`.
 - Arm timeout elapsed (`ARM_TIMEOUT_MS`, default: 10000 ms) — no CMD_FIRE received within the timeout period after entering ARMED state.
 
-**Note:** Continuity band transitions during ARMED or PRE_FIRE states do not trigger disarm. Although continuity sensing remains active (the relay is still in NC position), band changes are treated as informational only. Continuity is verified at arm time (§7.2.2 guard 2).
+- **Continuity on the armed channel transitions to OPEN** while in ARMED or PRE_FIRE (added v1.35, 2026-08-26 — see below).
+
+**Continuity-loss disarm (v1.35).** Up to v1.34 this specification stated the opposite: band changes during ARMED/PRE_FIRE were informational only, and §7.3.1 called mid-arm igniter disconnection "an accepted low-probability risk" bounded by `ARM_TIMEOUT_MS`. On-target testing on 2026-08-26 showed that risk is not the one that was accepted — disconnecting an igniter is precisely what happens when someone is working at the pad, which is the moment being armed matters most. The base stayed ARMED with the siren sounding and the fire path live, and neither unit indicated the igniter was gone.
+
+Requirements:
+
+1. Only the **OPEN** band SHALL trigger disarm, matching the arming guard (§7.2.2 guard 2), which likewise refuses only on OPEN. MARGINAL and SHORT remain informational (§7.3.1 step 2).
+2. Only the **currently armed channel** SHALL trigger it. Band changes on other channels remain informational.
+3. It SHALL apply in **ARMED and PRE_FIRE only**. It SHALL NOT apply in FIRING — during the pulse the channel relay is on NO and its NC sense line is physically disconnected, so the armed channel reads OPEN *by design*, and acting on it would abort every fire pulse the instant it began. It SHALL NOT apply in POST_FIRE, where OPEN is the **success** indicator (§7.3.1, post-fire igniter status).
+4. Detection latency is bounded by the round-robin sample period: one channel per `CONT_SAMPLE_INTERVAL_MS` (100 ms) over 8 channels, so up to **~800 ms** plus hysteresis. This is well inside `ARM_TIMEOUT_MS` and is accepted; the mechanism is a safety backstop, not a real-time interlock.
+5. The remote learns of the disarm through the resulting `STATUS_UPDATE`, whose `continuity_bands` field shows the channel as OPEN. No new NACK reason is defined — there is no command to NACK, since the trigger is a spontaneous hardware event.
 
 Actions:
 1. All relay outputs → inactive (call `relay_all_safe()`). De-energise arm relay (GPIO 47 LOW). All channel SPDT relays return to NC position.
@@ -1763,8 +1797,11 @@ When a band change is detected on any channel:
 1. Update the internal `continuity_bands` field.
 2. If a channel that is currently armed transitions to SHORT: log an advisory warning (informational only — does not trigger disarm).
 3. Trigger an event-driven `STATUS_UPDATE` to the remote.
+4. Post the change — channel number **and** new band — to the base FSM event queue as `EVT_CONTINUITY_CHANGED`, so the state machine can apply §7.2.7's continuity-loss disarm. The band is carried in the event rather than re-read by the FSM, because the round-robin sampler may have moved on by the time the event is dequeued. The post SHALL use a short blocking send rather than a zero-timeout one: dropping this event on a transient queue burst would silently leave the base armed on an open igniter.
 
-**Note:** Continuity sensing remains active at all times — there is no MOSFET switch to disable. The SPDT relay provides inherent isolation: when the relay is de-energised (NC position), the continuity sense circuit is connected to the igniter; when the relay is energised for firing (NO position), the NC contact physically disconnects. During FIRING, the armed channel's ADC reads OPEN (expected — NC disconnected). All other channels remain readable. Continuity-loss disarm during ARMED/PRE_FIRE states is not implemented. Continuity is verified at arm time (§7.2.2 guard 2). The brief window between arming and firing (bounded by ARM_TIMEOUT_MS) makes mid-arm igniter disconnection an accepted low-probability risk.
+**Note:** Continuity sensing remains active at all times — there is no MOSFET switch to disable. The SPDT relay provides inherent isolation: when the relay is de-energised (NC position), the continuity sense circuit is connected to the igniter; when the relay is energised for firing (NO position), the NC contact physically disconnects. During FIRING, the armed channel's ADC reads OPEN (expected — NC disconnected). All other channels remain readable.
+
+**Continuity-loss disarm IS implemented as of v1.35 (2026-08-26).** A transition to OPEN on the currently armed channel while in ARMED or PRE_FIRE SHALL trigger the disarm sequence of §7.2.7, which see for the full requirements and for the exclusions that keep FIRING and POST_FIRE unaffected. This replaces the v1.8–v1.34 position that mid-arm igniter disconnection was an accepted low-probability risk.
 
 Since the continuity circuit uses the SPDT relay NC contact, continuity readings are valid whenever the relay is de-energised, regardless of arm switch position. During FIRING, the fired channel reads OPEN (NC disconnected) while all other channels continue to provide live readings. After the fire pulse completes and the relay returns to NC, the fired channel's continuity reading automatically updates — OPEN indicates the igniter has fired, GOOD/MARGINAL indicates a misfire.
 
@@ -2517,7 +2554,16 @@ The remote uses an active buzzer for audible feedback. Patterns are implemented 
 
 Buzzer patterns shall be driven by a dedicated FreeRTOS task (`buzzer_task`) in `rlc_remote` that consumes pattern descriptors from a queue. New patterns preempt active ones.
 
-Siren control is managed directly by the base state machine. The siren pulsing in ARMED state shall be driven by a timer that toggles the siren GPIO every 500 ms. On transition to PRE_FIRE, the siren is set to continuous ON. On disarm or transition to POST_FIRE/IDLE, the siren is set OFF.
+Siren control is managed directly by the base state machine. The siren SHALL be driven **continuously ON from entry to ARMED, through PRE_FIRE and FIRING, without interruption**. On disarm or transition to POST_FIRE/IDLE, the siren is set OFF.
+
+> **The 500 ms ARMED pulse was removed in v1.35 (2026-08-26), on-target finding.** Chopping the siren's supply at 1 Hz interferes with the siren's *own* internal modulation: the device restarts its sweep on every power-up edge and never reaches the loud part of its cycle, so the pulsed ARMED warning was **less** audible than a steady tone, not more. The pattern was inherited from v1.1, when the base still had a simple buzzer for which on/off gating was the only available modulation. Continuous is now the ARMED warning, and the siren's own sweep provides the attention-getting variation.
+>
+> Consequences to keep in mind:
+> - ARMED is bounded by `ARM_TIMEOUT_MS` (10 s), so the continuous burst is short-lived by construction.
+> - Base battery draw during ARMED roughly doubles versus the old 50 % duty cycle. Immaterial over 10 s.
+> - The siren flyback diode (§5.4.8) now switches once per sequence instead of once per second, which removes the repetitive-avalanche concern the 1 Hz pattern raised.
+>
+> LINK_LOST and ERROR remain **patterned** (500/500 × 4 cycles, and 3 × 200 ms blasts). Those patterns carry meaning — they distinguish a fault from an armed pad — and they are short enough that the modulation interference does not matter.
 
 **Pattern cancellation (added v1.31, review finding N2).** The pulsing patterns run on an `esp_timer` callback while every pattern change is made from task context. `esp_timer_stop()` does **not** cancel a callback that has already been dispatched — only `esp_timer_delete()` waits, and that cannot be called from a path holding the lock the callback wants. Serialising the pattern state under a mutex is therefore **not sufficient**: a callback can be parked on the lock while a task reconfigures the pattern underneath it, and then act on the new state as if it were the old one.
 
@@ -2720,7 +2766,7 @@ The developer shall implement and document tests for the following scenarios. Te
 
 | ID | Test | Expected Result |
 |---|---|---|
-| T-A01 | ARM with both switches armed, continuity GOOD | Channel arms. ACK received. Display updates. Siren pulses. RGB LEDs red blink. |
+| T-A01 | ARM with both switches armed, continuity GOOD | Channel arms. ACK received. Display updates. **Siren sounds continuously.** RGB LEDs red blink. |
 | T-A02 | ARM with base switch disarmed | NACK with reason 0x01 ("BASE KEY OFF"). Channel not armed. |
 | T-A03 | ARM with remote switch disarmed | Remote does not send ARM (local guard). Display shows "Turn ARM key first". |
 | T-A04 | ARM channel with OPEN continuity | NACK with reason 0x04. |
@@ -2735,12 +2781,15 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-A13 | Verify channel in CMD_ACK | Simulate wrong channel in ACK → "CHANNEL MISMATCH ERROR", CMD_DISARM sent. |
 | T-A14 | ARM channel with MARGINAL continuity | Arming succeeds (MARGINAL does not block arming). Display shows yellow warning. |
 | T-A15 | ARM channel with SHORT continuity | Arming succeeds (SHORT is informational only). Display shows orange warning. |
+| T-A16 | **Disconnect the igniter on the armed channel while ARMED** | Base disarms within ~1 s of the band reaching OPEN: arm relay de-energised, all channel relays NC, siren off, state → IDLE, `STATUS_UPDATE` shows that channel OPEN and nothing armed. Base log shows `Continuity OPEN on armed ch N during ARMED — disarm`. (v1.35) |
+| T-A17 | **Disconnect the igniter on the armed channel during the PRE_FIRE countdown** | Countdown aborts, no fire pulse, siren off, state → IDLE. Base log shows `Continuity OPEN on armed ch N during PRE_FIRE — abort`. (v1.35) |
+| T-A18 | **Disconnect an igniter on a NON-armed channel while another channel is ARMED** | Base stays ARMED — only the armed channel's band triggers disarm. `STATUS_UPDATE` reflects the other channel as OPEN. (v1.35 regression guard) |
 
 ### 15.3 Fire Tests
 
 | ID | Test | Expected Result |
 |---|---|---|
-| T-F01 | Full fire sequence (arm → fire → complete) | Siren pulses in ARMED, continuous in PRE_FIRE/FIRING. Channel SPDT relay energises (NO/fire path) for FIRE_PULSE_DURATION_MS. Auto-disarm after (relay returns to NC). |
+| T-F01 | Full fire sequence (arm → fire → complete) | Siren continuous from ARMED through PRE_FIRE and FIRING, with no gap at either transition. Channel SPDT relay energises (NO/fire path) for FIRE_PULSE_DURATION_MS. Auto-disarm after (relay returns to NC). |
 | T-F02 | Release fire button during pre-fire delay | Fire aborted. Return to IDLE. Siren off. |
 | T-F03 | Release fire button during active fire | Cease fire. Channel relay deactivates. Return to IDLE. |
 | T-F04 | Fire command on non-armed channel | NACK with reason 0x05. |
@@ -2966,7 +3015,7 @@ _Static_assert(sizeof(rlc_payload_cmd_nack_t) == 6, "CMD_NACK size mismatch");
 |---|---|---|---|---|
 | BOOT | Link established | — | IDLE | Start I/O polling, send initial STATUS_UPDATE |
 | BOOT | ESP-NOW init fails (3 retries) | — | ERROR | RGB LED red triple flash |
-| IDLE | CMD_ARM(ch) | All §7.2.2 guards (incl. key switch sense) | ARMED | Record channel, arm relay ON, siren pulse, ACK(ch), STATUS_UPDATE |
+| IDLE | CMD_ARM(ch) | All §7.2.2 guards (incl. key switch sense) | ARMED | Record channel, arm relay ON, siren continuous, ACK(ch), STATUS_UPDATE |
 | IDLE | CMD_ARM(ch) | Any guard fails | IDLE | NACK with reason |
 | IDLE | CMD_FIRE(ch) | — | IDLE | NACK reason 0x05 (wrong state) |
 | IDLE | CMD_DISARM | — | IDLE | ACK (idempotent, already safe) |
@@ -2978,9 +3027,11 @@ _Static_assert(sizeof(rlc_payload_cmd_nack_t) == 6, "CMD_NACK size mismatch");
 | ARMED | Arm switch → DISARM | — | IDLE | relay_all_safe() (arm relay OFF + all ch relays off), siren off, STATUS_UPDATE |
 | ARMED | Arm timeout (10s) | — | IDLE | relay_all_safe() (arm relay OFF), siren off, STATUS_UPDATE |
 | ARMED | Link lost | — | LINK_LOST | relay_all_safe() (arm relay OFF), siren link-lost pattern |
+| ARMED | Continuity → OPEN on armed ch | ch == armed_ch | IDLE | relay_all_safe() (arm relay OFF), siren off, STATUS_UPDATE (v1.35) |
 | ARMED | VBAT < critical | — | ERROR | relay_all_safe() (arm relay OFF), siren off |
 | PRE_FIRE | Timer elapsed | CMD_FIRE in last 500 ms AND last PONG within (HEARTBEAT_INTERVAL_MS + HEARTBEAT_TIMEOUT_MS) AND arm switch ARMED AND ERR_COMM_DEGRADED not set | FIRING | Channel SPDT relay energised (NO/fire), arm relay stays ON, start fire pulse timer, STATUS_UPDATE |
 | PRE_FIRE | Timer elapsed | No CMD_FIRE in last 500 ms | IDLE | relay_all_safe() (arm relay OFF), siren off, STATUS_UPDATE (dead-man abort) |
+| PRE_FIRE | Continuity → OPEN on armed ch | ch == armed_ch | IDLE | relay_all_safe() (arm relay OFF), siren off, STATUS_UPDATE (v1.35) |
 | PRE_FIRE | Timer elapsed | ERR_COMM_DEGRADED set | IDLE | relay_all_safe() (arm relay OFF), siren off, STATUS_UPDATE (link quality abort) |
 | PRE_FIRE | CMD_CEASE_FIRE | — | IDLE | relay_all_safe() (arm relay OFF), siren off, ACK, STATUS_UPDATE |
 | PRE_FIRE | Arm switch → DISARM | — | IDLE | relay_all_safe() (arm relay OFF), siren off, STATUS_UPDATE |

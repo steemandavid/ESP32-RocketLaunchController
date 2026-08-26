@@ -41,12 +41,32 @@
 static const char *TAG = "rlc_base";
 
 /**
- * STATUS_UPDATE trigger — called when continuity changes.
- * Runs from continuity_task context, so it must be minimal (just set a flag).
+ * Continuity band change — called from continuity_task context, so it must
+ * stay minimal.
+ *
+ * Two jobs. The STATUS_UPDATE trigger only sets a flag. The FSM event is new
+ * (2026-08-26): an igniter that goes OPEN while its channel is armed must
+ * disarm the base, and the FSM cannot see that without being told which
+ * channel moved and where to. Every band change is forwarded; the FSM decides
+ * what is worth acting on, because only it knows the state and armed channel.
+ *
+ * The send is a short blocking one (10 ms) rather than base_fsm_post_event's
+ * zero-timeout send, matching on_arm_change_cb below — dropping this event on
+ * a transient queue burst would silently leave the base armed on an open
+ * igniter, which is the exact failure this event exists to prevent.
  */
-static void on_io_change(void)
+static void on_io_change(uint8_t ch, rlc_continuity_band_t band)
 {
     status_update_trigger();
+    if (base_fsm_get_queue()) {
+        rlc_fsm_event_t evt = {0};
+        evt.type = EVT_CONTINUITY_CHANGED;
+        evt.data.continuity.channel = ch;
+        evt.data.continuity.band    = (uint8_t)band;
+        if (xQueueSend(base_fsm_get_queue(), &evt, pdMS_TO_TICKS(10)) != pdTRUE) {
+            ESP_LOGE(TAG, "FSM queue full — EVT_CONTINUITY_CHANGED ch%u dropped!", ch);
+        }
+    }
 }
 
 /**

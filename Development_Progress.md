@@ -33,8 +33,9 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
-| 28 | Base ARM RELAY LED lights when the key is turned to **SAFE**, while the relay itself stays de-energised | Hardware | OPEN — new 2026-08-23, needs troubleshooting | Trust in the arm indicators, and possibly the key-switch leg of the hardware AND gate. **No fire testing until resolved.** |
-| 27 | Base siren not connected — GPIO 40 drives nothing, IRLZ44N driver not fitted | Hardware | OPEN | Verification of review finding N2 (siren stale-callback race). Both N2 failure modes are *silent* — stuck on after disarm, silent through the PRE_FIRE countdown — so neither is observable with the output disconnected, and the fix rests on code inspection alone. Also means the pad has **no audible warning at all** during ARMED/PRE_FIRE/FIRING: the remote's buzzer is operator feedback, not a pad warning, and is in the wrong place to serve as one. |
+| 29 | Base stays ARMED when the armed channel's igniter loses continuity | Firmware + spec | **RESOLVED 2026-08-26 (fw 1.1.2)** — continuity OPEN on the armed channel now disarms from ARMED or PRE_FIRE. Was a *specification* defect as much as a code one: v1.8 removed the disarm on a rationale ("sensing disabled — stale data") that the v1.10 SPDT redesign made obsolete, while the Phase 3 test criteria kept listing it as required. | Nothing now. Retest with T-A16/T-A17/T-A18 before live fire. |
+| 28 | Base ARM RELAY LED lights when the key is turned to **SAFE**, while the relay itself stays de-energised | Hardware | **RESOLVED 2026-08-26** — indicator wiring corrected on the base. The ARM RELAY LED now lights only when the arm relay is actually energised. A second, related indicator fault was found and fixed in the same session: the arm-key red and green LEDs lit *simultaneously* with the key in SAFE; they now read red = ARMED, green = SAFE. | Nothing. **Fire testing is unblocked** — this was the last hardware gate. |
+| 27 | Base siren not connected — GPIO 40 drives nothing, IRLZ44N driver not fitted | Hardware | **RESOLVED (hardware) 2026-08-26** — IRLZ44N driver fitted on GPIO 40 with its 150 Ω gate series resistor, 10 kΩ gate pull-down, and a 1N5819 flyback diode across the siren (cathode VBAT+, anode drain). | Nothing further in hardware. **Retest still owed:** review bench tests 2 and 3, the LINK_LOST 4-cycle and ERROR 3-blast patterns, and a silent-at-power-on check. Review finding N2 remains code-inspection-only until those run. |
 | 26 | Continuity misclassified — ~64 Ω return-path fault + ADC calibration disabled + 12 dB attenuation | Hardware + firmware | **RESOLVED** — return repaired, calibration on, 0 dB adopted, SHORT band merged away as unmeasurable | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
 | 25 | No hardware undervoltage cut-off on either battery — firmware thresholds only, and ERROR does not disconnect the load | Hardware | OPEN | Pack protection. A unit left switched on, or one whose firmware has halted, will discharge a LiPo past the point of permanent damage and into the unsafe-to-recharge region. |
 | 24 | Base 3.3 V rail runs high — killed chip #3 at 3.68 V, and **measured ~3.72 V again on 2026-08-21 with chip #4 fitted** | Hardware | **RECURRING — chip #4 at risk now.** High readings now attributed to a grounding measurement artefact (DevKit reads 3.35 V against its own GND); rail clamp spec'd as a TL431 shunt at ~3.57 V, **not** the 3V6 zener originally recommended | Nothing functionally. The base has no rail clamp and no secured ground path, so a repeat ground-lift kills chip #4 the same way. The eight 3V3-side continuity clamps are now a second route to an over-rail (bug #18). |
@@ -42,7 +43,7 @@ on-target defect log in the Phase 3 section.
 | 22 | Remote GPIO 1 has no overvoltage clamp — the bug #21 zener was removed and not replaced | Hardware | OPEN | Protection only. The divider's series impedance is the sole limit on an overvoltage fault. |
 | 21 | Remote VBAT sense was non-linear — 3.3 V zener leakage into a 6.4 kΩ divider | Hardware | **Zener removed 2026-08-19, sense verified and calibrated. PARTIAL — no replacement clamp fitted, so GPIO 1 is unprotected.** | Nothing functionally. Production thresholds restored. Remaining risk is overvoltage exposure on GPIO 1 until a BAT54-class clamp is fitted. |
 | 20 | Shipped crypto keys are public — AES-128-CCM and the keyed CRC32 check are ineffective against anyone who has read the source | Security | OPEN — rotation deferred by decision | Field use where an adversary is in the threat model. No effect on bench work. |
-| 19 | Base LED strip: data chain breaks after pixel 3 — pixels 4-8 dark | Hardware | OPEN — **replacing the 4th LED (2026-08-23) did not fix it**, so the fault is in the strip's copper or the joints at that position, not the LED | Channels 4-8 of the base strip; T-L15 for those channels |
+| 19 | Base LED strip: data chain breaks after pixel 3 — pixels 4-8 dark | Hardware | **RESOLVED 2026-08-26** — strip replaced. Root cause was **pixel 3's output stage**: the LED rendered its own colour correctly but no longer passed data downstream. All 8 pixels now respond. | Nothing. T-L15 and T-L18 unblocked. |
 | 18 | Base ESP32 destroyed by relay-arc coupling on the continuity ADC inputs | Hardware + firmware | Software fix DONE and audited. **As-built 2026-08-23: snubbers on ALL 8 channel relays + arm relay; 1N5819 clamps to GND and 3V3 on ALL 8 sense pins; 217 Ω sense-branch resistors on ALL 8 channels (thresholds recalibrated, verified on target).** Only the 3.3 V rail clamp (TL431 at ~3.57 V) is still missing, and with the 217 Ω fitted it is now belt-and-braces rather than the primary defence | Nothing further — `FIRE_PROTECTED_CHANNEL_MASK` widened to 0xFF on 2026-08-23. Only the TL431 rail clamp is still outstanding, now covering the multi-channel fault case rather than the single-channel one |
 
 Non-blocking items tracked elsewhere: the bench battery thresholds in
@@ -509,7 +510,7 @@ They should be verified before Phase 3 work begins, or during Phase 5 hardening.
 ## Phase 3 — State Machines and Command Processing
 
 **FSD ref:** §4.3 Phase 3, §7 (Base FSM), §8 (Remote FSM), §6.3 (Commands)
-**Status:** ON-TARGET TESTING RESUMING (channel 1 only) — G1 partial (T-R04 PASS, T-R05 SKIP/code-reviewed, T-R06 pending). Blocker resolved 2026-07-21: base ESP32 chip #3 installed (MAC `44:1B:F6:D4:0D:68`), hardware protection fitted on **channel 1** (clamping diodes on the ADC input + snubber across the relay contact; channels 2–8 still unprotected — test channel 1 ONLY), software relay-order fix already in place. Both units reflashed; G0 re-verified with chip #3 (LINK_ACK, rssi=-35). Next: G2 arming (T-A01..T-A15) then G3 fire (T-F01..T-F09) on channel 1, pending battery connection.
+**Status:** ON-TARGET TESTING RESUMING (channel 1 only) — G1 partial (T-R04 PASS, T-R05 SKIP/code-reviewed, T-R06 pending). Blocker resolved 2026-07-21: base ESP32 chip #3 installed (MAC `44:1B:F6:D4:0D:68`), hardware protection fitted on **channel 1** (clamping diodes on the ADC input + snubber across the relay contact; channels 2–8 still unprotected — test channel 1 ONLY), software relay-order fix already in place. Both units reflashed; G0 re-verified with chip #3 (LINK_ACK, rssi=-35). Next: G2 arming (T-A01..T-A18) then G3 fire (T-F01..T-F09), now on any channel — see the 2026-08-26 entries.
 
 ### Phase 3 Architecture
 
@@ -559,7 +560,7 @@ Command forwarding pattern: `link_task` continues to own ESP-NOW receive queue. 
 | 5 | Base: CMD_FIRE handler with pre-fire delay + fire pulse | §7.2.3 | DONE | CMD_FIRE→PRE_FIRE→FIRING→POST_FIRE pipeline |
 | 6 | Base: CMD_CEASE_FIRE handler | §7.2.2 | DONE | ACK + immediate safe in ARMED/PRE_FIRE/FIRING |
 | 7 | Base: ACK/NACK response with reason codes | §6.3 | DONE | `send_ack()`, `send_nack()` with `rlc_nack_reason_str()` |
-| 8 | Base: Siren patterns (pulse ARMED, continuous PRE_FIRE/FIRING) | §7.4.1 | DONE | `siren_start_pulse()`, `siren_start_continuous()`, `siren_start_error()`, `siren_start_link_lost()` |
+| 8 | Base: Siren patterns (**continuous ARMED/PRE_FIRE/FIRING** since fw 1.1.2) | §7.4.1 | DONE | `siren_start_continuous()`, `siren_start_error()`, `siren_start_link_lost()`. `siren_start_pulse()` removed 2026-08-26 — see bug #29 entry |
 | 9 | Base: Fire pulse via hardware timer (ISR signals task) | §7.2.3 | DONE | `rlc_fire_timer.c` — GPTimer, ISR→`xTaskNotifyFromISR` |
 | 10 | Base: 50 ms relay dropout delay after FIRING | §7.2.5 | DONE | POST_FIRE state with `POST_FIRE_COOLDOWN_MS` |
 | 11 | Base: Arm timeout auto-disarm (10 s) | §7.2.5 | DONE | `s_arm_time_ms` tracked in `check_timers()` |
@@ -736,7 +737,7 @@ Watch for `state=` lines (base 5 s housekeeping log) and `rfsm:` / `bfsm:` tags.
 ```
 
 **Pass criteria for Phase 3 as a whole.**
-1. All 15 FSD §15.2 arming tests pass (T-A01..T-A15)
+1. All 18 FSD §15.2 arming tests pass (T-A01..T-A18 — T-A16/17/18 added 2026-08-26 with bug #29)
 2. All 9 FSD §15.3 fire tests pass (T-F01..T-F09)
 3. All 6 round-3 regression tests pass (T-R01..T-R06)
 4. No unexpected `ERROR` entries, no watchdog resets, no crashes across the full run
@@ -764,7 +765,7 @@ Watch for `state=` lines (base 5 s housekeeping log) and `rfsm:` / `bfsm:` tags.
 
 **G0 re-verified 2026-04-15** after bugs 10-12 fixes (CRC seq, lock guard, key_sense). Base: `state=1 armed=0 firing=0 rssi=-19 vbat=11837 mv cont=0x0001 arm=0 key=0 err=0x00`. Remote: `state=1 armed=0 sel=1 rssi=-23 missed=0 vbat=3290 mv arm=1 fire=0`. Both stable, zero crashes.
 | **G1 — Round-3 regressions** | T-R01..T-R06 | Verify the fixes shipped in commit `d357b33` actually work on target | Yes |
-| **G2 — FSD §15.2 Arming** | T-A01..T-A15 | Spec conformance for arm path | Yes |
+| **G2 — FSD §15.2 Arming** | T-A01..T-A18 | Spec conformance for arm path | Yes |
 | **G3 — FSD §15.3 Fire** | T-F01..T-F09 | Spec conformance for fire path | Yes (T-F08 also needs scope) |
 
 Groups run in order. Any FAIL halts the run and is logged as a new finding; re-run from the start after any fix.
@@ -803,10 +804,13 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 | T-A13 | Wrong channel in ACK → channel mismatch error | TODO |
 | T-A14 | ARM with MARGINAL continuity → succeeds (warning) | TODO |
 | T-A15 | ARM with SHORT continuity → succeeds (informational) | TODO |
+| T-A16 | Disconnect the igniter on the armed channel while ARMED → disarm within ~1 s | TODO (new, bug #29 / fw 1.1.2) |
+| T-A17 | Disconnect the igniter on the armed channel during the PRE_FIRE countdown → abort, no pulse | TODO (new, bug #29 / fw 1.1.2) |
+| T-A18 | Disconnect a **non-armed** channel's igniter while another is ARMED → base stays ARMED | TODO (new, bug #29 regression guard) |
 
 ### Phase 3 FSD Fire Tests (§15.3)
 
-**Blocker resolved 2026-07-21** (chip #3 + clamping diodes + snubber on channel 1) — resume fire tests on **channel 1 only** until channels 2–8 receive the same protection. See bug #18. Channel-1-only was enforced in firmware by `FIRE_PROTECTED_CHANNEL_MASK` (2026-08-17), not just by operator discipline. **Superseded 2026-08-23:** protection complete on all eight channels, mask widened to 0xFF. Fire testing is nonetheless held by bug #28.
+**Blocker resolved 2026-07-21** (chip #3 + clamping diodes + snubber on channel 1) — resume fire tests on **channel 1 only** until channels 2–8 receive the same protection. See bug #18. Channel-1-only was enforced in firmware by `FIRE_PROTECTED_CHANNEL_MASK` (2026-08-17), not just by operator discipline. **Superseded 2026-08-23:** protection complete on all eight channels, mask widened to 0xFF. Fire testing was then held by bug #28 until **2026-08-26**, when that bug was resolved as an indicator-wiring fault. **Fire testing is now unblocked on all eight channels** — channels 2-8 have still never been fired, so treat the first shot on each as a test.
 
 | ID | Test | Status |
 |----|------|--------|
@@ -1087,7 +1091,7 @@ On-target, both units flashed and running:
 | T-L15 | Continuity change moves the right pixel | TODO | Needs a resistor on a known channel |
 | T-L16 | Alarm wink legible at arm's length in daylight | TODO | May drive a brightness change |
 | T-L17 | Remote cursor pulse follows the encoder | PASS | Cursor observed on the selected channel |
-| T-L18 | Base strip renders all 8 channels | FAIL | Bug #19 — chain breaks after pixel 3; ch1-3 correct. LED replaced 2026-08-23, no change |
+| T-L18 | Base strip renders all 8 channels | **PASS** (2026-08-26) | Bug #19 resolved by replacing the strip — pixel 3's output stage was dead (it lit correctly but passed no data downstream). All 8 pixels respond |
 
 **Verified by eye on the remote (2026-08-19):** channel 1 red (SHORT), channels
 2-8 yellow (OPEN), channel 2 breathing as the selected channel — mapping,
@@ -1369,7 +1373,116 @@ fire testing entirely for now.
 
 ---
 
-### Bug #28 — ARM RELAY LED lights with the key in SAFE (2026-08-23, OPEN)
+### Firmware 1.1.2 — Siren Continuous in ARMED (2026-08-26)
+
+**Operator finding.** The 500 ms ARMED pulse **interferes with the siren's own
+internal modulation**. The device runs its own sweep; gating the 12 V supply at
+1 Hz restarts that sweep on every edge, so it never reaches the loud part of
+its cycle. The pulsed ARMED warning came out *quieter and less attention-getting
+than a steady tone* — the opposite of the intent.
+
+The pattern dates from FSD v1.1 (2026-03-22), when the base had a plain buzzer
+whose only available modulation *was* on/off gating. Once that became a real
+siren with its own oscillator, the pattern stopped earning its place, and
+nobody had heard it on hardware until bug #27's driver was fitted five days
+ago.
+
+**Change.** `siren_start_pulse()` is removed. ARMED now calls
+`siren_start_continuous()`, so the siren sounds without interruption from ARM
+through PRE_FIRE and FIRING. PRE_FIRE re-asserts continuous rather than
+assuming it, so the state does not depend on how ARMED was entered.
+
+**LINK_LOST and ERROR stay patterned** (500/500 × 4 cycles, and 3 × 200 ms
+blasts). Those patterns carry information — they distinguish a fault from an
+armed pad — and they are short enough that the modulation interference does not
+matter over a few cycles.
+
+**Two side effects worth recording:**
+
+- Base battery draw during ARMED roughly doubles versus the old 50 % duty
+  cycle. Immaterial: `ARM_TIMEOUT_MS` bounds ARMED at 10 s.
+- The siren flyback diode now switches **once per sequence** instead of once
+  per second. That retires the repetitive-avalanche derating concern raised
+  when the 1N5819 was fitted (bug #27) — the 1 A part now has an easy life, and
+  only the steady-current question remains.
+
+The N2 stale-callback protection in `rlc_siren.c` is unchanged and still
+needed. The infinite (`-1`) pattern is gone with the pulse, so N2's first
+failure mode is no longer reachable by construction, but link-lost and error
+are still finite periodic patterns and can still park a callback on the mutex.
+
+---
+
+### Bug #29 — Base stays ARMED when the armed igniter loses continuity (2026-08-26, RESOLVED same day, fw 1.1.2)
+
+**Symptom, found on target during fire-sequence testing.** Arm a channel, then
+disconnect the igniter. The base **stays ARMED**: arm relay energised, fire path
+live, siren sounding, and neither unit indicates that the igniter has gone. The
+only exits were the 10 s arm timeout or an operator disarm.
+
+**This was a specification defect before it was a code defect.** Continuity was
+checked once, at arm time (`guard_arm()` guard 2). After that, band changes only
+triggered a `STATUS_UPDATE` — the FSM never saw them, because the continuity
+change callback carried no arguments and said nothing more than "something
+moved".
+
+FSD §7.3.1 stated the position explicitly: *"Continuity-loss disarm during
+ARMED/PRE_FIRE states is not implemented... The brief window between arming and
+firing (bounded by ARM_TIMEOUT_MS) makes mid-arm igniter disconnection an
+accepted low-probability risk."* Three things are wrong with that:
+
+1. **The rationale was obsolete by five months.** v1.8 (2026-03-23) removed the
+   disarm because continuity sensing was *disabled* in ARMED/PRE_FIRE under the
+   old shared-MOSFET design, so any reading would have been stale. The v1.10
+   SPDT redesign (2026-03-23, the very next revision) made continuity live
+   throughout ARMED and PRE_FIRE — the channel relay sits on NC until FIRING.
+   The removal was never revisited against the new hardware.
+2. **The document contradicted itself for 25 revisions.** §4.x's Phase 3 test
+   criteria have listed *"All disarm triggers work (switch, command, link loss,
+   **continuity → OPEN**, battery)"* the whole time.
+3. **The risk is not low-probability.** An igniter leaving the circuit is
+   precisely what happens when a person is at the pad handling it — the one
+   moment when being armed matters most.
+
+**Fix (FSD v1.35, fw 1.1.2).** New `EVT_CONTINUITY_CHANGED` carries the channel
+number *and* the new band from `continuity_task` to the base FSM;
+`armed_channel_went_open()` gates the disarm. The band travels in the event
+rather than being re-read by the FSM, because the round-robin sampler may have
+moved the channel on again by the time the event is dequeued. The queue send is
+a 10 ms blocking one, matching the arm-sense sibling — a dropped event here
+would silently leave the base armed on an open igniter, the exact failure being
+fixed.
+
+**Scoped deliberately.** Getting this wrong in the other direction would break
+firing entirely:
+
+| Condition | Disarms? | Why |
+|---|---|---|
+| Band = OPEN | **Yes** | Matches arming guard 2 — OPEN is the only band that blocks arming |
+| Band = MARGINAL / SHORT | No | Informational per §7.3.1 step 2; unchanged |
+| Armed channel | **Yes** | — |
+| Any other channel | No | Informational. T-A18 is the regression guard |
+| State = ARMED, PRE_FIRE | **Yes** | Relay on NC, so the reading is live and real |
+| State = FIRING | **No** | The relay is on NO and the NC sense line is physically disconnected — the armed channel reads OPEN *by design*. Acting on it would abort every fire pulse the instant it started |
+| State = POST_FIRE | **No** | OPEN is the **success** indicator: it means the igniter fired |
+
+**Detection latency: up to ~800 ms** — one channel per 100 ms round-robin over
+eight channels, plus classifier hysteresis. Accepted: it is well inside
+`ARM_TIMEOUT_MS`, and this is a safety backstop rather than a real-time
+interlock. Do not read it as a fast interlock in a test report.
+
+**The remote needs no change.** It learns of the disarm from the resulting
+`STATUS_UPDATE`, whose `continuity_bands` field already shows the channel as
+OPEN. No new NACK reason: there is no command to NACK, because the trigger is a
+spontaneous hardware event.
+
+**Retest owed:** T-A16 (disconnect while ARMED), T-A17 (disconnect during the
+PRE_FIRE countdown), T-A18 (disconnect a *non-armed* channel — base must stay
+ARMED). None has been run yet.
+
+---
+
+### Bug #28 — ARM RELAY LED lights with the key in SAFE (2026-08-23, **RESOLVED 2026-08-26**)
 
 **Symptom.** Turning the base key switch to the **SAFE** position illuminates the
 **ARM RELAY** LED — the red one wired across the arm relay coil terminals
@@ -1426,6 +1539,38 @@ understood rather than assumed harmless, and until it is:
 - **No fire testing until this is resolved**, on any channel. The mask was
   widened to 0xFF in this same session; that is a firmware gate and it does not
   cover a hardware-side interlock anomaly.
+
+**RESOLUTION (2026-08-26).** Indicator wiring corrected on the base by soldering
+rework. The ARM RELAY LED now lights **only** when the arm relay is actually
+energised — i.e. only with the key switch ON *and* GPIO 47 driven, which is the
+behaviour 5.4.4 specifies. The sneak path is gone.
+
+**A second indicator fault was found and fixed in the same session:** the
+arm-key red and green LEDs were lighting **simultaneously** with the key in the
+SAFE position. They now read correctly — **red = ARMED, green = SAFE**. This is
+the same class of fault as candidate 2 above (a return path that is not true
+GND), on the key-position indicator pair rather than the coil LED, and it
+explains why the original symptom looked like it implicated the key switch leg.
+
+**Consequences:**
+
+- The operator-facing rule "green = SAFE, red coil LED = fire bus live" is now
+  true on this unit. The arm indicators can be trusted again.
+- Both legs of the hardware AND gate are accounted for: the anomaly was in the
+  indicators, not in the key switch's break of the coil circuit.
+- **The fire-testing hold imposed by this bug is lifted.** This was the last
+  hardware gate; `FIRE_PROTECTED_CHANNEL_MASK` is already 0xFF (2026-08-23) and
+  all seven Majors from the 2026-08-21 review round are fixed and confirmed.
+
+**Before the first fire test, re-verify the AND gate directly** — the indicator
+wiring was just reworked, so prove the two legs independently rather than
+inferring them from the LEDs:
+
+1. Key SAFE + GPIO 47 driven → relay stays out, ARM SENSE (GPIO 21) reads 0.
+2. Key ON + GPIO 47 low → relay stays out, ARM SENSE reads 0.
+3. Key ON + GPIO 47 driven → relay pulls in, ARM SENSE reads 1, coil LED lit.
+
+Measure ARM SENSE at the node with a meter, not only in the log, at least once.
 
 ---
 
@@ -1577,9 +1722,26 @@ frames needed for (a).
 
 T-L18 stays **FAIL**.
 
+**RESOLVED (2026-08-26) — strip replaced.** The whole strip was swapped and
+all eight pixels now respond correctly. **The fault was pixel 3's output
+stage:** it rendered its own colour correctly throughout, but no longer passed
+the data signal downstream — which is why every test that looked at pixel
+3's *appearance* said it was healthy.
+
+This is branch (a) of the next-step list above, and it retires the two theories
+that had accumulated around the position: the donor LED was never the problem,
+and neither were the reworked joints at pixel 4. A WS2812 whose driver works but
+whose DOUT stage is dead presents exactly as "the break is between pixel 3 and
+pixel 4", because electrically it is — the break is simply *inside* pixel 3
+rather than in the copper between them.
+
+**Lesson for the next chain fault:** a pixel that lights correctly is not
+evidence that it is passing data. Probe DOUT, don't infer from the colour.
+T-L18 now **PASSES**; T-L15 is unblocked for channels 4-8.
+
 ---
 
-### Bug #27 — Base siren not connected (2026-08-21, OPEN)
+### Bug #27 — Base siren not connected (2026-08-21, **RESOLVED (hardware) 2026-08-26**)
 
 Surfaced while closing out the 1.1.1 review round: the operator ran the
 arm→PRE_FIRE→FIRING sequence to verify N2 and reported that **the siren is not
@@ -1639,6 +1801,32 @@ GPIO 40 ──/\/\──┤       │
 **Retest when fitted:** review bench tests 2 (siren continuous across
 ARMED→PRE_FIRE) and 3 (stops and stays stopped after disarm / arm timeout /
 CEASE_FIRE), plus the LINK_LOST 4-cycle and ERROR 3-blast patterns.
+
+**HARDWARE FITTED (2026-08-26).** The IRLZ44N driver is installed on GPIO 40
+with its 150 Ω gate series resistor and 10 kΩ gate pull-down, and a
+**1N5819** Schottky flyback diode is fitted across the siren (cathode VBAT+,
+anode drain) — the same part already stocked for the continuity-sense
+clamps, and one of the parts 5.4.8 names for this position.
+
+**One rating to confirm:** the 1N5819 is 40 V / 1 A. At turn-off the diode
+carries the full siren current, so it is correctly rated only if the siren draws
+**under 1 A** at 12 V. Most 12 V pad sirens sit at 200-500 mA, which is
+comfortable; a high-output horn can exceed 1 A. Measure the siren's steady
+current once with the driver on. If it is above ~700 mA, move to an SS34 or
+similar 3 A part.
+
+> **Update (later the same day, fw 1.1.2):** the 500 ms ARMED pulse was removed,
+> so this diode now switches **once per sequence** rather than once per second.
+> The repetitive-avalanche derating argument no longer applies — only the
+> steady-current question above remains, and it is now a comfortable margin
+> rather than a tight one.
+
+**Still owed — the retest above has not been run.** Review finding N2
+remains verified by code inspection only until bench tests 2 and 3 pass on
+hardware. Add a **silent-at-power-on** check to that list: with the driver now
+fitted, the 10 kΩ gate pull-down's job (no self-sounding during the boot
+transient, before `siren_init()` configures GPIO 40) is finally observable, and
+it is the one siren behaviour that is dangerous rather than merely wrong.
 
 ---
 

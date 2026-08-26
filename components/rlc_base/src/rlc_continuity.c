@@ -63,7 +63,7 @@ static volatile int32_t s_uv[NUM_CHANNELS] = { 0 };
 static volatile int32_t s_raw[NUM_CHANNELS] = { 0 };   /* pre-calibration counts */
 
 /* Callback on band change */
-static void (*s_on_change_cb)(void) = NULL;
+static void (*s_on_change_cb)(uint8_t ch, rlc_continuity_band_t band) = NULL;
 
 /* ── Band classification ───────────────────────────────────────── */
 
@@ -154,7 +154,7 @@ static void continuity_task(void *arg)
             if (s_bands[current_ch] != CONT_OPEN) {
                 s_bands[current_ch] = CONT_OPEN;
                 if (s_on_change_cb) {
-                    s_on_change_cb();
+                    s_on_change_cb((uint8_t)(current_ch + 1), CONT_OPEN);
                 }
             }
         } else {
@@ -184,9 +184,9 @@ static void continuity_task(void *arg)
                          s_bands[current_ch], new_band, (long)uv);
                 s_bands[current_ch] = new_band;
 
-                /* Notify status update task */
+                /* Notify the status update task and the FSM. */
                 if (s_on_change_cb) {
-                    s_on_change_cb();
+                    s_on_change_cb((uint8_t)(current_ch + 1), new_band);
                 }
             }
         }
@@ -296,7 +296,7 @@ rlc_continuity_band_t continuity_get_channel(uint8_t ch)
     return s_bands[ch - 1];
 }
 
-void continuity_register_change_cb(void (*cb)(void))
+void continuity_register_change_cb(void (*cb)(uint8_t ch, rlc_continuity_band_t band))
 {
     s_on_change_cb = cb;
 }

@@ -1,5 +1,181 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-26 — Three hardware bugs closed, fire testing unblocked, firmware 1.1.2
+
+Hardware rework by the operator closed the last three open hardware defects.
+Two firmware changes followed from testing the result.
+
+### Hardware (operator, this session)
+
+| Item | Result |
+|---|---|
+| Bug #28 — ARM RELAY LED lit with the key in SAFE | **FIXED.** Indicator wiring corrected; the coil LED now lights only when the arm relay is genuinely energised |
+| Arm-key red + green LEDs lit *simultaneously* in SAFE (untracked, found in the same rework) | **FIXED.** Now red = ARMED, green = SAFE |
+| Bug #27 — siren driver not fitted | **FITTED.** IRLZ44N on GPIO 40, 150 Ω gate series, 10 kΩ gate pull-down, 1N5819 flyback across the siren (cathode VBAT+, anode drain) |
+| Bug #19 — base LED strip dark from pixel 4 | **FIXED.** Strip replaced; all 8 pixels respond |
+
+**Bug #28 was an indicator fault, not an interlock fault.** Both LED problems
+were sneak paths in the indicator wiring — a return that was not true GND.
+Neither touched the key switch's break of the arm relay coil circuit, so the
+hardware AND gate of FSD §5.4.4 was never compromised. The operator rule
+"green = SAFE, red coil LED = fire bus live" is true on this unit again, and
+**the fire-testing hold this bug imposed is lifted.**
+
+**Bug #19's real root cause was pixel *3*, not pixel 4.** Pixel 3 rendered its
+own colour correctly throughout but had a dead output stage, so it passed no
+data downstream. That is why every visual test called it healthy and why the
+break appeared to be at pixel 4. The donor-LED and reworked-joint theories that
+had accumulated around position 4 were both wrong. **Lesson: a pixel that
+lights correctly is not evidence that it is passing data — probe DOUT.**
+
+**Flyback diode — the 1N5819 is correct here.** It is one of the parts FSD
+§5.4.8 names for this position and the same part already stocked for the
+continuity clamps. One rating to confirm on the bench: it is 40 V / **1 A** and
+carries the full siren current at turn-off, so it is correctly rated only if
+the siren draws under 1 A at 12 V. Above ~700 mA, move to an SS34-class 3 A
+part. (This became a much softer constraint later in the session — see the
+siren change below.)
+
+### Firmware 1.1.2 — siren continuous in ARMED
+
+**Operator finding once the siren was audible for the first time:** the 500 ms
+ARMED pulse **interferes with the siren's own internal modulation.** The device
+runs its own sweep; gating the 12 V supply at 1 Hz restarts that sweep on every
+edge, so it never reaches the loud part of its cycle. The pulsed ARMED warning
+was *quieter and less attention-getting than a steady tone* — the opposite of
+the intent.
+
+The pattern dates from FSD v1.1 (2026-03-22), when the base had a plain buzzer
+whose only available modulation *was* on/off gating. It outlived its rationale
+by five months and nobody had heard it on hardware until the driver was fitted
+five days ago.
+
+`siren_start_pulse()` removed. ARMED calls `siren_start_continuous()`, so the
+siren sounds unbroken from ARM through PRE_FIRE and FIRING. PRE_FIRE re-asserts
+continuous rather than assuming it, so the state does not depend on how ARMED
+was entered. **LINK_LOST and ERROR stay patterned** — those patterns carry
+information (they distinguish a fault from an armed pad) and are short enough
+that the interference does not matter.
+
+Two side effects:
+
+- Base draw during ARMED roughly doubles versus the old 50 % duty. Immaterial —
+  `ARM_TIMEOUT_MS` bounds ARMED at 10 s.
+- **The flyback diode now switches once per sequence instead of once per
+  second**, which retires the repetitive-avalanche derating concern above.
+  Only the steady-current question remains, and it is now a comfortable margin.
+
+The N2 stale-callback protection in `rlc_siren.c` is unchanged and still
+needed. The infinite (`-1`) pattern is gone with the pulse, so N2's first
+failure mode is unreachable by construction — but link-lost and error are still
+finite periodic patterns and can still park a callback on the mutex.
+
+### Bug #29 — base stayed ARMED with the igniter disconnected
+
+**Found on target during fire-sequence testing.** Arm a channel, then
+disconnect the igniter: the base **stayed ARMED** with the arm relay energised,
+the fire path live and the siren sounding, and neither unit indicated the
+igniter was gone. The only exits were the 10 s arm timeout or an operator
+disarm.
+
+**This was a specification defect before it was a code defect.** Continuity was
+checked once, at arm time (`guard_arm()` guard 2); after that the change
+callback carried no arguments and said only "something moved", so the FSM never
+saw band changes at all. FSD §7.3.1 stated the position explicitly —
+*"Continuity-loss disarm during ARMED/PRE_FIRE states is not implemented ... an
+accepted low-probability risk."* Three things were wrong with it:
+
+1. **The rationale was obsolete by five months.** v1.8 (2026-03-23) removed the
+   disarm because continuity sensing was *disabled* in ARMED/PRE_FIRE under the
+   old shared-MOSFET design, so readings would have been stale. The v1.10 SPDT
+   redesign — the very next revision — made continuity live throughout ARMED and
+   PRE_FIRE, because the channel relay sits on NC until FIRING. The removal was
+   never revisited against the new hardware.
+2. **The document contradicted itself for 25 revisions.** §4.x's Phase 3 test
+   criteria have listed *"All disarm triggers work (switch, command, link loss,
+   continuity → OPEN, battery)"* the entire time.
+3. **The risk is not low-probability.** An igniter leaving the circuit is
+   precisely what happens when a person is at the pad handling it — the one
+   moment when being armed matters most.
+
+**Fix.** New `EVT_CONTINUITY_CHANGED` carries the channel number *and* the new
+band from `continuity_task` to the base FSM; `armed_channel_went_open()` gates
+the disarm. The band travels in the event rather than being re-read, because
+the round-robin sampler may have moved the channel on again by the time the
+event is dequeued. The queue send is a 10 ms blocking one, matching the
+arm-sense sibling — a dropped event here would silently leave the base armed on
+an open igniter, the exact failure being fixed.
+
+**Scoped deliberately.** Getting this wrong in the other direction breaks firing
+outright:
+
+| Condition | Disarms? | Why |
+|---|---|---|
+| Band = OPEN | **Yes** | Matches arming guard 2 — OPEN is the only band that blocks arming |
+| Band = MARGINAL / SHORT | No | Informational per §7.3.1 step 2; unchanged |
+| Armed channel | **Yes** | — |
+| Any other channel | No | Informational. T-A18 is the regression guard |
+| State = ARMED, PRE_FIRE | **Yes** | Relay on NC, so the reading is live and real |
+| State = FIRING | **No** | Relay on NO, NC sense line physically disconnected — reads OPEN *by design*. Acting on it would abort every fire pulse the instant it started |
+| State = POST_FIRE | **No** | OPEN is the **success** indicator: it means the igniter fired |
+
+**Detection latency: up to ~800 ms** — one channel per 100 ms round-robin over
+eight channels, plus classifier hysteresis. Well inside `ARM_TIMEOUT_MS`, and
+accepted: this is a safety backstop, not a real-time interlock. Do not record
+it as one in a test report.
+
+**The remote needed no change.** It learns of the disarm from the resulting
+`STATUS_UPDATE`, whose `continuity_bands` field already shows the channel OPEN.
+No new NACK reason — there is no command to NACK, because the trigger is a
+spontaneous hardware event.
+
+### Version
+
+**Firmware 1.1.1 → 1.1.2.** Both changes are base-only with no wire-protocol
+change, but the strict version check covers all three components, so **both
+units must be flashed together** or they refuse to link. Both were flashed this
+session.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `components/rlc_base/src/rlc_siren.c` | `siren_start_pulse()` and `SIREN_PULSE_HALF_MS` removed; N2 comments reconciled with the loss of the infinite pattern |
+| `components/rlc_base/include/rlc_siren.h` | `siren_start_pulse()` removed; `siren_start_continuous()` documented as the ARMED→FIRING warning |
+| `components/rlc_base/src/rlc_base_fsm.c` | Both ARMED entry paths call `siren_start_continuous()`; new `armed_channel_went_open()` helper; continuity-loss disarm in the ARMED and PRE_FIRE handlers |
+| `components/rlc_base/src/rlc_base_main.c` | `on_io_change()` takes channel + band and posts `EVT_CONTINUITY_CHANGED` with a 10 ms blocking send |
+| `components/rlc_base/src/rlc_continuity.c` | Change callback carries channel + band (both the normal and the ADC-fail-safe path) |
+| `components/rlc_base/include/rlc_continuity.h` | `continuity_register_change_cb()` signature + rationale |
+| `components/rlc_common/include/rlc_fsm_events.h` | `EVT_CONTINUITY_CHANGED = 0x19` and its payload struct |
+| `components/rlc_common/include/rlc_version.h` | 1.1.1 → 1.1.2 |
+| `RLC_Functional_Specification_v1_14.md` | → **v1.35**: §5.4.4 as-built indicator note, §5.4.8 as-built driver note, §7.2.2/§7.2.3/§7.4.1 siren, §7.2.7/§7.3.1 continuity-loss disarm, state diagram, both transition tables, new tests T-A16/T-A17/T-A18, two revision entries (v1.34 hardware, v1.35 firmware) |
+| `Development_Progress.md` | Bugs #19/#27/#28 → RESOLVED with full entries; new bug #29 entry; new "Firmware 1.1.2 — Siren Continuous in ARMED" entry; T-L18 → PASS; G2 widened to T-A01..T-A18; fire-testing hold lifted |
+| `README.md` | Fire-testing status, siren status, bug #19 note, operating-sequence siren wording |
+| `RLC_Project_Summary.md` | Club-facing doc: removed the badly stale "ESP32 destroyed, awaiting replacement" paragraph; siren wording; continuity-watched-while-armed added to the interlock list |
+
+### Verification
+
+- Both units build clean — **zero warnings, zero errors**.
+- Host test suite: **0 failures** across all six suites.
+- Both units flashed with 1.1.2 over their by-id ports (base
+  `usb-1a86_USB_Single_Serial_5B5E042156-if00`, remote
+  `...5B5E043219-if00`).
+
+### Owed on target — nothing below has been run yet
+
+- **T-A16 / T-A17 / T-A18** — the new continuity-loss disarm tests (T-A18 is the
+  regression guard that a *non-armed* channel going OPEN must **not** disarm).
+- **Siren bench tests 2 and 3**, plus the LINK_LOST 4-cycle and ERROR 3-blast
+  patterns, and a **silent-at-power-on** check. These close review finding N2,
+  which is still verified by code inspection alone. The continuous-siren change
+  makes test 2 easier to judge: any gap at the ARMED→PRE_FIRE boundary is now a
+  defect rather than expected behaviour.
+- **Re-verify the hardware AND gate at the node** (not from the LEDs) before the
+  first shot, since the indicator wiring was just reworked.
+- **Measure the siren's steady current** to confirm the 1 A diode rating.
+
+---
+
 ## 2026-08-25 — External antennas on both units, 200 m range test, link-budget analysis
 
 ### Hardware

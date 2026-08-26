@@ -308,6 +308,37 @@ static uint8_t guard_arm(const rlc_fsm_event_t *evt)
     return 0;  /* All guards pass */
 }
 
+/* ── Guard: continuity loss while armed (FSD §7.2.7) ─────────── */
+
+/**
+ * True when this event says the *armed* channel's igniter has gone OPEN.
+ *
+ * Added 2026-08-26. Until then continuity was checked only at arm time
+ * (guard_arm guard 2) and band changes were informational: FSD §7.3.1 called
+ * mid-arm igniter disconnection "an accepted low-probability risk" bounded by
+ * ARM_TIMEOUT_MS. On-target testing showed what that means in practice — pull
+ * the igniter lead while ARMED and the base stays armed, siren sounding, fire
+ * path live, with nothing on either unit saying the igniter is gone. The risk
+ * is not the accepted one; disconnection is exactly what happens when someone
+ * is working at the pad, which is when being armed matters most.
+ *
+ * Only OPEN disarms, matching guard 2 — OPEN is the sole band that blocks
+ * arming. MARGINAL and SHORT stay informational (§7.3.1 step 2).
+ *
+ * Deliberately NOT applied in FIRING or POST_FIRE. During FIRING the armed
+ * channel's relay is on NO, so its NC sense line is physically disconnected
+ * and reads OPEN *by design* — acting on that would abort every fire pulse
+ * the instant it started. In POST_FIRE, OPEN is the success indicator: it
+ * means the igniter fired (§7.3.1, post-fire igniter status).
+ */
+static bool armed_channel_went_open(const rlc_fsm_event_t *evt)
+{
+    return evt->type == EVT_CONTINUITY_CHANGED &&
+           s_armed_channel != 0 &&
+           evt->data.continuity.channel == s_armed_channel &&
+           evt->data.continuity.band == CONT_OPEN;
+}
+
 /* ── Event Processing ─────────────────────────────────────────── */
 
 static void process_event(const rlc_fsm_event_t *evt)
@@ -367,7 +398,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 /* Sense already HIGH — proceed to ARMED immediately */
                 s_armed_channel = ch;
                 s_arm_time_ms = now_ms();
-                siren_start_pulse();
+                siren_start_continuous();
                 rlc_rgb_led_set_pattern(LED_PATTERN_ARMED);
                 send_ack(MSG_CMD_ARM, evt->data.cmd.seq_number, ch);
                 status_update_trigger();
@@ -394,7 +425,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 s_arm_time_ms = now_ms();
                 s_arm_verify_channel = 0;
                 s_arm_verify_start_ms = 0;
-                siren_start_pulse();
+                siren_start_continuous();
                 rlc_rgb_led_set_pattern(LED_PATTERN_ARMED);
                 send_ack(MSG_CMD_ARM, s_arm_verify_seq, ch);
                 status_update_trigger();
@@ -478,6 +509,8 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* J2: seed dead-man timestamp from the triggering CMD_FIRE so the
              * pre-fire countdown's freshness check has a valid baseline. */
             s_last_fire_cmd_ms = evt->data.cmd.received_ms;
+            /* Already continuous since ARMED (2026-08-26) — re-asserted so
+             * PRE_FIRE does not depend on how ARMED was entered. */
             siren_start_continuous();
             rlc_rgb_led_set_pattern(LED_PATTERN_PRE_FIRE);
             send_ack(MSG_CMD_FIRE, evt->data.cmd.seq_number, s_armed_channel);
@@ -503,6 +536,11 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* Key switch turned OFF */
             ESP_LOGW(TAG, "Key switch OFF during ARMED — disarm");
             do_disarm();
+        } else if (armed_channel_went_open(evt)) {
+            /* Igniter disconnected or blown while armed — go safe. */
+            ESP_LOGW(TAG, "Continuity OPEN on armed ch %u during ARMED — disarm",
+                     s_armed_channel);
+            do_disarm();
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
             do_enter_error(ERR_VBAT_CRITICAL);
         } else if (evt->type == EVT_LINK_LOST) {
@@ -527,6 +565,13 @@ static void process_event(const rlc_fsm_event_t *evt)
             do_disarm();
         } else if (evt->type == EVT_KEY_SWITCH_CHANGED && !evt->data.arm_state.armed) {
             ESP_LOGW(TAG, "Key switch OFF during PRE_FIRE — abort");
+            do_disarm();
+        } else if (armed_channel_went_open(evt)) {
+            /* The relay is still on NC through the whole countdown, so this
+             * reading is live and real. An igniter that has left the circuit
+             * will not fire — abort rather than run the countdown out. */
+            ESP_LOGW(TAG, "Continuity OPEN on armed ch %u during PRE_FIRE — abort",
+                     s_armed_channel);
             do_disarm();
         } else if (evt->type == EVT_CMD_DISARM) {
             send_ack(MSG_CMD_DISARM, evt->data.cmd.seq_number,
