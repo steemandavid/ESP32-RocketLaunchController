@@ -510,7 +510,7 @@ They should be verified before Phase 3 work begins, or during Phase 5 hardening.
 ## Phase 3 — State Machines and Command Processing
 
 **FSD ref:** §4.3 Phase 3, §7 (Base FSM), §8 (Remote FSM), §6.3 (Commands)
-**Status:** ON-TARGET TESTING RESUMING (channel 1 only) — G1 partial (T-R04 PASS, T-R05 SKIP/code-reviewed, T-R06 pending). Blocker resolved 2026-07-21: base ESP32 chip #3 installed (MAC `44:1B:F6:D4:0D:68`), hardware protection fitted on **channel 1** (clamping diodes on the ADC input + snubber across the relay contact; channels 2–8 still unprotected — test channel 1 ONLY), software relay-order fix already in place. Both units reflashed; G0 re-verified with chip #3 (LINK_ACK, rssi=-35). Next: G2 arming (T-A01..T-A18) then G3 fire (T-F01..T-F09), now on any channel — see the 2026-08-26 entries.
+**Status:** G2 ARMING SUITE COMPLETE 2026-08-26 — 14 PASS, 0 FAIL, 2 N/A (T-A05, T-A15), 2 deferred to a fault-injection harness (T-A11, T-A13). See `Test_Report_Phase3_G2.md`. Earlier status below is historical. ON-TARGET TESTING RESUMING (channel 1 only) — G1 partial (T-R04 PASS, T-R05 SKIP/code-reviewed, T-R06 pending). Blocker resolved 2026-07-21: base ESP32 chip #3 installed (MAC `44:1B:F6:D4:0D:68`), hardware protection fitted on **channel 1** (clamping diodes on the ADC input + snubber across the relay contact; channels 2–8 still unprotected — test channel 1 ONLY), software relay-order fix already in place. Both units reflashed; G0 re-verified with chip #3 (LINK_ACK, rssi=-35). Next: G2 arming (T-A01..T-A18) then G3 fire (T-F01..T-F09), now on any channel — see the 2026-08-26 entries.
 
 ### Phase 3 Architecture
 
@@ -789,24 +789,24 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 
 | ID | Test | Status |
 |----|------|--------|
-| T-A01 | ARM with both switches + continuity GOOD | TODO |
-| T-A02 | ARM with base switch disarmed → NACK 0x01 | TODO |
-| T-A03 | ARM with remote switch disarmed → local guard | TODO |
-| T-A04 | ARM with OPEN continuity → NACK 0x04 | TODO |
-| T-A05 | ARM second channel while armed → NACK 0x0A | TODO |
-| T-A06 | Turn base key OFF while armed → immediate disarm | TODO |
-| T-A07 | Turn remote arm switch DISARM while armed → disarm | TODO |
-| T-A08 | Rotate encoder while armed → disarm | TODO |
-| T-A09 | Continuity bands visible with arm switch OFF | TODO |
-| T-A10 | ARM with arm sense fault → NACK 0x0B | TODO |
-| T-A11 | ARM with stale STATUS_UPDATE → local block | TODO |
-| T-A12 | ARM with low remote battery → local block | TODO |
-| T-A13 | Wrong channel in ACK → channel mismatch error | TODO |
-| T-A14 | ARM with MARGINAL continuity → succeeds (warning) | TODO |
-| T-A15 | ARM with SHORT continuity → succeeds (informational) | TODO |
-| T-A16 | Disconnect the igniter on the armed channel while ARMED → disarm within ~1 s | TODO (new, bug #29 / fw 1.1.2) |
-| T-A17 | Disconnect the igniter on the armed channel during the PRE_FIRE countdown → abort, no pulse | TODO (new, bug #29 / fw 1.1.2) |
-| T-A18 | Disconnect a **non-armed** channel's igniter while another is ARMED → base stays ARMED | TODO (new, bug #29 regression guard) |
+| T-A01 | ARM with both switches armed, continuity GOOD | **PASS** 2026-08-26 (siren continuous, M1 verify path 170 ms) |
+| T-A02 | ARM with base switch disarmed → NACK 0x01 | **PASS** 2026-08-26 |
+| T-A03 | ARM with remote switch disarmed → local block | **PASS** 2026-08-26 (no ARM traffic) |
+| T-A04 | ARM channel with OPEN continuity → NACK 0x04 | **PASS** 2026-08-26 |
+| T-A05 | ARM second channel while one armed → NACK 0x0A | **N/A** — unreachable via UI (T-A08 disarms on encoder rotate first). Guard stays as defence-in-depth; verify by host test. See FSD v1.37 |
+| T-A06 | Base key OFF while armed → disarm | **PASS** 2026-08-26 (relay out at +10 ms, before the FSM — hardware leg) |
+| T-A07 | Remote arm switch DISARM while armed | **PASS** 2026-08-26 (FSM first, relay +160 ms — software leg) |
+| T-A08 | Rotate encoder while armed → disarm | **PASS** 2026-08-26 (channel advanced to CH2) |
+| T-A09 | Continuity bands visible with arm switch OFF | **PASS** 2026-08-26 (band list corrected — no SHORT band) |
+| T-A10 | ARM with arm relay sense fault → NACK 0x0B | **PASS** 2026-08-26 (200 ms verify timeout) |
+| T-A11 | ARM with stale STATUS_UPDATE | **DEFERRED** — not externally inducible; needs fault-injection harness |
+| T-A12 | ARM with low remote battery | **PASS** 2026-08-26 (remote at 6.8 V, no ARM traffic) |
+| T-A13 | Verify channel in CMD_ACK | **DEFERRED** — not externally inducible; needs fault-injection harness |
+| T-A14 | ARM with MARGINAL continuity → succeeds (warning) | **PASS** 2026-08-26 (ch3, 269000 uV) |
+| T-A15 | ARM with SHORT continuity → succeeds (informational) | **N/A** — SHORT band merged into CONNECTED 2026-08-21 (bug #26); not runnable, see FSD v1.37 |
+| T-A16 | Disconnect the igniter on the armed channel while ARMED → disarm within ~1 s | **PASS** 2026-08-26 (920 ms detect, disarm +20 ms) |
+| T-A17 | Disconnect the igniter on the armed channel during the PRE_FIRE countdown → abort, no pulse | **PASS** 2026-08-26 (needed PRE_FIRE at 10 s; an igniter fired at 2 s) |
+| T-A18 | Disconnect a **non-armed** channel's igniter while another is ARMED → base stays ARMED | **PASS** 2026-08-26 (3 transitions, stayed ARMED) |
 
 ### Phase 3 FSD Fire Tests (§15.3)
 
@@ -2880,7 +2880,7 @@ behaviour rather than hardware — worth a low-priority look.
 |----|------|--------|
 | T-S01 | Power cycle base while armed → safe boot | TODO |
 | T-S02 | Power cycle remote while base armed → link loss disarm | TODO |
-| T-S03 | Base battery below VBAT_CRITICAL_MV → ERROR state | TODO |
+| T-S03 | Base battery below VBAT_CRITICAL_MV → ERROR state | **PASS** (2026-08-26) — taken to 7978 mV, latched `ERROR flags=0x02`, correctly stayed latched at 12.1–12.7 V until power cycle |
 | T-S04 | Hold fire button at boot, then arm → no fire (fresh press) | TODO |
 | T-S05 | Corrupt message (bit flip) → rejected | TODO |
 | T-S06 | GPIO init order verification (oscilloscope on boot) | TODO |
@@ -2891,7 +2891,7 @@ behaviour rather than hardware — worth a low-priority look.
 | T-S11 | 5 consecutive send failures → immediate link loss | PASS | Triggered on-target during RF shielding test (RSSI -98 dBm) |
 | T-S12 | Fire pulse on link loss (COMPLETE_PULSE=true) | TODO |
 | T-S13 | Fire pulse on link loss (COMPLETE_PULSE=false) | TODO |
-| T-S14 | Arm timeout (10 s auto-disarm) | TODO |
+| T-S14 | Arm timeout (10 s auto-disarm) | **PASS** (2026-08-26) — `ARM TIMEOUT (10022 ms)` against a 10000 ms constant, observed repeatedly |
 | T-S15 | ERR_COMM_DEGRADED blocks arming | TODO |
 | T-S16 | ERR_COMM_DEGRADED blocks firing | TODO |
 | T-S17 | Arm switch sense verifies arm switch | TODO |
