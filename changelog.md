@@ -1,6 +1,6 @@
 # ESP32 Rocket Launch Controller — Changelog
 
-## 2026-08-26 — Three hardware bugs closed, fire testing unblocked, firmware 1.1.2
+## 2026-08-26 — Hardware bugs closed, G2 arming suite passed, firmware 1.1.1 → 1.1.4
 
 Hardware rework by the operator closed the last three open hardware defects.
 Two firmware changes followed from testing the result.
@@ -131,10 +131,11 @@ spontaneous hardware event.
 
 ### Version
 
-**Firmware 1.1.1 → 1.1.2.** Both changes are base-only with no wire-protocol
-change, but the strict version check covers all three components, so **both
-units must be flashed together** or they refuse to link. Both were flashed this
-session.
+**Firmware 1.1.1 → 1.1.4 over the session.** 1.1.2 = continuous siren +
+continuity-loss disarm (base-only). 1.1.3 = `PRE_FIRE_DELAY_MS` 5 s. 1.1.4 =
+remote reports why an ARM was refused. No wire-protocol change at any step, but
+the strict version check covers all three components, so **both units must be
+flashed together** — which they were, at each bump.
 
 ### Files changed
 
@@ -191,21 +192,128 @@ Builds clean. Also measured this session: **the siren draws under 200 mA
 steady**, closing the 1N5819 rating question from bug #27 with a 5x margin —
 recorded in the FSD, `Development_Progress.md` and `README.md`.
 
-### Owed on target — nothing below has been run yet
+### Test campaign — G2 arming suite, bug #29 tests, siren bench tests
 
-- **T-A16 / T-A17 / T-A18** — the new continuity-loss disarm tests (T-A18 is the
-  regression guard that a *non-armed* channel going OPEN must **not** disarm).
-- **Siren bench tests 2 and 3**, plus the LINK_LOST 4-cycle and ERROR 3-blast
-  patterns, and a **silent-at-power-on** check. These close review finding N2,
-  which is still verified by code inspection alone. The continuous-siren change
-  makes test 2 easier to judge: any gap at the ARMED→PRE_FIRE boundary is now a
-  defect rather than expected behaviour.
-- ~~Re-verify the hardware AND gate at the node before the first shot~~ —
-  **DONE: all seven steps PASS**, every sampling window 0/200 or 200/200 with
-  no mixed samples anywhere. Both legs verified in both directions and the coil
-  LED agrees with the node. A marginal sneak path — the actual concern after
-  bug #28 — would have shown as a partial count well before it showed as a
-  level, and there is none. Bug #28's fix is now confirmed by measurement.
+Everything below was run on target this session, after the hardware rework. The
+base's serial log was captured throughout, so results are backed by timestamped
+traces rather than observation alone. Full write-up in
+`Test_Report_Phase3_G2.md`.
+
+**G2 (FSD §15.2): 14 PASS, 0 FAIL, 2 N/A, 2 deferred.**
+
+The three new bug #29 tests all pass. T-A16 disarmed 920 ms after the igniter
+was pulled — pure round-robin sampling latency, with the FSM logging its
+decision in the *same millisecond* as the band change. T-A17 aborted the
+countdown with no fire pulse, and a repeat `CMD_FIRE` arriving 40 ms later was
+NACKed `WRONG STATE`, which proves the fire button was still held (the first
+attempt had aborted via `CEASE_FIRE` instead — a false pass the log caught).
+T-A18 held ARMED across three band transitions on a non-armed channel.
+
+**Two traces worth keeping.** T-A06 vs T-A07 show the arm relay dropping
+*before* the FSM finishes when the key breaks the coil (+10 ms), and *after* it
+when software commands the disarm (+160 ms) — the §5.4.4 AND gate's two legs
+behaving differently, from the operational side. And the accidental ignition
+during T-A17 validated the **FIRING exclusion** in bug #29's scoping: 680 ms
+into the pulse the armed channel's band went OPEN (relay on NO, sense line
+physically disconnected by design) and the FSM correctly ignored it. Scoped the
+other way, that pulse and every future one would have aborted mid-fire.
+
+**Incidentally banked:** T-S03 (base below VBAT_CRITICAL → ERROR, and correctly
+still latched at 12.1–12.7 V afterwards) and T-S14 (arm timeout at 10022 ms
+against a 10000 ms constant).
+
+**Siren bench tests: six checks, all PASS — review finding N2 closed by
+measurement**, having rested on code inspection alone since 2026-08-21. Silent
+at power-on; continuous across ARMED→PRE_FIRE; stops and stays stopped after
+all three disarm routes; LINK_LOST = 4 cycles of 500/500; ERROR = 3 blasts at
+200 ms; and link recovery mid-pattern silences it immediately and permanently.
+
+That last check is the one that now matters. N2's stuck-on mode depended on the
+infinite `-1` pattern that disappeared with the ARMED pulse, so the original
+bench test 3 can no longer reach it — the risk migrated to the still-periodic
+LINK_LOST and ERROR patterns. The log shows recovery at 3080 ms, inside the
+4000 ms window, so the case was genuinely hit. **If a periodic ARMED pattern is
+ever reintroduced, that is the regression test, not bench test 2.**
+
+### Three stale FSD tests corrected
+
+None was a firmware fault; all three had drifted from the build and would have
+produced false failures for anyone running the suite cold.
+
+- **T-A05 contradicts T-A08.** Arming a second channel requires an encoder
+  rotation, which T-A08 requires to disarm — satisfying one destroys the
+  other's precondition. Confirmed on target: the remote sent `CMD_DISARM`, never
+  a second ARM. The NACK 0x0A guard stays as defence-in-depth against a remote
+  bug or replayed frame; it belongs in host tests, not the on-target suite.
+- **T-A15 is superseded** and **T-A09's band list was wrong** — both still
+  described a SHORT band merged into CONNECTED on 2026-08-21 (bug #26).
+
+### Defect found and fixed — remote failed silently when an ARM was refused
+
+Reported by the operator: with the base in ERROR, a long-press to arm produced
+no beep, no message, nothing on the wire. Three causes compounded. The base's
+ERROR handler is a bare `break;` so it discards `CMD_ARM` without a NACK; the
+remote's ACK-timeout branch was the **only** failure path with no operator
+feedback (every guard, NACK and channel-mismatch beeps and toasts); and the
+remote never inspected `base_state == STATE_ERROR` despite receiving it in every
+STATUS_UPDATE. A base that never answered was indistinguishable from a
+long-press that had not registered.
+
+Fixed remote-side in **1.1.4**: a new guard refuses locally and names the fault
+(`BASE ERROR: VBAT CRITICAL`), and the timeout path now reports `NO RESPONSE
+FROM BASE`. Verified on target. Left open deliberately: whether the base should
+NACK from ERROR at all — that changes the contract of a deliberately terminal
+state and was not altered unilaterally.
+
+### PRE_FIRE_DELAY_MS 2000 → 5000 (firmware 1.1.3)
+
+T-A17 requires disconnecting an igniter *during* the countdown. At 2 s the
+operator could not act in time and **an igniter fired**. Raised temporarily to
+10 s to complete the test, then settled by operator decision at 5 s: long enough
+to act inside, short enough not to invite the fatigue-release the original value
+was chosen to avoid. Both units flashed together — the remote runs its own
+countdown against the same constant.
+
+### Tooling — `tools/armgate-test`
+
+Standalone firmware proving the §5.4.4 AND gate **at the ARM SENSE node** rather
+than from the indicator LEDs, written because bug #28 and its sibling were both
+indicator-wiring faults. Six steps beyond the three-row truth table: step 0
+validates KEY SENSE itself (a stuck input would make the run a silent no-op
+reporting PASS), step 4 catches a relay that never releases, step 5 proves the
+key-switch leg from the armed side.
+
+**Result: all seven steps PASS, every window 0/200 or 200/200 with no mixed
+samples anywhere.** That is the finding — a marginal sneak path shows up as a
+partial count long before it shows as a level, so bug #28's fix is confirmed by
+measurement rather than inspection.
+
+Two bugs of my own were fixed getting it running: `run.sh` now sources ESP-IDF
+(bare `idf.py` is not on a fresh shell's PATH), and the console moved to UART0.
+It had been built for the native USB port, which presents as a **boot loop** —
+the ROM banner still reaches UART0 so the monitor shows repeated
+`rst:0x1 (POWERON)` while nothing the app prints ever arrives. Documented in the
+tool README so the next tool in this repo doesn't repeat it.
+
+### Still owed
+
+- **T-A11 and T-A13** — the last two G2 tests. Neither is inducible from outside
+  the firmware, so a `CONFIG_RLC_FAULT_INJECTION` harness is agreed: both
+  injections are base-side (suppress STATUS_UPDATE while still answering PINGs
+  for T-A11; emit the next ARM ACK with a wrong channel for T-A13), driven over
+  the base UART, defaulting off with a boot banner and a `#warning`.
+- **G3 fire testing (T-F01…T-F09).** Channels 2–8 have never been fired.
+  Channel 1 has now fired once, unplanned, and the whole chain worked.
+- **Bug #24 — no rail clamp on the base.** Unchanged this session, and the
+  highest-consequence item left: three ESP32s have died on that unit via the
+  3.3 V rail.
+
+### Superseded during the session
+
+- ~~T-A16 / T-A17 / T-A18~~ — **DONE, all PASS.**
+- ~~Siren bench tests~~ — **DONE, all six PASS. N2 closed.**
+- ~~Re-verify the hardware AND gate at the node~~ — **DONE, all seven steps
+  PASS** (see the tooling section above).
 - ~~Measure the siren's steady current~~ — **done: under 200 mA.**
 
 ---

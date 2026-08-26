@@ -174,15 +174,24 @@ Known open items before any field use:
   LED lighting with the key in SAFE) turned out to be indicator wiring, not the
   hardware AND gate, and is fixed; a second indicator fault — the key-position
   red and green LEDs lighting simultaneously in SAFE — was fixed at the same
-  time. All three arm LEDs now report correctly. Re-verify the AND gate at the
-  node before the first shot, since the indicator wiring was just reworked.
+  time. All three arm LEDs now report correctly. The AND gate was then verified
+  **electrically at the ARM SENSE node** with `tools/armgate-test` — all seven
+  steps pass, every sampling window 0/200 or 200/200 with no mixed samples, so
+  the marginal sneak path that bug #28 raised is ruled out rather than assumed
+  gone.
 - **The base siren is now driven** (bug #27): IRLZ44N on GPIO 40 with its gate
   resistor, pull-down and a 1N5819 flyback diode. The pad has an audible warning
   for the first time. It sounds **continuously** from ARMED through PRE_FIRE and
   FIRING as of firmware 1.1.2 — the old 500 ms ARMED pulse fought the siren's own
   internal modulation and came out quieter than a steady tone. The siren bench
-  retests that close review finding N2 have **not** been run yet. The siren
-  measures under 200 mA steady, so the 1 A diode has a 5x margin.
+  retests are **done — all six pass**, closing review finding N2 by measurement.
+  The siren measures under 200 mA steady, so the 1 A diode has a 5x margin.
+- **The arming path is verified on target as of 2026-08-26.** The FSD §15.2
+  suite ran 14 PASS / 0 FAIL, with two tests found unrunnable as written
+  (T-A05 contradicts T-A08; T-A15 tests a continuity band merged away in
+  August) and two awaiting a fault-injection harness. Full write-up in
+  `Test_Report_Phase3_G2.md`. **Fire testing (T-F01…T-F09) has still not been
+  run**, and channels 2–8 have never been fired.
 - **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
   ever specified. Protection is firmware-only, and the ERROR state halts
   operation without disconnecting the load — so a unit left switched on, or one
