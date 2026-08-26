@@ -50,7 +50,10 @@ to act inside — the direct cause of the countdown change.
 | T-A17 | Disconnect armed igniter during PRE_FIRE | **PASS** | `Continuity OPEN on armed ch 1 during PRE_FIRE — abort`, no `Fire timer started`. A repeat `CMD_FIRE` arriving 40 ms later was NACKed `WRONG STATE`, proving the fire button was still held |
 | T-A18 | Disconnect a NON-armed channel while armed | **PASS** | Three ch2 band transitions while ch1 armed; base stayed ARMED throughout and ended only on the 10 s arm timeout. No `Continuity OPEN on armed ch 1` anywhere |
 
-**Totals: 16 PASS / 0 FAIL / 2 N/A out of 18.** (T-A05 and T-A15 are not runnable as written — see §3.)
+| T-A19 | ARM while base is in terminal ERROR | **PASS** | Via `--inject` key `e`. Base `NACK 0x0E`; remote `ARM NACK: 0x0e (BASE IN ERROR)` → display `BASE ERROR: VBAT CRITICAL` — see §7 |
+| T-A20 | Every refusal reports audibly and on the display (§7.2.9a) | **PASS** (spot-checked) | `BASE STATUS LOST`, `BASE DISARMED`, `BASE ERROR: <flag>` — see §7 |
+
+**Totals: 18 PASS / 0 FAIL / 2 N/A out of 20.** (T-A05 and T-A15 are not runnable as written — see §3.)
 
 ### 1.1 Safety tests demonstrated incidentally
 
@@ -262,7 +265,75 @@ regression test to re-run — not test B.**
 
 ---
 
-## 7. Recommendation
+## 7. Firmware 1.1.6 — no silent refusals, validated on target
+
+Two operator-driven changes, both verified after the fact rather than taken on
+inspection.
+
+### 7.1 The base answers commands in ERROR — T-A19 PASS
+
+Its ERROR handler was a bare `break;`, so commands were discarded and the
+remote could only time out. A timeout carries no reason, which is how an
+operator ends up unable to tell a dead link from a base needing a power cycle.
+New NACK reason `0x0E`.
+
+```
+BASE    NACK sent: type=0x20 reason=0x0e (BASE IN ERROR)
+REMOTE  ARM NACK: 0x0e (BASE IN ERROR)
+REMOTE  [NACK] BASE ERROR: VBAT CRITICAL
+```
+
+**The specific fault is not carried in the NACK.** The payload is a fixed 6
+bytes and widening it would break the wire format — unnecessary, because
+`error_flags` arrives in every STATUS_UPDATE. The remote resolves the generic
+code against its own cache, so the operator gets the fault to go and look at
+rather than "BASE IN ERROR", with a fallback to the bare reason when no flags
+are cached.
+
+**Making this testable was the harder half.** The remote's local ERROR guard
+(added 1.1.4) refuses to send an ARM whenever its cached status shows ERROR, so
+in normal operation the base never gets to answer and `0x0E` is unreachable.
+The real-world gap — a base failing between status updates — is under 100 ms.
+
+The harness's first `e` command suppressed STATUS_UPDATE and left a ~4 s
+freshness window to arm inside. That is a race, not a test: an operator acting
+on a written instruction cannot reliably hit it, and a miss looks
+indistinguishable from a failure. It now falsifies `base_state` to IDLE in
+STATUS_UPDATE while leaving `error_flags` truthful, which keeps the local guard
+quiet indefinitely **and** keeps the enrichment path as the thing under test.
+The injection defeats the guard without defeating the behaviour being measured.
+
+### 7.2 Every refusal now reports — T-A20 PASS (spot-checked)
+
+FSD §7.2.9a states this as a requirement. Two branches verified directly:
+
+| Branch | Before | After |
+|---|---|---|
+| Stale-status timeout | log only; remote silently dropped to IDLE | `[TOAST] BASE STATUS LOST` at 5048 ms |
+| Base disarms under an ARMED remote | log only | `[TOAST] BASE DISARMED` |
+
+**Scope of this result.** Three branches were exercised on hardware, not all of
+them. The remainder — the seven FIRE-path guards, ARM send/retry failure, ARM
+cancellation, base/remote state mismatch, base-ended-sequence — are compiled,
+reviewed and structurally identical to those that passed, but have not been
+individually triggered; most need a race or an injection to reach. Several will
+be exercised naturally during G3, which is the first time the FIRE path runs in
+anger. Recorded as spot-checked rather than exhaustive.
+
+### 7.3 Audit
+
+An audit of the remote FSM leaves five log-without-display sites, all
+legitimate: multi-arm (displays via a different path), `do_enter_error()`
+(always reached through `do_enter_error_text()`), and three init failures that
+occur before the display task exists.
+
+The base was reflashed with a normal build afterwards and verified clean two
+ways: the option absent from the built config, and zero injection symbols in
+the ELF.
+
+---
+
+## 8. Recommendation
 
 The arming path is in good shape: every operator-reachable arming guard and
 every disarm trigger behaves as specified, and the bug #29 continuity-loss

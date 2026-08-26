@@ -1,6 +1,6 @@
 # ESP32 Rocket Launch Controller — Changelog
 
-## 2026-08-26 — Hardware bugs closed, G2 arming suite complete, firmware 1.1.1 → 1.1.5
+## 2026-08-26 — Hardware bugs closed, G2 arming suite complete, firmware 1.1.1 → 1.1.6
 
 Hardware rework by the operator closed the last three open hardware defects.
 Two firmware changes followed from testing the result.
@@ -351,6 +351,75 @@ check the injection before the firmware.**
 The base was reflashed with a normal build afterwards, verified two ways: no
 `CONFIG_RLC_FAULT_INJECTION` in the built config, and zero injection symbols in
 the ELF.
+
+### No silent refusals — firmware 1.1.6, validated on target
+
+Two operator decisions, taken after the day's testing kept surfacing the same
+shape of problem.
+
+**The base now answers commands while in ERROR** (new NACK reason `0x0E`)
+instead of discarding them. Its ERROR handler was a bare `break;`, so the
+remote could only time out — and a timeout carries no reason, which is how an
+operator ends up unable to distinguish a dead link from a base needing a power
+cycle. All four commands are answered, DISARM included: refusing a disarm on an
+already-safe base looks odd, but "I am in ERROR" is the operative fact in every
+case, and silently ACKing would report "all is well" about a unit that is out
+of service.
+
+The NACK payload is a fixed 6 bytes, so it cannot carry *which* error — and does
+not need to. `error_flags` arrives in every STATUS_UPDATE, so the remote
+resolves the generic code against its own cache and shows **"BASE ERROR: VBAT
+CRITICAL"** rather than a bare code. No wire-format change.
+
+**Every remaining silent branch on the remote now beeps and displays.** The
+FIRE guard family was the worst of it — arm key off, base not armed, stale
+status, degraded link, send failure, key-off-after-ACK and no-response all
+dropped the remote to IDLE without a word, with the operator holding a fire
+button watching nothing happen. Also covered: ARM send and retry failures, ARM
+cancellation, base/remote state mismatch, the stale-status timeout, and
+base-ended-sequence. New FSD §7.2.9a states this as a requirement, with the
+rationale recorded: a refusal that only beeps is indistinguishable from an input
+that never registered, and the natural response to apparent non-response is to
+try again — the wrong instinct at a pad.
+
+An audit leaves five log-without-display sites, all legitimate: multi-arm
+(displays via another path), `do_enter_error()` (always reached through
+`do_enter_error_text()`), and three init failures before the display exists.
+
+### Validation — T-A19 and T-A20 PASS
+
+```
+BASE    NACK sent: type=0x20 reason=0x0e (BASE IN ERROR)
+REMOTE  ARM NACK: 0x0e (BASE IN ERROR)
+REMOTE  [NACK] BASE ERROR: VBAT CRITICAL
+```
+
+Plus the stale-status timeout now showing `BASE STATUS LOST` (log-only before)
+and a base disarming under an ARMED remote showing `BASE DISARMED` (log-only
+before).
+
+**Making T-A19 testable was the harder half.** The remote's local ERROR guard
+refuses to send an ARM whenever its cached status shows ERROR, so in normal
+operation the base never gets to answer and `0x0E` is unreachable; the
+real-world gap, a base failing between status updates, is under 100 ms.
+
+The harness's first `e` command suppressed STATUS_UPDATE and left a ~4 s window
+to arm inside. That is a race, not a test — an operator acting on a written
+instruction cannot reliably hit it, and a miss is indistinguishable from a
+failure. It now falsifies `base_state` to IDLE in STATUS_UPDATE while leaving
+`error_flags` truthful, which keeps the local guard quiet with no time limit
+**and** keeps the enrichment path as the thing under test. The injection defeats
+the guard without defeating the behaviour being measured.
+
+**T-A20 is recorded as spot-checked, not exhaustive.** Three branches were
+triggered on hardware; the rest are compiled and reviewed but not individually
+exercised, and most need a race or an injection to reach. Several will come out
+naturally during G3, the first time the FIRE path runs in anger.
+
+Base reflashed with a normal build afterwards, verified clean two ways: option
+absent from the built config, zero injection symbols in the ELF.
+
+**G2 final: 18 PASS / 0 FAIL / 2 N/A out of 20.**
 
 ### Still owed
 

@@ -98,9 +98,11 @@ Requires **ESP-IDF v5.4.1** and an ESP32-S3 (16 MB flash, 8 MB OCT PSRAM).
 console used to run FSD tests T-A11 and T-A13. Neither is reachable otherwise:
 link loss trips at 1.5 s, well before the staleness timeout, so interfering with
 the radio can never produce "linked but stale"; and nothing in normal operation
-emits a malformed ACK. Console keys: `s` withholds STATUS_UPDATE while
-heartbeats keep flowing, `a` corrupts the channel of one ARM ACK, `?` prints
-state.
+emits a malformed ACK, and the remote's own ERROR guard normally stops an ARM
+ever reaching a base in ERROR. Console keys: `s` withholds STATUS_UPDATE while
+heartbeats keep flowing (T-A11), `a` corrupts the channel of one ARM ACK
+(T-A13), `e` forces the base into ERROR while STATUS_UPDATE keeps reporting
+IDLE so an ARM still reaches it (T-A19), `?` prints state.
 
 **This firmware deliberately lies to the remote and is not safe for live use.**
 It announces itself four ways — a compile `#warning`, a boot banner, a
@@ -206,12 +208,19 @@ Known open items before any field use:
   retests are **done — all six pass**, closing review finding N2 by measurement.
   The siren measures under 200 mA steady, so the 1 A diode has a 5x margin.
 - **The arming path is verified on target as of 2026-08-26.** The FSD §15.2
-  suite ran **16 PASS / 0 FAIL**, with two tests found unrunnable as written
+  suite ran **18 PASS / 0 FAIL**, with two tests found unrunnable as written
   (T-A05 contradicts T-A08; T-A15 tests a continuity band merged away in
-  August). The last two — T-A11 and T-A13 — were closed with the
-  `--inject` fault-injection build described above. Full write-up in
+  August). Four — T-A11, T-A13, T-A19 and T-A20 — needed the `--inject`
+  fault-injection build described above. Full write-up in
   `Test_Report_Phase3_G2.md`. **Fire testing (T-F01…T-F09) has still not been
   run**, and channels 2–8 have never been fired.
+- **No silent refusals** (FSD §7.2.9a, firmware 1.1.6). Every refusal, abort or
+  failure an operator can trigger produces both a sound and a message on the
+  remote display — a log line is not operator feedback. A refusal that only
+  beeps is indistinguishable from an input that never registered, and the
+  natural response to apparent non-response is to try again, which is the wrong
+  instinct at a pad. The base also **answers** commands while in terminal ERROR
+  (NACK `0x0E`) rather than discarding them, so the remote can name the fault.
 - **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
   ever specified. Protection is firmware-only, and the ERROR state halts
   operation without disconnecting the load — so a unit left switched on, or one
