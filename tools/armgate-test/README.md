@@ -58,13 +58,28 @@ Have a meter on the ARM SENSE node for step 3, at least once.
 
 ```
 cd tools/armgate-test
-idf.py -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00 flash monitor
+./run.sh
 ```
 
-(That by-id is the base board as of 2026-08-26 — confirm with
+`run.sh` sources the ESP-IDF environment itself, so it works from a fresh
+shell — the same convention as `./build_base.sh` in the project root. It
+defaults to the base unit's by-id port and checks the port exists before
+building; override with `./run.sh -p <by-id>`.
+
+Exit the monitor with **Ctrl-]**.
+
+The default by-id is the base board as of 2026-08-26 — confirm with
 `ls /dev/serial/by-id/`, and see the by-id caveat in `Development_Progress.md`:
 a COM by-id identifies the CH340 adapter on that board, so it survives a chip
-swap but not a board swap.)
+swap but not a board swap.
+
+<details><summary>Without the wrapper</summary>
+
+```
+source ~/esp/esp-idf/export.sh
+idf.py -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00 flash monitor
+```
+</details>
 
 Reset the board to run the sequence again.
 

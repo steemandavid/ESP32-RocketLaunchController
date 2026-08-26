@@ -182,6 +182,11 @@ position is read from KEY SENSE — so the program waits rather than asking anyo
 to type. All eight channel relays are driven inactive at boot. Failure guidance
 maps each failing step to a fault class.
 
+Ships with `run.sh`, which sources the ESP-IDF environment itself and checks
+the port exists before building — `idf.py` is not on the PATH of a fresh shell,
+so the bare-`idf.py` instruction in the first version of the README failed on
+first use.
+
 Builds clean. Also measured this session: **the siren draws under 200 mA
 steady**, closing the 1N5819 rating question from bug #27 with a 5x margin —
 recorded in the FSD, `Development_Progress.md` and `README.md`.

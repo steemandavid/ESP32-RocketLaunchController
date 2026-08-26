@@ -42,7 +42,7 @@
  * reach an igniter — but DISCONNECT ALL IGNITERS before running it anyway.
  * The whole point of the exercise is that the interlock is not yet trusted.
  *
- * Build/flash:  cd tools/armgate-test && idf.py -p <by-id> flash monitor
+ * Build/flash:  cd tools/armgate-test && ./run.sh    (sources ESP-IDF itself)
  *   (base by-id as of 2026-08-26:
  *    /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00)
  */

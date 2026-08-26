@@ -1420,6 +1420,10 @@ Design notes worth keeping:
   specific fault class (sneak path around the key switch, welded contact, coil
   drive failure, stuck relay, indicator-only).
 
+**Run it with `tools/armgate-test/run.sh`**, which sources the ESP-IDF
+environment itself (same convention as `build_base.sh`) and defaults to the
+base unit's by-id port.
+
 **Safety:** it energises the arm relay, so VBAT reaches the fire bus.
 Igniters must be disconnected. Reflash `./build_base.sh flash` when done.
 
