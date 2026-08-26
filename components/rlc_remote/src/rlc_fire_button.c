@@ -54,6 +54,19 @@ static inline void led_green(bool on)
     gpio_set_level(PIN_FIRE_LED_GREEN, on ? 1 : 0);
 }
 
+/* ── State LED (FSD line 1110) ─────────────────────────────────── */
+
+/* Latched so the 20 Hz caller only touches GPIO on an actual change. */
+static bool s_live = false;
+
+void fire_button_set_live(bool live)
+{
+    if (live == s_live) return;
+    s_live = live;
+    led_red(live);
+    led_green(!live);
+}
+
 /* ── Debounce change callback ──────────────────────────────────── */
 
 static void on_change_cb(int gpio_num, bool new_state, void *user_data)
@@ -63,17 +76,19 @@ static void on_change_cb(int gpio_num, bool new_state, void *user_data)
 
     /* new_state: true = active/pressed/LOW, false = released/HIGH */
 
+    /* The LEDs are NOT touched here. Until 2026-08-26 this callback drove them
+     * directly — red while held, green while released — so the ring reported
+     * the operator's own finger rather than whether the button would do
+     * anything. FSD line 1110 specifies red for ARMED/PRE_FIRE/FIRING and
+     * green for safe/IDLE; that is state, and only the FSM knows it. Lighting
+     * red on a press the FSM ignores (§8.2.3: the fire button does nothing in
+     * IDLE) is exactly the misleading-indicator problem §7.2.9a exists to
+     * prevent. See fire_button_set_live(). */
     if (new_state) {
-        /* Button pressed */
-        led_red(true);
-        led_green(false);
         if (s_on_press) {
             s_on_press();
         }
     } else {
-        /* Button released */
-        led_red(false);
-        led_green(true);
         if (s_on_release) {
             s_on_release();
         }
@@ -122,7 +137,9 @@ void fire_button_init(void)
     };
     gpio_config(&led_cfg);
 
-    /* Default state: released → green LED on */
+    /* Boot state: not live → green. Must agree with s_live's initialiser
+     * (false), or the latch in fire_button_set_live() would swallow the first
+     * real transition. */
     led_red(false);
     led_green(true);
 

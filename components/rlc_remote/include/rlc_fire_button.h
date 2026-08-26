@@ -37,3 +37,17 @@ bool fire_button_is_pressed(void);
  * @param on_release Called on 0x00 -> 0xFF transition (may be NULL)
  */
 void fire_button_register_cb(void (*on_press)(void), void (*on_release)(void));
+
+/**
+ * Set the fire button ring LED from system state (FSD line 1110):
+ * red = the button is live, green = it is not.
+ *
+ * "Live" means the remote is ARMED/PRE_FIRE/FIRING **and** the base agrees —
+ * a fresh STATUS_UPDATE showing the same channel armed. The remote can hold
+ * ARMED while the base has already dropped out (arm timeout, key off, a
+ * continuity loss it has not yet reported), and a red ring in that window
+ * would promise a fire path that no longer exists.
+ *
+ * Idempotent and cheap: safe to call every FSM tick.
+ */
+void fire_button_set_live(bool live);

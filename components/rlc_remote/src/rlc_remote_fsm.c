@@ -123,6 +123,33 @@ static void show_nack(uint8_t reason)
     display_nack(rlc_nack_reason_str(reason));
 }
 
+static bool is_status_fresh(void);
+
+/**
+ * Is the fire button live — i.e. would a press actually start something?
+ *
+ * Both halves are required (FSD line 1110 + §8.2.4 guard 1). The remote's own
+ * state says the button is wired to an action; the base's confirmation says
+ * the fire path is really there. The remote can sit in ARMED while the base
+ * has already disarmed underneath it — arm timeout, key turned off, a
+ * continuity loss not yet reported — and lighting the ring red through that
+ * window would promise a fire path that does not exist.
+ *
+ * Deliberately reuses the same two conditions the FIRE guards check, so the
+ * ring and the guards can never disagree: light it red exactly when a press
+ * would be accepted.
+ */
+static bool fire_is_live(void)
+{
+    if (s_state != STATE_ARMED && s_state != STATE_PRE_FIRE &&
+        s_state != STATE_FIRING) {
+        return false;
+    }
+    if (s_armed_channel == 0 || !is_status_fresh()) return false;
+    return (s_last_status.channel_armed_bitmask &
+            (1U << (s_armed_channel - 1))) != 0;
+}
+
 static bool is_status_fresh(void)
 {
     return (s_last_status_rx_ms > 0) &&
@@ -1021,6 +1048,12 @@ static void remote_fsm_task(void *arg)
 
         /* Check software timers */
         check_timers();
+
+        /* Fire ring LED, every tick rather than on transitions alone: it must
+         * also follow the base dropping out underneath an ARMED remote, which
+         * arrives as a STATUS_UPDATE, not as a local state change. The setter
+         * latches, so this only touches GPIO when it actually changes. */
+        fire_button_set_live(fire_is_live());
 
         esp_task_wdt_reset();
     }

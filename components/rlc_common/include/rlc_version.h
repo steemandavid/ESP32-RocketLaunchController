@@ -12,7 +12,13 @@
  * changed on BOTH units, so the bump is deliberate: the strict version check
  * makes a half-flashed pair refuse to link rather than run mismatched safety
  * logic. Flash base and remote together. */
-/* 1.1.6 (2026-08-26): no silent refusals left. The base now ANSWERS commands
+/* 1.1.7 (2026-08-26): fire button ring LED reports state, not the button.
+ * It had driven red-while-held / green-while-released since Phase 2, so it
+ * showed the operator's finger rather than whether a press would do anything.
+ * Red now means the button is live: remote ARMED/PRE_FIRE/FIRING AND a fresh
+ * STATUS_UPDATE confirming the same channel armed at the base. Remote-only.
+ *
+ * 1.1.6 (2026-08-26): no silent refusals left. The base now ANSWERS commands
  * while in ERROR with the new NACK_BASE_ERROR (0x0E) instead of discarding
  * them — a timeout carried no reason, so an operator could not tell a dead
  * link from a base needing a power cycle. The remote names the specific fault
@@ -50,5 +56,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  6
-#define RLC_VERSION_STRING "1.1.6"
+#define RLC_VERSION_PATCH  7
+#define RLC_VERSION_STRING "1.1.7"
