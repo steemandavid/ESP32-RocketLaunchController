@@ -183,7 +183,8 @@ static void record(const char *name, bool pass, const char *detail)
  * Drive GPIO 47, let the relay settle, watch ARM SENSE, and judge it against
  * the level this configuration of the AND gate is supposed to produce.
  */
-static void step_sense(const char *name, bool relay_drive, int expect_high)
+static void step_sense(const char *name, const char *label,
+                       bool relay_drive, int expect_high)
 {
     con_printf("%s\n", name);
     con_printf("  GPIO %d -> %s, settling %d ms...\n",
@@ -197,15 +198,15 @@ static void step_sense(const char *name, bool relay_drive, int expect_high)
 
     if (highs == n) {
         snprintf(detail, sizeof(detail), "ARM SENSE steady HIGH (%d/%d)", highs, n);
-        record(name, expect_high == 1, detail);
+        record(label, expect_high == 1, detail);
     } else if (highs == 0) {
         snprintf(detail, sizeof(detail), "ARM SENSE steady LOW (0/%d)", n);
-        record(name, expect_high == 0, detail);
+        record(label, expect_high == 0, detail);
     } else {
         /* Never acceptable, whichever level was expected: a line that cannot
          * hold a level is not an interlock you can reason about. */
         snprintf(detail, sizeof(detail), "ARM SENSE UNSTABLE — %d/%d samples HIGH", highs, n);
-        record(name, false, detail);
+        record(label, false, detail);
     }
 }
 
@@ -318,7 +319,7 @@ void app_main(void)
     wait_key(false);
     wait_key(true);
     wait_key(false);
-    record("0. KEY SENSE tracks key", true, "SAFE -> ARM -> SAFE all observed");
+    record("0. KEY SENSE", true, "SAFE -> ARM -> SAFE all observed");
 
     /* ── Step 1 — table row 1 ──────────────────────────────────────
      * Key SAFE, MOSFET driven. The software leg is asserted and the
@@ -326,7 +327,8 @@ void app_main(void)
      * sneak path lived in.
      */
     wait_key(false);
-    step_sense("Step 1 — key SAFE + GPIO 47 driven  (software leg alone)", true, 0);
+    step_sense("Step 1 — key SAFE + GPIO 47 driven  (software leg alone)",
+               "1. SW leg alone", true, 0);
     gpio_set_level(PIN_ARM_RELAY, 0);
 
     /* ── Step 2 — table row 2 ──────────────────────────────────────
@@ -335,12 +337,14 @@ void app_main(void)
      * signature (FSD 7.3.2) — the relay's own contacts stuck closed.
      */
     wait_key(true);
-    step_sense("Step 2 — key ARM + GPIO 47 low  (hardware leg alone)", false, 0);
+    step_sense("Step 2 — key ARM + GPIO 47 low  (hardware leg alone)",
+               "2. HW leg alone", false, 0);
 
     /* ── Step 3 — table row 3 ──────────────────────────────────────
      * Both legs. The only configuration that may energise the relay.
      */
-    step_sense("Step 3 — key ARM + GPIO 47 driven  (both legs — relay MUST pull in)", true, 1);
+    step_sense("Step 3 — key ARM + GPIO 47 driven  (both legs — relay MUST pull in)",
+               "3. Both legs", true, 1);
     con_puts("  Relay should be audibly pulled in and the ARM RELAY (coil) LED lit.\n"
              "  Meter ARM SENSE at the node now if you have not already.\n"
              "  Is the coil LED LIT? [y/n] ");
@@ -348,7 +352,7 @@ void app_main(void)
         char c = con_getc();
         bool lit = (c == 'y' || c == 'Y');
         con_puts("\n");
-        record("3b. Coil LED lit with relay in", lit,
+        record("3b. Coil LED", lit,
                lit ? "operator confirmed lit" : "operator says NOT lit — indicator wiring");
     }
 
@@ -357,7 +361,8 @@ void app_main(void)
      * in and never lets go. Drop the software leg with the key still
      * ON: ARM SENSE must return LOW.
      */
-    step_sense("Step 4 — key still ARM, GPIO 47 back low  (relay MUST release)", false, 0);
+    step_sense("Step 4 — key still ARM, GPIO 47 back low  (relay MUST release)",
+               "4. Relay releases", false, 0);
 
     /* ── Step 5 — the other leg, from the armed side ───────────────
      * Step 1 approached the key-SAFE case from a cold start. This
@@ -377,10 +382,10 @@ void app_main(void)
         char detail[96];
         if (highs == 0) {
             snprintf(detail, sizeof(detail), "ARM SENSE steady LOW (0/%d) — key broke the coil", n);
-            record("5. Key to SAFE drops the relay", true, detail);
+            record("5. Key drops relay", true, detail);
         } else {
             snprintf(detail, sizeof(detail), "ARM SENSE %d/%d HIGH — key did NOT break the coil", highs, n);
-            record("5. Key to SAFE drops the relay", false, detail);
+            record("5. Key drops relay", false, detail);
         }
     }
     gpio_set_level(PIN_ARM_RELAY, 0);
@@ -391,7 +396,7 @@ void app_main(void)
              "  SUMMARY\n"
              "==========================================================\n");
     for (int i = 0; i < s_steps; i++) {
-        con_printf("  %-8s %-34s %s\n",
+        con_printf("  %-6s  %-20s %s\n",
                    s_result[i].pass ? "PASS" : "FAIL",
                    s_result[i].name, s_result[i].detail);
     }

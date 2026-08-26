@@ -1424,6 +1424,32 @@ Design notes worth keeping:
 environment itself (same convention as `build_base.sh`) and defaults to the
 base unit's by-id port.
 
+**RESULT 2026-08-26 — ALL SEVEN STEPS PASS.** First run on chip #4 after the
+bug #28 indicator rework:
+
+| Step | Result | Detail |
+|---|---|---|
+| 0. KEY SENSE tracks key | PASS | SAFE → ARM → SAFE all observed |
+| 1. Software leg alone (key SAFE + GPIO 47 driven) | PASS | ARM SENSE steady LOW, 0/200 samples |
+| 2. Hardware leg alone (key ARM + GPIO 47 low) | PASS | ARM SENSE steady LOW, 0/200 |
+| 3. Both legs (key ARM + GPIO 47 driven) | PASS | ARM SENSE steady **HIGH, 200/200**, relay pulled in |
+| 3b. Coil LED lit with relay in | PASS | operator confirmed |
+| 4. Relay releases (GPIO 47 back low) | PASS | ARM SENSE steady LOW, 0/200 |
+| 5. Key to SAFE drops the relay | PASS | ARM SENSE steady LOW, 0/200 — key broke the coil |
+
+**Every window was 200/200 or 0/200 — not one mixed sample anywhere.** That is
+the result worth recording: the concern after bug #28 was a *marginal* sneak
+path delivering LED-sized current around the key switch, and a marginal path
+would have shown up as a partial count long before it showed up as a level.
+There is none.
+
+**What this closes.** Both legs of the §5.4.4 hardware AND gate are verified
+at the node, in both directions, and the coil LED now agrees with the node —
+so the operator-facing rule "green = SAFE, red coil LED = fire bus live" is
+trustworthy on this unit again. Bug #28's resolution is confirmed by
+measurement rather than by inspection. **The pre-fire-test verification the
+bug #28 entry asked for is done.**
+
 **Safety:** it energises the arm relay, so VBAT reaches the fire bus.
 Igniters must be disconnected. Reflash `./build_base.sh flash` when done.
 

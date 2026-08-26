@@ -200,9 +200,12 @@ recorded in the FSD, `Development_Progress.md` and `README.md`.
   which is still verified by code inspection alone. The continuous-siren change
   makes test 2 easier to judge: any gap at the ARMED→PRE_FIRE boundary is now a
   defect rather than expected behaviour.
-- **Re-verify the hardware AND gate at the node** (not from the LEDs) before the
-  first shot, since the indicator wiring was just reworked — run
-  `tools/armgate-test`.
+- ~~Re-verify the hardware AND gate at the node before the first shot~~ —
+  **DONE: all seven steps PASS**, every sampling window 0/200 or 200/200 with
+  no mixed samples anywhere. Both legs verified in both directions and the coil
+  LED agrees with the node. A marginal sneak path — the actual concern after
+  bug #28 — would have shown as a partial count well before it showed as a
+  level, and there is none. Bug #28's fix is now confirmed by measurement.
 - ~~Measure the siren's steady current~~ — **done: under 200 mA.**
 
 ---
