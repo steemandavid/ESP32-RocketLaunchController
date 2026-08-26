@@ -12,7 +12,12 @@
  * changed on BOTH units, so the bump is deliberate: the strict version check
  * makes a half-flashed pair refuse to link rather than run mismatched safety
  * logic. Flash base and remote together. */
-/* 1.1.2 (2026-08-26): base siren sounds continuously from ARMED through
+/* 1.1.3 (2026-08-26): PRE_FIRE_DELAY_MS 2000 -> 5000 by operator decision
+ * after on-target testing (T-A17: 2 s was too short to act inside — an
+ * igniter fired because the abort could not be made in time). Both units run
+ * a countdown against this constant, so flash them together.
+ *
+ * 1.1.2 (2026-08-26): base siren sounds continuously from ARMED through
  * PRE_FIRE and FIRING (the 500 ms ARMED pulse fought the siren's own internal
  * modulation), and continuity loss on the armed channel now disarms the base
  * from ARMED or PRE_FIRE instead of being informational. Base-only changes,
@@ -21,5 +26,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  2
-#define RLC_VERSION_STRING "1.1.2"
+#define RLC_VERSION_PATCH  3
+#define RLC_VERSION_STRING "1.1.3"

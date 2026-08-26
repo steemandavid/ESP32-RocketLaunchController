@@ -31,7 +31,20 @@
 #define FIRE_REPEAT_INTERVAL_MS        200
 #define FIRE_AUTHORIZATION_TIMEOUT_MS  500
 
-#define PRE_FIRE_DELAY_MS              2000
+/* Operator-selected 2026-08-26: 5 s, up from the 2000 ms original.
+ *
+ * Chosen after T-A17 showed 2 s is too short to act inside — the operator
+ * could not disconnect an igniter within the countdown and one fired. 5 s
+ * gives a usable abort window while staying short enough that holding the
+ * fire button does not invite fatigue-release, which is what the 2 s value
+ * was originally protecting against.
+ *
+ * FSD §14.1: this value is configurable but must be agreed with the RSO.
+ * 5 s is the agreed value for this controller; a different range may want a
+ * different one. Both units must be flashed together when it changes — the
+ * remote runs its own local countdown against the same constant. */
+#define PRE_FIRE_DELAY_MS              5000
+
 #define FIRE_PULSE_DURATION_MS         1000
 /* 4.5: grace beyond the pulse duration before the FSM's max-duration
  * backstop fires (GPTimer notification normally arrives within ms). */

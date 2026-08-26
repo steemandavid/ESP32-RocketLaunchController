@@ -31,7 +31,7 @@ The launch sequence requires **multiple deliberate steps** — there is no singl
 4. The operator flips a **physical arm/disarm switch** on the remote.
 5. The operator **long-presses the encoder button** (500 ms) to send the arm command.
 6. The base unit checks all safety conditions (see below) and, if everything passes, energizes the arm relay. A siren at the pad starts sounding and stays on for the rest of the sequence.
-7. The operator **presses and holds the fire button**. The base enters a 2-second pre-fire countdown, siren still sounding.
+7. The operator **presses and holds the fire button**. The base enters a 5-second pre-fire countdown, siren still sounding.
 8. After the countdown, the channel relay closes and current flows to the igniter for a fixed 1-second fire pulse.
 9. **Releasing the fire button at any time** during steps 6–8 immediately cuts power to the igniter.
 10. After the fire pulse, all relays are de-energised, the system returns to idle, and the igniter is checked for a successful burn (open circuit = fired).

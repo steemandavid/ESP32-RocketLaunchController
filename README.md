@@ -28,7 +28,7 @@ at any point cuts current to the igniter — it is a dead-man switch, not a latc
 5. Operator **long-presses** the encoder (500 ms) to send the arm command.
 6. The base checks its guard conditions and energises the arm relay; the pad
    siren sounds continuously and stays on for the rest of the sequence.
-7. Operator **presses and holds fire** → 2 s pre-fire countdown.
+7. Operator **presses and holds fire** → 5 s pre-fire countdown.
 8. Channel relay closes for a fixed 1 s fire pulse.
 9. Releasing the button at any time during 6–8 cuts power immediately.
 10. Relays de-energise, the system returns to idle, and continuity is re-checked
