@@ -83,4 +83,17 @@ idf.py -p /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00 flash mon
 
 Reset the board to run the sequence again.
 
+### Console
+
+Output goes to **UART0 — the CH340 bridge**, not the ESP32-S3's native
+USB-Serial/JTAG port. That matches the RLC firmware itself (UART0 primary
+console, USB-Serial/JTAG secondary) and the `usb-1a86_USB_Single_Serial_*`
+by-id both boards are reached on.
+
+A tool built the other way round *looks like a boot loop*: the ROM banner
+still reaches UART0 so you see repeated `rst:0x1 (POWERON)` blocks, but
+nothing the application prints ever arrives. If you see that symptom in any
+tool in this repo, check `CONFIG_ESP_CONSOLE_*` before suspecting the
+hardware.
+
 **Reflash the real firmware when finished:** `./build_base.sh flash`

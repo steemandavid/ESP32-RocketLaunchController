@@ -1,3 +1,9 @@
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# Console on UART0 — the CH340 bridge, matching the RLC firmware itself.
+# NOT USB-Serial/JTAG: both boards are reached through their CH340
+# (usb-1a86_USB_Single_Serial_* by-id), and a tool that talks to the native
+# USB port instead looks like a boot loop — the ROM banner reaches UART0 but
+# nothing after it does.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y

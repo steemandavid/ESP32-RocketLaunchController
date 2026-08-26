@@ -52,7 +52,8 @@
 #include <stdarg.h>
 
 #include "driver/gpio.h"
-#include "driver/usb_serial_jtag.h"
+#include "driver/uart.h"
+#include "driver/uart_vfs.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -75,29 +76,55 @@ static const int PIN_RELAY_CH[8] = { 11, 12, 13, 14, 15, 16, 17, 18 };
 
 static const char *TAG = "armgate";
 
-/* ── Console (USB-Serial/JTAG) ─────────────────────────────────── */
+/* ── Console (UART0 — the CH340 bridge) ────────────────────────
+ *
+ * UART0, NOT the ESP32-S3's native USB-Serial/JTAG port. Both base and remote
+ * are reached through the CH340 USB-to-UART bridge on the board (the
+ * `usb-1a86_USB_Single_Serial_*` by-id), and the RLC firmware itself is built
+ * the same way — UART0 primary console, USB-Serial/JTAG secondary. A tool that
+ * talks to the native USB port instead appears to boot-loop: the ROM banner
+ * still reaches UART0, but nothing after it does.
+ *
+ * The VFS driver is installed so getchar() blocks. Without it stdin is
+ * non-blocking and every prompt returns EOF instantly.
+ */
+
+static void console_init(void)
+{
+    setvbuf(stdin, NULL, _IONBF, 0);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, 256, 0, 0, NULL, 0));
+    uart_vfs_dev_use_driver(UART_NUM_0);
+    /* idf_monitor sends CR for ENTER; the terminal wants CRLF back. */
+    uart_vfs_dev_port_set_rx_line_endings(UART_NUM_0, ESP_LINE_ENDINGS_CR);
+    uart_vfs_dev_port_set_tx_line_endings(UART_NUM_0, ESP_LINE_ENDINGS_CRLF);
+}
 
 static void con_puts(const char *s)
 {
-    usb_serial_jtag_write_bytes(s, strlen(s), portMAX_DELAY);
+    fputs(s, stdout);
+    fflush(stdout);
 }
 
 static void con_printf(const char *fmt, ...)
 {
-    static char buf[512];
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
+    vprintf(fmt, ap);
     va_end(ap);
-    con_puts(buf);
+    fflush(stdout);
 }
 
-/* Blocking single-key read, with the byte echoed so the operator sees it. */
+/* Blocking single-key read, echoed so the operator sees what landed. */
 static char con_getc(void)
 {
-    uint8_t c;
-    while (usb_serial_jtag_read_bytes(&c, 1, portMAX_DELAY) <= 0) { }
-    usb_serial_jtag_write_bytes(&c, 1, portMAX_DELAY);
+    int c;
+    do {
+        c = getchar();
+        if (c == EOF) vTaskDelay(pdMS_TO_TICKS(10));
+    } while (c == EOF);
+    putchar(c);
+    fflush(stdout);
     return (char)c;
 }
 
@@ -149,7 +176,7 @@ static void record(const char *name, bool pass, const char *detail)
     snprintf(s_result[s_steps].detail, sizeof(s_result[s_steps].detail), "%s", detail);
     s_steps++;
     if (!pass) s_all_pass = false;
-    con_printf("  --> %s  %s\r\n\r\n", pass ? "PASS" : "**FAIL**", detail);
+    con_printf("  --> %s  %s\n\n", pass ? "PASS" : "**FAIL**", detail);
 }
 
 /**
@@ -158,8 +185,8 @@ static void record(const char *name, bool pass, const char *detail)
  */
 static void step_sense(const char *name, bool relay_drive, int expect_high)
 {
-    con_printf("%s\r\n", name);
-    con_printf("  GPIO %d -> %s, settling %d ms...\r\n",
+    con_printf("%s\n", name);
+    con_printf("  GPIO %d -> %s, settling %d ms...\n",
                PIN_ARM_RELAY, relay_drive ? "HIGH (driven)" : "LOW", SETTLE_MS);
 
     gpio_set_level(PIN_ARM_RELAY, relay_drive ? 1 : 0);
@@ -195,14 +222,14 @@ static void wait_key(bool want_on)
 {
     const char *pos = want_on ? "ARM (ON)" : "SAFE";
     if (key_is_on() != want_on) {
-        con_printf("  >>> Turn the key to %s ...\r\n", pos);
+        con_printf("  >>> Turn the key to %s ...\n", pos);
     }
     int stable = 0;
     while (stable < 300 / SAMPLE_MS) {
         stable = (key_is_on() == want_on) ? stable + 1 : 0;
         vTaskDelay(pdMS_TO_TICKS(SAMPLE_MS));
     }
-    con_printf("  Key confirmed %s (KEY SENSE GPIO %d = %d)\r\n",
+    con_printf("  Key confirmed %s (KEY SENSE GPIO %d = %d)\n",
                pos, PIN_KEY_SENSE, want_on ? 1 : 0);
 }
 
@@ -252,43 +279,42 @@ static void safe_outputs(void)
 void app_main(void)
 {
     safe_outputs();
+
+    /* Console after the outputs are safe, never before: an ESP_ERROR_CHECK
+     * abort inside the driver install would otherwise leave every relay GPIO
+     * floating. */
+    console_init();
+    vTaskDelay(pdMS_TO_TICKS(300));
     ESP_LOGI(TAG, "all relay outputs driven inactive, siren off");
 
-    usb_serial_jtag_driver_config_t cfg = {
-        .rx_buffer_size = 1024,
-        .tx_buffer_size = 4096,
-    };
-    ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&cfg));
-    vTaskDelay(pdMS_TO_TICKS(300));
-
-    con_puts("\r\n\r\n"
-        "==========================================================\r\n"
-        "  RLC arm-relay AND-gate verifier   (FSD 5.4.4)\r\n"
-        "==========================================================\r\n"
-        "\r\n"
-        "  Proves the arm relay interlock AT THE NODE, not from the\r\n"
-        "  indicator LEDs. Run after any rework of the arm wiring.\r\n"
-        "\r\n"
-        "  !! DISCONNECT ALL IGNITERS BEFORE CONTINUING !!\r\n"
-        "\r\n"
-        "  This firmware energises the arm relay, which puts VBAT on\r\n"
-        "  the fire bus. Channel relays are held de-energised the\r\n"
-        "  whole time, so no current can reach an igniter -- but the\r\n"
-        "  interlock is what is under test, so do not rely on it.\r\n"
-        "\r\n"
-        "  Have a meter on the ARM SENSE node for step 3.\r\n"
-        "\r\n"
-        "  Press ENTER when igniters are disconnected and the base\r\n"
-        "  battery is connected.\r\n");
+    con_puts("\n\n"
+        "==========================================================\n"
+        "  RLC arm-relay AND-gate verifier   (FSD 5.4.4)\n"
+        "==========================================================\n"
+        "\n"
+        "  Proves the arm relay interlock AT THE NODE, not from the\n"
+        "  indicator LEDs. Run after any rework of the arm wiring.\n"
+        "\n"
+        "  !! DISCONNECT ALL IGNITERS BEFORE CONTINUING !!\n"
+        "\n"
+        "  This firmware energises the arm relay, which puts VBAT on\n"
+        "  the fire bus. Channel relays are held de-energised the\n"
+        "  whole time, so no current can reach an igniter -- but the\n"
+        "  interlock is what is under test, so do not rely on it.\n"
+        "\n"
+        "  Have a meter on the ARM SENSE node for step 3.\n"
+        "\n"
+        "  Press ENTER when igniters are disconnected and the base\n"
+        "  battery is connected.\n");
     con_getc();
-    con_puts("\r\n");
+    con_puts("\n");
 
     /* ── Step 0 ────────────────────────────────────────────────────
      * KEY SENSE is the instrument every later step uses to know where
      * the key is. Validate it first, in both directions, or a stuck
      * input turns the whole run into a silent no-op that reports PASS.
      */
-    con_puts("Step 0 — KEY SENSE tracks the key switch\r\n");
+    con_puts("Step 0 — KEY SENSE tracks the key switch\n");
     wait_key(false);
     wait_key(true);
     wait_key(false);
@@ -315,13 +341,13 @@ void app_main(void)
      * Both legs. The only configuration that may energise the relay.
      */
     step_sense("Step 3 — key ARM + GPIO 47 driven  (both legs — relay MUST pull in)", true, 1);
-    con_puts("  Relay should be audibly pulled in and the ARM RELAY (coil) LED lit.\r\n"
-             "  Meter ARM SENSE at the node now if you have not already.\r\n"
+    con_puts("  Relay should be audibly pulled in and the ARM RELAY (coil) LED lit.\n"
+             "  Meter ARM SENSE at the node now if you have not already.\n"
              "  Is the coil LED LIT? [y/n] ");
     {
         char c = con_getc();
         bool lit = (c == 'y' || c == 'Y');
-        con_puts("\r\n");
+        con_puts("\n");
         record("3b. Coil LED lit with relay in", lit,
                lit ? "operator confirmed lit" : "operator says NOT lit — indicator wiring");
     }
@@ -341,10 +367,10 @@ void app_main(void)
      * crashed or unpowered, so it is worth proving twice, from both
      * directions.
      */
-    con_puts("Step 5 — GPIO 47 driven, then key turned back to SAFE\r\n");
+    con_puts("Step 5 — GPIO 47 driven, then key turned back to SAFE\n");
     gpio_set_level(PIN_ARM_RELAY, 1);
     vTaskDelay(pdMS_TO_TICKS(SETTLE_MS));
-    con_puts("  Relay is energised again (key still ARM).\r\n");
+    con_puts("  Relay is energised again (key still ARM).\n");
     wait_key(false);
     {
         int highs, n = watch(PIN_ARM_SENSE, &highs);
@@ -361,38 +387,38 @@ void app_main(void)
 
     /* ── Summary ──────────────────────────────────────────────── */
 
-    con_puts("\r\n==========================================================\r\n"
-             "  SUMMARY\r\n"
-             "==========================================================\r\n");
+    con_puts("\n==========================================================\n"
+             "  SUMMARY\n"
+             "==========================================================\n");
     for (int i = 0; i < s_steps; i++) {
-        con_printf("  %-8s %-34s %s\r\n",
+        con_printf("  %-8s %-34s %s\n",
                    s_result[i].pass ? "PASS" : "FAIL",
                    s_result[i].name, s_result[i].detail);
     }
-    con_puts("\r\n");
+    con_puts("\n");
 
     if (s_all_pass) {
-        con_puts("  ALL PASS — both legs of the AND gate verified at the node,\r\n"
-                 "  and the coil LED agrees with the node.\r\n"
-                 "\r\n"
-                 "  Reflash the real base firmware before any further testing:\r\n"
-                 "      ./build_base.sh flash\r\n");
+        con_puts("  ALL PASS — both legs of the AND gate verified at the node,\n"
+                 "  and the coil LED agrees with the node.\n"
+                 "\n"
+                 "  Reflash the real base firmware before any further testing:\n"
+                 "      ./build_base.sh flash\n");
     } else {
-        con_puts("  ONE OR MORE STEPS FAILED — do NOT fire.\r\n"
-                 "\r\n"
-                 "  Step 1 or 5 failing means current reaches the coil with the\r\n"
-                 "  key in SAFE: a sneak path around the key switch, which is\r\n"
-                 "  the leg that must hold with the ESP32 crashed or unpowered.\r\n"
-                 "  Step 2 failing means the relay contacts are closed with no\r\n"
-                 "  coil drive at all — suspect a welded contact (FSD 7.3.2).\r\n"
-                 "  Step 3 failing means the relay is not energising when it\r\n"
-                 "  should: coil drive, MOSFET, or the sense divider.\r\n"
-                 "  Step 4 failing means the relay pulls in and does not let go.\r\n"
-                 "  Step 3b alone failing is indicator wiring only — the node\r\n"
-                 "  behaved, the LED did not.\r\n");
+        con_puts("  ONE OR MORE STEPS FAILED — do NOT fire.\n"
+                 "\n"
+                 "  Step 1 or 5 failing means current reaches the coil with the\n"
+                 "  key in SAFE: a sneak path around the key switch, which is\n"
+                 "  the leg that must hold with the ESP32 crashed or unpowered.\n"
+                 "  Step 2 failing means the relay contacts are closed with no\n"
+                 "  coil drive at all — suspect a welded contact (FSD 7.3.2).\n"
+                 "  Step 3 failing means the relay is not energising when it\n"
+                 "  should: coil drive, MOSFET, or the sense divider.\n"
+                 "  Step 4 failing means the relay pulls in and does not let go.\n"
+                 "  Step 3b alone failing is indicator wiring only — the node\n"
+                 "  behaved, the LED did not.\n");
     }
 
-    con_puts("\r\n  Outputs are safe. Reset the board to run again.\r\n");
+    con_puts("\n  Outputs are safe. Reset the board to run again.\n");
 
     while (1) vTaskDelay(pdMS_TO_TICKS(1000));
 }
