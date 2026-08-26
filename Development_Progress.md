@@ -33,7 +33,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
-| 30 | Continuity-loss disarm is edge-triggered only — a band change to OPEN during the 200 ms arm-verify window is dropped and never re-delivered | Firmware | **OPEN** — found by code review 2026-08-26 (`Code_Review_Session_20260826_2159.md`, N1). Hole in bug #29's own fix: `STATE_IDLE` has no `EVT_CONTINUITY_CHANGED` branch, the M1 verify leaves the FSM in IDLE with `s_armed_channel == 0`, and `continuity_task` posts only on band *change* — so once OPEN, no event is ever regenerated. Same hole if the FSM queue is full when the event is posted. | **Fix before G3 fire testing.** Base can sit ARMED on an open igniter until the 10 s arm timeout, silently — the exact hazard bug #29 addresses. Fix is a level-triggered `continuity_get_channel()` re-check on entry to ARMED, on both ARM completion paths. |
+| 30 | Continuity-loss disarm is edge-triggered only — a band change to OPEN during the 200 ms arm-verify window is dropped and never re-delivered | Firmware | **RESOLVED 2026-08-26 (fw 1.1.8)** — two fixes: a continuity re-check at arm-verify completion (aborts with `NACK_NO_CONTINUITY`), and a periodic **level** check in `check_timers()` for ARMED/PRE_FIRE which also covers an event dropped by a full FSM queue (an entry check alone does not). | Nothing. **Verification is partial:** T-F02 confirmed the entry check does not false-positive (a normal arm completes through the verify path it sits on) and the backstop does not fire spuriously in IDLE. Neither has been *positively* triggered — that needs a disconnection inside a 200 ms window or a full FSM queue, both of which want an injection to reach reliably. |
 | 29 | Base stays ARMED when the armed channel's igniter loses continuity | Firmware + spec | **RESOLVED 2026-08-26 (fw 1.1.2)** — continuity OPEN on the armed channel now disarms from ARMED or PRE_FIRE. Was a *specification* defect as much as a code one: v1.8 removed the disarm on a rationale ("sensing disabled — stale data") that the v1.10 SPDT redesign made obsolete, while the Phase 3 test criteria kept listing it as required. | Nothing now. Retest with T-A16/T-A17/T-A18 before live fire. |
 | 28 | Base ARM RELAY LED lights when the key is turned to **SAFE**, while the relay itself stays de-energised | Hardware | **RESOLVED 2026-08-26** — indicator wiring corrected on the base. The ARM RELAY LED now lights only when the arm relay is actually energised. A second, related indicator fault was found and fixed in the same session: the arm-key red and green LEDs lit *simultaneously* with the key in SAFE; they now read red = ARMED, green = SAFE. | Nothing. **Fire testing is unblocked** — this was the last hardware gate. |
 | 27 | Base siren not connected — GPIO 40 drives nothing, IRLZ44N driver not fitted | Hardware | **RESOLVED (hardware) 2026-08-26** — IRLZ44N driver fitted on GPIO 40 with its 150 Ω gate series resistor, 10 kΩ gate pull-down, and a 1N5819 flyback diode across the siren (cathode VBAT+, anode drain). | Nothing further in hardware. **Retest still owed:** review bench tests 2 and 3, the LINK_LOST 4-cycle and ERROR 3-blast patterns, and a silent-at-power-on check. Review finding N2 remains code-inspection-only until those run. |
@@ -818,7 +818,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 | ID | Test | Status |
 |----|------|--------|
 | T-F01 | Full fire sequence (arm→fire→complete) | TODO |
-| T-F02 | Release fire button during pre-fire delay → abort | TODO |
+| T-F02 | Release fire button during pre-fire delay | **PASS** 2026-08-26 (no pulse; also regression-tested the bug #30 fix and the v1.41 ring LED) |
 | T-F03 | Release fire button during active fire → cease fire | TODO |
 | T-F04 | Fire command on non-armed channel → NACK 0x05 | TODO |
 | T-F05 | Continuity readable during ARMED (relay in NC) | TODO |
@@ -1376,7 +1376,7 @@ fire testing entirely for now.
 
 ---
 
-### Bug #30 — Continuity-loss disarm has no level-triggered backstop (2026-08-26, OPEN)
+### Bug #30 — Continuity-loss disarm has no level-triggered backstop (2026-08-26, **RESOLVED same day, fw 1.1.8**)
 
 Found by the post-session code review, not by testing — G2 passed 18/20 without
 touching this.
@@ -1420,6 +1420,31 @@ check is the backstop.
 level-triggered backstop.** Bug #29 was fixed with an event, and the event is
 the only thing holding the property. Any lost or mistimed edge silently removes
 the protection, and nothing reports it.
+
+**RESOLVED 2026-08-26, firmware 1.1.8 — two fixes, covering different halves.**
+
+1. **At arm-verify completion**, re-read the band before completing the ARM and
+   abort with `NACK_NO_CONTINUITY` if it has gone OPEN. Refuses rather than
+   arming and relying on an edge that has already been consumed.
+2. **A periodic level check in `check_timers()`** (~50 ms) for ARMED and
+   PRE_FIRE. Re-reading the level cannot miss an edge: if the armed channel is
+   OPEN it is OPEN on every tick, so this converges within one tick of any
+   missed event.
+
+The second is not redundant. The review's first draft claimed an entry check
+alone closed the dropped-event case; it does not — a queue-full drop while
+*already* ARMED happens after entry, and nothing re-examines it. **Both checks
+were needed.** Scoped exactly as `armed_channel_went_open()`: ARMED and
+PRE_FIRE only.
+
+**Verification is partial and should be completed.** T-F02 confirmed the entry
+check does not false-positive (a normal arm completes through the verify path
+the check sits on) and that the backstop does not fire spuriously in IDLE.
+Neither has been *positively* triggered. Doing so needs a disconnection inside
+a 200 ms window, or a deliberately full FSM queue — both want an injection to
+reach reliably. A `--inject` key that drops the next `EVT_CONTINUITY_CHANGED`
+would exercise the backstop directly and is the natural next addition to the
+harness.
 
 ---
 

@@ -1,6 +1,6 @@
 # ESP32 Rocket Launch Controller — Changelog
 
-## 2026-08-26 — Hardware bugs closed, G2 arming suite complete, firmware 1.1.1 → 1.1.7
+## 2026-08-26 — Hardware bugs closed, G2 arming suite complete, firmware 1.1.1 → 1.1.8
 
 Hardware rework by the operator closed the last three open hardware defects.
 Two firmware changes followed from testing the result.
@@ -478,12 +478,72 @@ The review is a **self-review** — same agent, same session — and says so. It
 blind spots correlate with the author's, so an independent pass before live fire
 would still be worth having.
 
+### Bug #30 fixed (firmware 1.1.8) — level-triggered backstop
+
+Two fixes, covering different halves. A continuity re-check at **arm-verify
+completion**, aborting with `NACK_NO_CONTINUITY` rather than arming and relying
+on an edge already consumed. And a **periodic level check** in `check_timers()`
+(~50 ms) for ARMED/PRE_FIRE — which is what covers an event dropped by a full
+FSM queue, something an entry check alone does not.
+
+That second point is a correction to the review's own first draft, which claimed
+an entry check closed both cases. It does not: a queue-full drop while *already*
+ARMED happens after entry, and nothing re-examines it. Both checks were needed,
+and the review was amended to say so.
+
+**Verification is partial and recorded as such.** T-F02 confirmed the entry
+check does not false-positive and the backstop does not fire spuriously, but
+neither has been positively triggered — that needs a disconnection inside a
+200 ms window or a deliberately full queue. A `--inject` key that drops the next
+`EVT_CONTINUITY_CHANGED` would exercise it directly and is the natural next
+harness addition.
+
+### G3 started — T-F02 PASS, three tests found unreachable as written
+
+Deliberately ran the **non-firing** tests first: if an abort path is broken,
+that is worth finding before lighting anything.
+
+**T-F02 PASS** — released the fire button 1.36 s into the countdown, no
+`Fire timer started`, clean return to IDLE. It did double duty: the arm
+completed through the **verify path** that the new bug #30 entry check sits on,
+regression-testing the fix; and it confirmed the v1.1.7 ring LED going
+green→red on arm and back on abort, following state rather than the button.
+
+**T-F04 and T-F05 recorded as covered by existing evidence** rather than re-run
+— T-A17 already produced `NACK 0x05` for a fire command outside ARMED, and
+T-A16 already proved continuity is live during ARMED.
+
+**Three tests cannot be run as written**, found by timing analysis before
+attempting them:
+
+- **T-F06 (link lost during firing) is unreachable, and it is the interesting
+  one.** The pulse is 1000 ms; link loss needs 3 missed pings = 1500 ms. Stop
+  the remote before the transition and the dead-man aborts instead of firing;
+  stop it at or after, and the pulse has finished before the base can notice.
+  **There is no window in which link loss can be observed during FIRING** — which
+  makes `COMPLETE_PULSE_ON_LINK_LOSS` and the C1 `s_link_lost_pending` logic
+  unreachable config. Operator decision: leave the pulse at 1 s, since it suits
+  the igniters and a fire-path constant should not be changed to suit a test.
+  Verify that logic by review instead.
+- **T-F07 (dead-man timeout)** needs `CMD_FIRE` to stop while the link stays up.
+  Releasing the button sends CEASE_FIRE (that is T-F02); killing the remote
+  stops its pings too, so link loss trips first. Needs a remote-side injection.
+- **T-F09 (PONG missed at the transition boundary)** — same shape.
+
+All three want a **remote-side** injection harness; the existing one is
+base-only.
+
+**Still to run:** T-F01 (full sequence), T-F03 (release mid-pulse) and T-F08
+(pulse timing, needs a scope). All three fire. Deferred to a fresh session
+rather than run at the end of a long one.
+
 ### Still owed
 
 - ~~T-A11 and T-A13~~ — **DONE, both PASS.**
-- **Bug #30 — fix the continuity-disarm backstop before G3.** Found by review,
-  not by testing; G2 passed 18/20 without touching it.
-- **G3 fire testing (T-F01…T-F09).** Channels 2–8 have never been fired.
+- **G3 firing tests: T-F01, T-F03, T-F08.** All three fire; T-F08 needs a scope.
+  Channels 2–8 have never been fired.
+- **A remote-side injection harness** would close T-F06, T-F07 and T-F09, plus
+  positively trigger the bug #30 backstop.
   Channel 1 has now fired once, unplanned, and the whole chain worked.
 - **Bug #24 — no rail clamp on the base.** Unchanged this session, and the
   highest-consequence item left: three ESP32s have died on that unit via the
