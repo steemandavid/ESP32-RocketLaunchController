@@ -170,7 +170,44 @@ mistaken for a real one.
 
 ---
 
-## 6. Recommendation
+## 6. Siren bench tests — review finding N2 closed
+
+Run 2026-08-26 after the bug #27 driver was fitted. **Six checks, all PASS.**
+N2 had rested on code inspection alone since 2026-08-21 because the siren
+output was not connected.
+
+| # | Check | Result |
+|---|---|---|
+| A | Silent at power-on | **PASS** — silent throughout boot; the 10 kΩ gate pull-down holds GPIO 40 through the high-impedance window before `siren_init()` |
+| B | Continuous across ARMED→PRE_FIRE (bench test 2 / N2 case 2) | **PASS** — unbroken across the transition |
+| C | Stops and stays stopped after disarm (bench test 3 / N2 case 1), all three routes | **PASS** ×3 — CEASE_FIRE, arm timeout, key OFF; 10 s silence after each |
+| D | LINK_LOST = 4 cycles of 500/500 | **PASS** — 4 counted, confirming `SIREN_LINK_LOST_CYCLES` derives from the constant (minor m10) |
+| E | Link recovery **mid-pattern** → immediate, permanent silence | **PASS** — log shows recovery at 3080 ms, inside the 4000 ms pattern |
+| F | ERROR = 3 blasts at 200 ms, then silence | **PASS** |
+
+### 6.1 What these prove, and what they do not
+
+**Test B is weaker than it appears, and that is now acceptable.** Fire was
+released ~1.5 s into the 5 s countdown, so the siren was observed continuous
+across the *transition*, not through a full countdown. N2 case 2 required a
+stale tick from a running periodic timer; ARMED no longer runs one, since the
+pulse was removed in firmware 1.1.2. There is no longer a mechanism to test.
+
+**Test E is the check that exercised N2's surviving failure mode.** Case 1
+(output stuck ON after `siren_off()`, timer stopped, nothing left to clear it)
+depended on the infinite `-1` pattern that went away with the ARMED pulse — so
+the original bench test 3 can no longer reach it. The risk migrated to
+LINK_LOST and ERROR, which remain periodic. Test E fires `siren_off()` from the
+link-recovery path (§7.2.8) against a pattern that is genuinely mid-cycle,
+which is the only remaining route to a parked callback re-driving the output.
+The 3080 ms recovery timestamp confirms the window was hit rather than missed.
+
+**If a future change reintroduces a periodic ARMED pattern, test E is the
+regression test to re-run — not test B.**
+
+---
+
+## 7. Recommendation
 
 The arming path is in good shape: every operator-reachable arming guard and
 every disarm trigger behaves as specified, and the bug #29 continuity-loss
@@ -178,11 +215,10 @@ disarm is verified in both ARMED and PRE_FIRE with its regression guard intact.
 
 Before G3 fire testing:
 
-1. **Verify the 1.1.4 silent-failure fix** on target (§2).
+1. ~~Verify the 1.1.4 silent-failure fix on target~~ — **DONE 2026-08-26:
+   operator confirmed the triple beep and `BASE ERROR: VBAT CRITICAL` toast
+   where the long-press had previously been silent (§2).**
 2. **Build the fault-injection harness** and close T-A11 and T-A13 (§5).
-3. **Run the siren bench tests** — review finding N2 is still closed by code
-   inspection alone. T-A01 confirmed the continuous ARMED siren, but the
-   stop-and-stay-stopped, LINK_LOST, ERROR and silent-at-power-on checks have
-   not been run.
+3. ~~Run the siren bench tests~~ — **DONE, all six PASS (§6). N2 closed.**
 4. Note that **channels 2-8 have still never been fired**. Channel 1 has now
    fired once, unplanned, and the whole chain worked.

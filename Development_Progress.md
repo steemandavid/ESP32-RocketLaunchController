@@ -1909,12 +1909,37 @@ similar 3 A part.
 > steady-current question above remains, and it is now a comfortable margin
 > rather than a tight one.
 
-**Still owed — the retest above has not been run.** Review finding N2
-remains verified by code inspection only until bench tests 2 and 3 pass on
-hardware. Add a **silent-at-power-on** check to that list: with the driver now
-fitted, the 10 kΩ gate pull-down's job (no self-sounding during the boot
-transient, before `siren_init()` configures GPIO 40) is finally observable, and
-it is the one siren behaviour that is dangerous rather than merely wrong.
+**RETEST COMPLETE 2026-08-26 — all six checks PASS. Review finding N2 is
+closed by measurement**, having rested on code inspection alone since
+2026-08-21.
+
+| # | Check | Result |
+|---|---|---|
+| A | Silent at power-on (10 kΩ gate pull-down holds GPIO 40 through the boot transient) | **PASS** — silent throughout boot |
+| B | Continuous across ARMED→PRE_FIRE (review bench test 2, N2 case 2) | **PASS** — unbroken tone across the transition |
+| C | Stops and stays stopped after disarm (review bench test 3, N2 case 1) — all three routes: CEASE_FIRE, arm timeout, key OFF | **PASS** ×3, 10 s of silence after each |
+| D | LINK_LOST pattern = 4 cycles of 500/500 | **PASS** — 4 counted; confirms `SIREN_LINK_LOST_CYCLES` derives from the constant (m10) |
+| E | Link recovery **mid-pattern** → immediate silence, stays silent | **PASS** — log shows recovery at 3080 ms, inside the 4000 ms window |
+| F | ERROR pattern = 3 short blasts at 200 ms, then silence | **PASS** |
+
+**Two notes on what these do and do not prove.**
+
+*Test B is weaker than it looks, and it no longer matters.* The operator
+released fire ~1.5 s into the 5 s countdown, so the siren was observed
+continuous across the **transition** rather than through a full countdown. That
+is sufficient: N2 case 2 required a stale tick from a running periodic timer,
+and ARMED no longer runs one (the pulse was removed in fw 1.1.2). There is
+nothing left to dispatch a stale callback during ARMED→PRE_FIRE.
+
+*Test E is the one that actually exercised N2's surviving failure mode.* Case 1
+(stuck ON after `siren_off()`) depended on the infinite `-1` pattern, which went
+away with the ARMED pulse — so the original bench test 3 can no longer reach it.
+The risk migrated to LINK_LOST and ERROR, which are still periodic. Test E puts
+`siren_off()` (from the link-recovery path, FSD §7.2.8) against a pattern that
+is genuinely mid-cycle, which is the only remaining route to a parked callback
+re-driving the output ON with the timer stopped. The 3080 ms recovery timestamp
+in the log confirms the window was hit rather than missed. **If a future change
+reintroduces a periodic ARMED pattern, test E is the one to re-run, not B.**
 
 ---
 

@@ -955,10 +955,15 @@ available on this hardware.
 >    the ARMED pulse also dropped this diode from switching at 1 Hz throughout
 >    ARMED to once per sequence, retiring the repetitive-avalanche concern as
 >    well. No diode change needed.
-> 2. **Retest not yet run.** Review finding N2 (§12.3) is still verified by code
->    inspection alone. Run bench tests 2 and 3, the LINK_LOST 4-cycle and ERROR
->    3-blast patterns, and a silent-at-power-on check (which finally makes the
->    10 kΩ pull-down's boot-transient behaviour observable) before closing N2.
+> 2. ~~**Retest not yet run.**~~ **COMPLETE 2026-08-26 — six checks, all PASS;
+>    review finding N2 (§12.3) is closed by measurement.** Silent at power-on;
+>    continuous across ARMED→PRE_FIRE; stops and stays stopped after all three
+>    disarm routes; LINK_LOST = 4 cycles of 500/500; ERROR = 3 blasts at 200 ms;
+>    and link recovery **mid-pattern** silences the siren immediately and
+>    permanently. That last check is the one that matters going forward: N2's
+>    stuck-on mode needed the infinite ARMED pulse, which v1.35 removed, so the
+>    surviving risk lives in the still-periodic LINK_LOST and ERROR patterns.
+>    See `Development_Progress.md`, bug #27.
 
 #### 5.4.9 Arm Relay Output (GPIO 47)
 
