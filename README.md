@@ -212,8 +212,14 @@ Known open items before any field use:
   (T-A05 contradicts T-A08; T-A15 tests a continuity band merged away in
   August). Four — T-A11, T-A13, T-A19 and T-A20 — needed the `--inject`
   fault-injection build described above. Full write-up in
-  `Test_Report_Phase3_G2.md`. **Fire testing (T-F01…T-F09) has still not been
-  run**, and channels 2–8 have never been fired.
+  `Test_Report_Phase3_G2.md`.
+- **G3 fire testing is part-run.** The non-firing tests are done — T-F02 PASS,
+  T-F04 and T-F05 covered by earlier evidence. **T-F01, T-F03 and T-F08 remain
+  and all involve real ignition**; channels 2–8 have never been fired. Three
+  tests are **not reachable as written**: T-F06 because the 1000 ms pulse
+  completes before link loss can be detected at 1500 ms (which also makes
+  `COMPLETE_PULSE_ON_LINK_LOSS` unreachable config), and T-F07/T-F09 because
+  they need faults only a remote-side injection harness could produce.
 - **No silent refusals** (FSD §7.2.9a, firmware 1.1.6). Every refusal, abort or
   failure an operator can trigger produces both a sound and a message on the
   remote display — a log line is not operator feedback. A refusal that only
@@ -221,12 +227,13 @@ Known open items before any field use:
   natural response to apparent non-response is to try again, which is the wrong
   instinct at a pad. The base also **answers** commands while in terminal ERROR
   (NACK `0x0E`) rather than discarding them, so the remote can name the fault.
-- **Bug #30 — the continuity-loss disarm has no level-triggered backstop**, found
-  by code review on 2026-08-26 and **open**. An igniter going open-circuit inside
-  the 200 ms arm-verify window has its event dropped, and because the band has
-  already changed nothing re-posts it — so the base can sit ARMED on an open
-  igniter until the arm timeout. Low probability, but it is the exact hazard the
-  disarm exists to prevent. **Fix before fire testing.**
+- ~~Bug #30 — continuity-loss disarm has no level-triggered backstop~~ **Fixed
+  2026-08-26 (fw 1.1.8).** Found by code review, not by testing. The disarm was
+  edge-triggered only, so an igniter going open inside the 200 ms arm-verify
+  window had its event dropped with no edge left to report it. Now backed by a
+  re-check at arm-verify completion *and* a periodic level check every ~50 ms.
+  Verification is partial: the fix is confirmed not to false-positive, but has
+  not been positively triggered — that needs an injection.
 - **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
   ever specified. Protection is firmware-only, and the ERROR state halts
   operation without disconnecting the load — so a unit left switched on, or one
