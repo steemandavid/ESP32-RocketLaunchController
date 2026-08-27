@@ -846,7 +846,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 
 | ID | Test | Status |
 |----|------|--------|
-| T-F01 | Full fire sequence (arm→fire→complete) | TODO |
+| T-F01 | Full fire sequence (arm→fire→complete) | **PASS on a halogen substitute** 2026-08-27 — all 8 channels fired arm→fire→complete into a 12 V 50 W lamp, each arm sense-verified and each `Fire timer started` naming the selected channel. Nine pulses on one power cycle (ch 8 needed a second go after an early release at 470 ms), 0 reboots, 0 faults, uptime continuous 331584→582104 ms. **Still TODO with a real igniter** — burn-through is what T-S19 needs and a lamp cannot provide it |
 | T-F02 | Release fire button during pre-fire delay | **PASS** 2026-08-26 (no pulse; also regression-tested the bug #30 fix and the v1.41 ring LED) |
 | T-F03 | Release fire button during active fire → cease fire | **PASS** 2026-08-27 (fw 1.1.19, 12 V 50 W halogen on ch 1) — pulse cut at **540 ms** of 1000 ms, `FIRING -> IDLE (CEASE_FIRE)`, arm sense DISARMED 150 ms later. Note the exit is to **IDLE, not POST_FIRE**: the FSM distinguishes ceased from completed, so a cease-fire gets no cooldown and no fire-complete screen |
 | T-F04 | Fire command on non-armed channel → NACK 0x05 | TODO |
@@ -3565,6 +3565,51 @@ ceased), 0 reboots, 0 panics, 0 watchdog events, finishing `state=1 IDLE
 err=0x00` at uptime 912707. That exceeds the two-cycle requirement of Phase 5
 task 10 — under bug #31 the second start would have panicked with the relays
 energised.
+
+### All Eight Channels Fired — halogen substitute (2026-08-27)
+
+Channels 2–8 had never been fired. Run with a single 12 V 50 W halogen moved
+channel to channel, fw 1.1.27.
+
+```
+ch 1  366344 ARMED  367194 PRE_FIRE  372194 FIRING  373254 POST_FIRE  375274 IDLE
+ch 2  389544 ARMED  390604 PRE_FIRE  395644 FIRING  396714 POST_FIRE  398724 IDLE
+ch 3  409464 ARMED  410444 PRE_FIRE  415484 FIRING  416554 POST_FIRE  418594 IDLE
+ch 4  432454 ARMED  433334 PRE_FIRE  438324 FIRING  439354 POST_FIRE  441374 IDLE
+ch 5  452914 ARMED  454584 PRE_FIRE  459574 FIRING  460644 POST_FIRE  462674 IDLE
+ch 6  473994 ARMED  475084 PRE_FIRE  480124 FIRING  481194 POST_FIRE  483224 IDLE
+ch 7  495694 ARMED  496604 PRE_FIRE  501594 FIRING  502664 POST_FIRE  504674 IDLE
+ch 8  515674 ARMED  516294 PRE_FIRE  521334 FIRING  521804 CEASE_FIRE (470 ms)
+      525694 ARMED  526624 PRE_FIRE  531614 FIRING  532684 POST_FIRE  534724 IDLE
+```
+
+Every arm was **sense-verified** and every `Fire timer started` named the
+selected channel. **9 pulses on one power cycle**, 0 reboots, 0 panics, 0
+watchdog events, uptime continuous 331584 → 582104 ms, finishing `state=1 IDLE
+err=0x00` with the battery essentially unchanged (11473 → 11464 mV).
+
+**The mapping is proven, not assumed.** Only the channel carrying the lamp reads
+CONNECTED, and arming requires continuity — so the lamp lighting on the selected
+channel is end-to-end proof of the channel-to-relay mapping for all eight. A
+crossed relay would have shown as nothing lighting.
+
+**Channel 8's first attempt was an early release**, not a fault: `FIRING -> IDLE
+(CEASE_FIRE)` at 470 ms with the remote's `type=0x23` cease-fire ACK. Under
+fw 1.1.24+ that toasts `CH 8 PULSE CUT SHORT`, so it was visible at the time.
+
+**Incidentally the strongest bug #31 evidence yet.** Phase 5 task 10 required
+two cycles per power-on; this did nine, mixing completed pulses with a
+cease-fire, on a single boot.
+
+**Channel 3's MARGINAL reading cleared.** It had shown `1123/269000/MARG` all
+session with nothing deliberately attached, which is worth noting because
+MARGINAL does **not** block arming — only OPEN does — so ch 3 was the one
+channel without the natural mis-selection guard the others had. Final capture
+reads `cont=0x4000` (ch 8 only), so it is gone. Cause unidentified; watch for it
+returning.
+
+**Still not fired into a real igniter.** A lamp does not burn through, so T-S19
+and the green `OPEN - LIKELY FIRED` path remain unverified.
 
 ### Phase 5 FSD Safety Tests (§15.4)
 

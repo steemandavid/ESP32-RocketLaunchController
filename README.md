@@ -258,8 +258,12 @@ Known open items before any field use:
   channel 1 only to **all eight channels** on 2026-08-23, once the protection BOM
   was complete everywhere: RC snubbers on all eight channel relays and the arm
   relay, 2× 1N5819 clamps on every continuity sense pin, and a 217 Ω
-  sense-branch resistor per channel. Channels 2–8 have nonetheless **never been
-  fired** — treat the first shot on each as a test.
+  sense-branch resistor per channel. **All eight channels were fired on
+  2026-08-27** into a 12 V 50 W halogen moved channel to channel — nine pulses
+  on one power cycle, no reboots or faults. Because only the channel carrying
+  the lamp reads CONNECTED, the lamp lighting on the selected channel also
+  proves the channel-to-relay mapping end to end for all eight. No channel has
+  yet been fired into a real igniter.
 - **Fire testing is unblocked as of 2026-08-26.** Bug #28 (the base ARM RELAY
   LED lighting with the key in SAFE) turned out to be indicator wiring, not the
   hardware AND gate, and is fixed; a second indicator fault — the key-position

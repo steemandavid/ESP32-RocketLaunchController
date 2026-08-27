@@ -302,6 +302,38 @@ FIRE guard refusal) and a plain repeating tone is replaced by the first of them
 and never returns. Driven from the FSM tick, not transitions, for the same
 reason `fire_button_set_live()` is.
 
+### All eight channels fired — halogen substitute
+
+Channels 2–8 had never been fired. Run with one 12 V 50 W halogen moved channel
+to channel, fw 1.1.27. Every arm **sense-verified**, every `Fire timer started`
+naming the selected channel, all reaching `POST_FIRE → IDLE`.
+
+**9 pulses on one power cycle**, 0 reboots, 0 panics, 0 watchdog events, uptime
+continuous 331584 → 582104 ms, battery essentially unchanged (11473 → 11464 mV).
+
+**The channel-to-relay mapping is proven, not assumed.** Only the channel
+carrying the lamp reads CONNECTED, and arming requires continuity — so the lamp
+lighting on the selected channel is end-to-end proof of the mapping for all
+eight. A crossed relay would have shown as nothing lighting.
+
+Channel 8's first attempt was an **early release**, not a fault: `FIRING → IDLE
+(CEASE_FIRE)` at 470 ms with the remote's `type=0x23` ACK. Under 1.1.24+ that
+toasts `CH 8 PULSE CUT SHORT`, so it was visible at the time. Re-armed and fired
+cleanly.
+
+Incidentally **the strongest bug #31 evidence yet** — Phase 5 task 10 asked for
+two cycles per power-on; this did nine, mixing completed pulses with a
+cease-fire, on one boot.
+
+**Channel 3's MARGINAL reading cleared.** It had shown `1123/269000/MARG` all
+session with nothing deliberately attached — worth noting because MARGINAL does
+**not** block arming, so ch 3 was the one channel lacking the natural
+mis-selection guard the OPEN channels had. Final capture reads `cont=0x4000`
+(ch 8 only). Cause unidentified; watch for it returning.
+
+Still not fired into a **real igniter** — a lamp does not burn through, so T-S19
+and the green `OPEN - LIKELY FIRED` path remain unverified.
+
 ### New tooling
 
 | Path | Purpose |
@@ -313,8 +345,9 @@ reason `fire_button_set_live()` is.
 
 ### Notes and follow-ups
 
-- **T-F01** still needs a real igniter — the only fire test that does. Channels
-  2–8 have never been fired.
+- **T-F01** passed on a halogen substitute across all 8 channels, but still
+  needs a real igniter — the only fire test that does. No channel has yet been
+  fired into a live igniter.
 - **T-S19** needs burn-through; the display half is built.
 - **T-S09, T-S05, T-S07, T-S15, T-S16, T-S18** need small harness keys.
 - **T-S06, T-S10** need a scope and a disconnected display.
