@@ -3677,6 +3677,44 @@ repeats flowing, ruling out the dead-man. That is weaker than a log line for a
 fire-path interlock, so it was re-run to capture it. Worth remembering that the
 serial capture drops data often enough to lose a single decisive line.
 
+### T-S05 / T-S09 — verified with the new injection keys (2026-08-27)
+
+**T-S05.** The `c` key had to move to the **remote** console. The base does use
+`rlc_link_send_cmd()`, but only for ACK and NACK — it never sends commands — and
+the integrity CRC that produces NACK `0x06` is checked only on `CMD_*` frames
+received by the base (`rlc_link.c`). The key as first committed was on the base,
+which contradicted its own commit message; the base's copy is kept but
+documented for what it actually does (corrupts an outgoing ACK/NACK, the reverse
+direction).
+
+```
+573908  CMD integrity CRC mismatch (type 0x20)
+580648  NACK sent: type=0x20 reason=0x0d (COMM DEGRADED)
+```
+
+The first line is the test passing. The second is the remote's automatic ARM
+retry — the injection is one-shot, so the retry was clean — landing on a `g`
+flag left set from T-S16 and being refused on guard 10 instead. That is why the
+operator saw COMM DEGRADED rather than an integrity error: **setup error, not a
+test failure**, and the log disambiguates the two.
+
+**T-S09.** The `l` key was fired automatically 70 ms after the base logged
+`IDLE -> ARMED`, from a script watching the base port and writing to the
+remote's — the 10 s arm window is too tight to hand-time reliably.
+
+```
+2525808  IDLE -> ARMED (ch 8, sense verified)
+2525878  LINK_REQUEST from remote fw 1.1.27
+2525878  LINK_REQUEST rejected by app-state guard (busy)
+2525878  LINK_REJECT sent, reason=0x02
+2535818  ARM TIMEOUT (10009 ms) — auto-disarm
+```
+
+**The criterion is proven by absence:** no LINK_ACK, no new session token, no
+dropped arm. The base stayed ARMED and ran its full timeout. Also confirms
+`LINK_REJECT_BUSY` end to end — the 1.1.17 behaviour that made the FSD's
+"silently ignores" wording obsolete.
+
 ### Phase 5 FSD Safety Tests (§15.4)
 
 | ID | Test | Status |
@@ -3685,11 +3723,11 @@ serial capture drops data often enough to lose a single decisive line.
 | T-S02 | Power cycle remote while base armed → link loss disarm | **PASS** 2026-08-27 — `PING drought (1542 ms) — LINK LOST` then arm sense DISARMED 170 ms later; last PING to fire-path-dead **1712 ms**. Detection at 1542 ms vs the FSD's "within 1.5 s": the extra 42 ms is link-task tick granularity on a `>= 3 x 500 ms` threshold, not drift |
 | T-S03 | Base battery below VBAT_CRITICAL_MV → ERROR state | **PASS** (2026-08-26) — taken to 7978 mV, latched `ERROR flags=0x02`, correctly stayed latched at 12.1–12.7 V until power cycle |
 | T-S04 | Hold fire button at boot, then arm → no fire (fresh press) | **PASS** 2026-08-27 — button held through remote boot and through arming; no countdown, no pulse, lamp dark. The debouncer seeding at boot with the button already low does not read as authorisation |
-| T-S05 | Corrupt message (bit flip) → rejected | TODO |
+| T-S05 | Corrupt message (bit flip) → rejected | **PASS** 2026-08-27 (remote `c` injection) — `CMD integrity CRC mismatch (type 0x20)` on the base, corrupted CMD_ARM rejected in the link layer before reaching the FSM, and the sequence number deliberately not advanced. The remote's *visible* toast that run was COMM DEGRADED, from the automatic retry landing on a leftover `g` flag — the retry was uncorrupted, since the injection is one-shot |
 | T-S06 | GPIO init order verification (oscilloscope on boot) | TODO |
 | T-S07 | Watchdog: infinite loop → reboot within 5 s | TODO |
 | T-S08 | Hold fire button + arm → no fire (fresh press required) | **PASS** 2026-08-27 — button held before and through ARMED entry; no fire. Release-then-press did start the countdown, confirming the `0xFF→0x00` transition is what authorises |
-| T-S09 | LINK_REQUEST while ARMED → **rejected with `LINK_REJECT_BUSY`** (was "silently ignored" before fw 1.1.17); session and armed state unaffected | TODO — **not reachable on target as written.** `tick_remote()` only sends LINK_REQUEST in LINKING or LOST, so a linked remote never sends one, and rebooting it to force one takes ~1.9 s — by which time the base has hit link loss at 1.5 s and disarmed. Needs a remote-harness key that forces a LINK_REQUEST while linked. **FSD §15.4 row still says "silently ignores" and needs updating to match 1.1.17** |
+| T-S09 | LINK_REQUEST while ARMED → **rejected with `LINK_REJECT_BUSY`** (was "silently ignored" before fw 1.1.17); session and armed state unaffected | **PASS** 2026-08-27 (remote `l` injection, fired automatically 70 ms after the base logged ARMED) — `LINK_REQUEST from remote fw 1.1.27` → `rejected by app-state guard (busy)` → `LINK_REJECT sent, reason=0x02`. **The criterion is proven by what did not happen:** no LINK_ACK, no new session token, no dropped arm — the base stayed ARMED and ran its full `ARM TIMEOUT (10009 ms)`. A handshake attempt cannot reset the session out from under a live pad. **FSD §15.4 row still says "silently ignores" and needs updating** |
 | T-S10 | Display SPI failure at boot → ERROR | TODO |
 | T-S11 | 5 consecutive send failures → immediate link loss | PASS | Triggered on-target during RF shielding test (RSSI -98 dBm) |
 | T-S12 | Fire pulse on link loss (COMPLETE_PULSE=true) | TODO |

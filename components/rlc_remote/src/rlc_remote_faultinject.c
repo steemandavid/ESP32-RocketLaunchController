@@ -28,7 +28,7 @@ static const char *TAG = "rlc_rfi";
 static void print_state(void)
 {
     ESP_LOGW(TAG, "[RFI] keys: d = DISPLAY FAULT, b = BATTERY CRITICAL, "
-                  "l = force LINK_REQUEST, ? = this");
+                  "l = force LINK_REQUEST, c = corrupt next command, ? = this");
     ESP_LOGW(TAG, "[RFI] both latch a terminal ERROR — power cycle to clear");
 }
 
@@ -78,6 +78,17 @@ static void rfi_console_task(void *arg)
              * in front of the base's app-state guard while it is still ARMED. */
             ESP_LOGE(TAG, "INJECT: forcing a LINK_REQUEST while linked (T-S09)");
             rlc_link_force_link_request();
+            break;
+        case 'c':
+            /* T-S05: corrupt one bit of the next outgoing COMMAND, after
+             * rlc_msg_build() has computed its integrity CRC. The base's
+             * receive path checks that CRC on CMD_* frames only
+             * (rlc_link.c), so this is the direction that reaches the guard
+             * and produces NACK 0x06 per App D.3. Corrupting a base->remote
+             * ACK instead only makes the remote miss a confirmation. */
+            ESP_LOGE(TAG, "INJECT: next outgoing COMMAND will be corrupted "
+                          "(T-S05) — expect NACK 0x06 from the base");
+            rlc_link_corrupt_next_tx();
             break;
         case '?':
             print_state();

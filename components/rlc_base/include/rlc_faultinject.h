@@ -40,8 +40,11 @@
  *   x   hang the FSM task without feeding the watchdog (T-S07). The spin is in
  *       the FSM task because that is the task the TWDT covers; spinning
  *       anywhere else would prove nothing about coverage of the state machine
- *   c   corrupt one bit of the next outgoing command, after its integrity CRC
- *       is computed (T-S05), so the peer must reject it
+ *   c   corrupt one bit of the next outgoing ACK/NACK, after its integrity CRC
+ *       is computed, so the remote must reject it. NOTE: the base sends only
+ *       ACK/NACK through this path — it never sends commands — so the T-S05
+ *       case that reaches the base's NACK 0x06 guard is the REMOTE console's
+ *       'c' key, not this one. This one exercises the reverse direction
  *   ?   print current injection state
  */
 
