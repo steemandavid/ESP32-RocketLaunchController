@@ -3643,6 +3643,40 @@ Not yet run — the keys are the deliverable here. T-S15/S16 and T-S09 need an
 operator to arm; T-S07 reboots the base by design and its second criterion (all
 relays de-energised after the reboot) is the half that matters.
 
+### T-S15 / T-S16 — degraded-link guards verified (2026-08-27)
+
+Both run with the base `g` injection, which forces `rlc_link_is_healthy()`
+false. The real condition is >30% loss over a 10-sample ping window — RF
+shielding produces that only approximately and **cannot time it**, and T-S16
+needs the degradation to land inside the 5 s countdown.
+
+**T-S15** — forced degraded, then a normal arm attempt:
+`NACK sent: type=0x20 reason=0x0d (COMM DEGRADED)`.
+
+**T-S16** — the injection was fired **automatically** on the base logging
+`ARMED -> PRE_FIRE`, landing 40 ms into the countdown, rather than timed by
+hand:
+
+```
+327358  ARMED -> PRE_FIRE (ch 8)
+        >>> degraded link injected
+332348  PRE_FIRE comm degraded — abort        <- guard 4, rlc_base_fsm.c:908
+332378  DISARMED -> IDLE
+332528  arm sense changed: DISARMED
+```
+
+0 `Fire timer started`, operator confirmed no fire, abort at 4990 ms — the
+PRE_FIRE→FIRING boundary.
+
+**The first T-S16 run produced the right outcome but not the proof.** Its
+capture dropped most of its lines (44 total, timestamps jumping 109658 →
+114678 → 116288) including the guard's W-level message, leaving the identity of
+the aborting guard established only by elimination: it went to IDLE rather than
+LINK_LOST, ruling out guard 2, and the operator held the button with CMD_FIRE
+repeats flowing, ruling out the dead-man. That is weaker than a log line for a
+fire-path interlock, so it was re-run to capture it. Worth remembering that the
+serial capture drops data often enough to lose a single decisive line.
+
 ### Phase 5 FSD Safety Tests (§15.4)
 
 | ID | Test | Status |
@@ -3661,8 +3695,8 @@ relays de-energised after the reboot) is the half that matters.
 | T-S12 | Fire pulse on link loss (COMPLETE_PULSE=true) | TODO |
 | T-S13 | Fire pulse on link loss (COMPLETE_PULSE=false) | TODO |
 | T-S14 | Arm timeout (10 s auto-disarm) | **PASS** (2026-08-26) — `ARM TIMEOUT (10022 ms)` against a 10000 ms constant, observed repeatedly |
-| T-S15 | ERR_COMM_DEGRADED blocks arming | TODO |
-| T-S16 | ERR_COMM_DEGRADED blocks firing | TODO |
+| T-S15 | ERR_COMM_DEGRADED blocks arming | **PASS** 2026-08-27 (base `g` injection) — `NACK sent: type=0x20 reason=0x0d (COMM DEGRADED)`, guard 10 at `rlc_base_fsm.c:335`. Remote named the reason rather than timing out |
+| T-S16 | ERR_COMM_DEGRADED blocks firing | **PASS** 2026-08-27 (base `g` injected automatically 40 ms into the countdown) — `327358 ARMED->PRE_FIRE`, `332348 PRE_FIRE comm degraded — abort`, `332378 DISARMED->IDLE`, arm sense released 150 ms later. **0 `Fire timer started`**. Aborted at 4990 ms, the PRE_FIRE→FIRING boundary. The only guard that can stop a pulse already in progress, never previously exercised on hardware |
 | T-S17 | Key switch sense verifies key switch (FSD wording; this row previously said "arm switch") | **PASS** 2026-08-27 — `key=0` in SAFE, `key=1` in ARM, both transitions clean; guard 1 then passed with two successful arms, each verified by arm sense 170 ms after the relay drive (`arm verify started` → `sense HIGH` → `sense verified`). Both auto-disarmed at exactly 10000 ms, re-confirming T-S14 |
 | T-S18 | Arm switch sense fault detection → NACK 0x0B | TODO |
 | T-S19 | Post-fire igniter status via continuity | **PASS** — operator attestation 2026-08-27: burn-through was verified with a real igniter during earlier fire testing. Corroborated by T-A17 (2026-08-26), which records an igniter firing on this rig, though no post-fire continuity reading was logged at the time. Intact-load half independently re-confirmed 2026-08-27: the halogen reads `● STILL CONNECTED` after a pulse. **The operator-facing display half was added later (fw 1.1.22)** — the FIRE COMPLETE screen shows the fired channel's band live, `○ OPEN - LIKELY FIRED` / `▲ MARGINAL - CHECK` / `● STILL CONNECTED` / `IGNITER ?`; the green OPEN path has not itself been seen on the panel, since that needs a load that opens |
