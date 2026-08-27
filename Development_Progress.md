@@ -3748,6 +3748,35 @@ that is the task the TWDT is meant to cover for the safety state machine. It
 also, as it turns out, demonstrates that a hang there takes down a co-scheduled
 task's watchdog feed first.
 
+### Boot Display Health Check Hardened — fw 1.1.28 (2026-08-27)
+
+Found while working out what a harness could substitute for **T-S10**, which is
+not runnable here (soldered display). Reading the code the test targets found
+two defects a real MOSI break would have walked straight through — a better
+outcome than running the test would have been.
+
+1. **The boot read discarded the SPI transaction status.** §5.5.6 requires it to
+   be checked: *"a health check that succeeds only because the SPI layer
+   swallowed an error is not a health check."* The **periodic** check has done
+   so since 1.1.9; the **boot** read never did. It now snapshots `s_spi_errors`
+   around the read, the same pattern the periodic check already uses.
+
+2. **The test was `s_panel_id != 0`.** A broken MOSI leaves the panel with no
+   command to answer and MISO undriven, which reads `0x00000000` (caught) or
+   floats to `0xFFFFFFFF` (**not** caught). The remote would boot believing a
+   dead panel healthy — and every screen after that is a lie, including ARMED.
+   Both undriven signatures are now rejected.
+
+**§5.5.6 contradicted itself and the firmware implemented the weaker clause:**
+*"any non-zero read-back is considered valid"* against *"only a zero or
+**garbage** read-back … is treated as a fault"* — all-ones is both garbage and
+non-zero. Spec corrected (v1.45) to require rejecting both signatures and
+checking the SPI status.
+
+Verified on target: the real panel still reports
+`ILI9488 init: … ID 0x2A403300 (healthy)`, so the tightened check does not
+reject the clone ID this hardware actually uses.
+
 ### Phase 5 FSD Safety Tests (§15.4)
 
 | ID | Test | Status |
@@ -3757,11 +3786,11 @@ task's watchdog feed first.
 | T-S03 | Base battery below VBAT_CRITICAL_MV → ERROR state | **PASS** (2026-08-26) — taken to 7978 mV, latched `ERROR flags=0x02`, correctly stayed latched at 12.1–12.7 V until power cycle |
 | T-S04 | Hold fire button at boot, then arm → no fire (fresh press) | **PASS** 2026-08-27 — button held through remote boot and through arming; no countdown, no pulse, lamp dark. The debouncer seeding at boot with the button already low does not read as authorisation |
 | T-S05 | Corrupt message (bit flip) → rejected | **PASS** 2026-08-27 (remote `c` injection) — `CMD integrity CRC mismatch (type 0x20)` on the base, corrupted CMD_ARM rejected in the link layer before reaching the FSM, and the sequence number deliberately not advanced. The remote's *visible* toast that run was COMM DEGRADED, from the automatic retry landing on a leftover `g` flag — the retry was uncorrupted, since the injection is one-shot |
-| T-S06 | GPIO init order verification (oscilloscope on boot) | TODO |
+| T-S06 | GPIO init order verification (oscilloscope on boot) | **PARTIAL PASS** 2026-08-27 — no logic analyser available; run instead with the 12 V halogen on ch 1 across ~10 consecutive base power cycles. **No flicker on any cycle**, arm and fire relays solid throughout. This catches a relay actually pulling in (a sustained wrong gate level), which is the failure that matters; it cannot catch a microsecond gate transient, which is what the written criterion measures — though a relay armature has milliseconds of mechanical inertia and physically cannot respond to one. Recorded as PARTIAL, not a pass on the written criterion |
 | T-S07 | Watchdog: infinite loop → reboot within 5 s | **PASS** 2026-08-27 (base `x` injection) — FSM task hung at 2685038, `Task watchdog got triggered` at 2689288 = **4250 ms**, `rst:0xc (RTC_SW_CPU_RST)`. Post-boot `state=1 armed=0 firing=0 arm=0 err=0x00` and continuity reading on all channels, which requires the channel relays in NC — both criteria met |
 | T-S08 | Hold fire button + arm → no fire (fresh press required) | **PASS** 2026-08-27 — button held before and through ARMED entry; no fire. Release-then-press did start the countdown, confirming the `0xFF→0x00` transition is what authorises |
 | T-S09 | LINK_REQUEST while ARMED → **rejected with `LINK_REJECT_BUSY`** (was "silently ignored" before fw 1.1.17); session and armed state unaffected | **PASS** 2026-08-27 (remote `l` injection, fired automatically 70 ms after the base logged ARMED) — `LINK_REQUEST from remote fw 1.1.27` → `rejected by app-state guard (busy)` → `LINK_REJECT sent, reason=0x02`. **The criterion is proven by what did not happen:** no LINK_ACK, no new session token, no dropped arm — the base stayed ARMED and ran its full `ARM TIMEOUT (10009 ms)`. A handshake attempt cannot reset the session out from under a live pad. **FSD §15.4 row still says "silently ignores" and needs updating** |
-| T-S10 | Display SPI failure at boot → ERROR | TODO |
+| T-S10 | Display SPI failure at boot → ERROR | TODO — **not runnable on this hardware**: the display is soldered, and unsoldering a working panel to run a test is a poor trade. An injection could only substitute for half of it (the boot-halt *response*), never for whether a real MOSI break is *detected*. **Investigating that half found two defects instead**, both fixed in fw 1.1.28 — see below. The response half is separately evidenced by the remote harness `d` key (T-S07/REMOTE FAULT work) |
 | T-S11 | 5 consecutive send failures → immediate link loss | PASS | Triggered on-target during RF shielding test (RSSI -98 dBm) |
 | T-S12 | Fire pulse on link loss (COMPLETE_PULSE=true) | TODO |
 | T-S13 | Fire pulse on link loss (COMPLETE_PULSE=false) | TODO |
@@ -3769,7 +3798,7 @@ task's watchdog feed first.
 | T-S15 | ERR_COMM_DEGRADED blocks arming | **PASS** 2026-08-27 (base `g` injection) — `NACK sent: type=0x20 reason=0x0d (COMM DEGRADED)`, guard 10 at `rlc_base_fsm.c:335`. Remote named the reason rather than timing out |
 | T-S16 | ERR_COMM_DEGRADED blocks firing | **PASS** 2026-08-27 (base `g` injected automatically 40 ms into the countdown) — `327358 ARMED->PRE_FIRE`, `332348 PRE_FIRE comm degraded — abort`, `332378 DISARMED->IDLE`, arm sense released 150 ms later. **0 `Fire timer started`**. Aborted at 4990 ms, the PRE_FIRE→FIRING boundary. The only guard that can stop a pulse already in progress, never previously exercised on hardware |
 | T-S17 | Key switch sense verifies key switch (FSD wording; this row previously said "arm switch") | **PASS** 2026-08-27 — `key=0` in SAFE, `key=1` in ARM, both transitions clean; guard 1 then passed with two successful arms, each verified by arm sense 170 ms after the relay drive (`arm verify started` → `sense HIGH` → `sense verified`). Both auto-disarmed at exactly 10000 ms, re-confirming T-S14 |
-| T-S18 | Arm switch sense fault detection → NACK 0x0B | TODO |
+| T-S18 | Key switch sense fault detection → NACK 0x01 (FSD wording) | TODO — **no injection substitutes for this one.** It tests a *hardware* property: with the internal pulls disabled (`rlc_arm_sense.c`), a broken sense wire is held at the safe level by the external divider's 100 kΩ leg to ground. LOW = key OFF (`key_on = !new_state`), so a break fails safe. Forcing `key_sense_get_debounced()` false would only re-test guard 1, which fires routinely already, and would prove nothing about the wire. Needs physical access; if run, **break the connection on the key-switch side of the divider**, not at the GPIO — disconnecting at the GPIO orphans the divider and leaves the pin genuinely floating, which tests something different and less safe |
 | T-S19 | Post-fire igniter status via continuity | **PASS** — operator attestation 2026-08-27: burn-through was verified with a real igniter during earlier fire testing. Corroborated by T-A17 (2026-08-26), which records an igniter firing on this rig, though no post-fire continuity reading was logged at the time. Intact-load half independently re-confirmed 2026-08-27: the halogen reads `● STILL CONNECTED` after a pulse. **The operator-facing display half was added later (fw 1.1.22)** — the FIRE COMPLETE screen shows the fired channel's band live, `○ OPEN - LIKELY FIRED` / `▲ MARGINAL - CHECK` / `● STILL CONNECTED` / `IGNITER ?`; the green OPEN path has not itself been seen on the panel, since that needs a load that opens |
 
 ---

@@ -1826,12 +1826,42 @@ int display_init(void)
     dirty_clear();
     s_boot_ms = now_ms();
 
-    /* §9.13 step 6: health check — panel ID read-back */
+    /* §9.13 step 6: health check — panel ID read-back.
+     *
+     * Two things this used to get wrong, both of which a disconnected MOSI
+     * (FSD T-S10) would have walked straight through:
+     *
+     * 1. The SPI status was discarded. §5.5.6 requires return codes to be
+     *    checked — "a health check that succeeds only because the SPI layer
+     *    swallowed an error is not a health check". The periodic check has
+     *    done this since 1.1.9; the boot read had not. Same s_spi_errors
+     *    snapshot pattern, so both halves now agree.
+     *
+     * 2. The test was `s_panel_id != 0`. A broken MOSI leaves the panel
+     *    without a command to answer and MISO undriven — which reads 0x00000000
+     *    (caught) or floats to 0xFFFFFFFF (NOT caught), and the remote would
+     *    boot believing a dead panel healthy. §5.5.6 contradicts itself here:
+     *    "any non-zero read-back is considered valid" against "only a zero or
+     *    GARBAGE read-back ... is treated as a fault". All-ones is garbage, so
+     *    the second clause governs. Both undriven signatures are now rejected;
+     *    a real panel — including the 0x2A403300 clone this hardware uses —
+     *    reports neither. */
+    uint32_t spi_errors_before = s_spi_errors;
     uint8_t id[4] = {0};
     spi_read_reg(ILI9488_ID, id, 4);
     s_panel_id = ((uint32_t)id[0] << 24) | ((uint32_t)id[1] << 16) |
                  ((uint32_t)id[2] << 8) | id[3];
-    s_healthy = (s_panel_id != 0);
+
+    bool spi_ok = (s_spi_errors == spi_errors_before);
+    bool id_ok  = (s_panel_id != 0x00000000u) && (s_panel_id != 0xFFFFFFFFu);
+    s_healthy = spi_ok && id_ok;
+
+    if (!s_healthy) {
+        ESP_LOGE(TAG, "panel ID read-back FAILED: id=0x%08lX, spi_errors %lu->%lu",
+                 (unsigned long)s_panel_id,
+                 (unsigned long)spi_errors_before,
+                 (unsigned long)s_spi_errors);
+    }
 
     /* Clear the panel to black so no garbage shows before the first frame.
      * This is the only flush in which every pixel differs from the shadow. */

@@ -7,7 +7,36 @@
 
 #pragma once
 
-/* 1.1.27 (2026-08-27): audible state tones for ARMED and the firing sequence.
+/* 1.1.28 (2026-08-27): boot display health check actually checks.
+ *
+ * Found while working out what a fault-injection harness could substitute for
+ * FSD T-S10 (disconnect display MOSI at boot), which cannot be run on this
+ * hardware without unsoldering a working display. Reading the code the test
+ * targets found two defects a real MOSI break would have walked straight
+ * through — which is a better outcome than running the test would have been.
+ *
+ * 1. The boot read DISCARDED the SPI transaction status. §5.5.6 requires it to
+ *    be checked — "a health check that succeeds only because the SPI layer
+ *    swallowed an error is not a health check". The periodic check has done so
+ *    since 1.1.9; the boot read never did. Now snapshots s_spi_errors around
+ *    the read, the same pattern the periodic check uses.
+ *
+ * 2. The test was `s_panel_id != 0`. A broken MOSI leaves the panel with no
+ *    command to answer and MISO undriven: that reads 0x00000000 (caught) or
+ *    floats to 0xFFFFFFFF (NOT caught), so the remote would boot believing a
+ *    dead panel healthy — and every screen after that is a lie, including
+ *    ARMED. Both undriven signatures are now rejected.
+ *
+ * §5.5.6 contradicted itself and the firmware implemented the weaker clause:
+ * "any non-zero read-back is considered valid" against "only a zero or GARBAGE
+ * read-back ... is treated as a fault", when all-ones is both garbage and
+ * non-zero. Spec corrected to require rejecting both signatures and checking
+ * the SPI status. A real panel, including this hardware's 0x2A403300 clone,
+ * reports neither.
+ *
+ * Remote-only, but the version check is strict — flash both units.
+ *
+ * 1.1.27 (2026-08-27): audible state tones for ARMED and the firing sequence.
  *
  * Operator: ARMED and FIRING had no sound on the remote at all — only the
  * display and the ring LED. The base siren covers the pad; this covers the
@@ -544,5 +573,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  27
-#define RLC_VERSION_STRING "1.1.27"
+#define RLC_VERSION_PATCH  28
+#define RLC_VERSION_STRING "1.1.28"
