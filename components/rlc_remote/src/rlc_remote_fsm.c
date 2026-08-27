@@ -1066,14 +1066,44 @@ static void process_event(const rlc_fsm_event_t *evt)
     /* ─── FIRING ───────────────────────────────────────────── */
     case STATE_FIRING:
         if (evt->type == EVT_FIRE_BUTTON_RELEASED) {
-            /* Button released -> CEASE_FIRE (FSD §8.2.6) */
+            /* Button released -> CEASE_FIRE (FSD §8.2.6).
+             *
+             * This returned to IDLE silently, which loses the one fact the
+             * operator most needs to carry to the pad: the channel WAS
+             * energised, just for less than the full pulse. A silent return
+             * looks identical to an abort during the countdown, where no
+             * current ever reached the igniter — and those two demand very
+             * different behaviour when someone walks out to the rail.
+             *
+             * "PULSE CUT SHORT" describes what happened without asserting what
+             * it means. Whether the igniter took is not knowable from here;
+             * the main screen's continuity grid answers that, live, as soon as
+             * this toast clears. */
             ESP_LOGI(TAG, "Fire button released — CEASE_FIRE");
             s_fire_repeat_active = false;
             send_cmd_cease_fire();
+            {
+                /* overlay_post() copies the string, so a stack buffer is fine. */
+                char tbuf[40];
+                snprintf(tbuf, sizeof(tbuf), "CH %u PULSE CUT SHORT",
+                         s_armed_channel);
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast(tbuf);
+            }
             do_enter_idle();
         } else if (evt->type == EVT_ARM_SWITCH_CHANGED && !evt->data.arm_state.armed) {
+            /* Same situation, different input — and it was equally silent.
+             * Named separately so the operator knows which one ended it. */
+            ESP_LOGI(TAG, "Arm switch OFF during FIRING — CEASE_FIRE");
             s_fire_repeat_active = false;
             send_cmd_cease_fire();
+            {
+                char tbuf[40];
+                snprintf(tbuf, sizeof(tbuf), "CH %u CUT SHORT - ARM OFF",
+                         s_armed_channel);
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast(tbuf);
+            }
             do_enter_idle();
         } else if (evt->type == EVT_STATUS_UPDATE) {
             cache_status(&evt->data.status_update.status);

@@ -2007,11 +2007,34 @@ The fire pulse shall be driven by a hardware timer interrupt, NOT a software del
 #### 8.2.6 FIRING → IDLE
 
 - Trigger (any of):
-  1. Fire button released → send `CMD_CEASE_FIRE`, transition to IDLE.
-  2. `STATUS_UPDATE` showing fire complete (base in POST_FIRE or IDLE) → display "FIRE COMPLETE" for `POST_FIRE_COOLDOWN_MS` (2000 ms), then transition to IDLE.
-  3. Arm switch moved to DISARM → send `CMD_CEASE_FIRE`, transition to IDLE.
+  1. Fire button released → send `CMD_CEASE_FIRE`, toast `CH n PULSE CUT SHORT`
+     with the attention beep, transition to IDLE.
+  2. `STATUS_UPDATE` showing fire complete (base in POST_FIRE or IDLE) → display
+     "FIRE COMPLETE" for `FIRE_COMPLETE_SCREEN_MS` (10000 ms, §10.2.4a), then
+     transition to IDLE.
+  3. Arm switch moved to DISARM → send `CMD_CEASE_FIRE`, toast
+     `CH n CUT SHORT - ARM OFF` with the attention beep, transition to IDLE.
   4. Link lost → transition to LINK_LOST.
 - Actions: update display, clear firing indicators, stop sending repeated CMD_FIRE.
+
+**Cease-fire feedback (added 2026-08-27, fw 1.1.24).** Triggers 1 and 3 returned
+to IDLE silently — logged, but with nothing shown or sounded. That loses the one
+fact the operator most needs to carry to the pad: **the channel was energised,
+just for less than the full pulse.** A silent return to IDLE is
+indistinguishable from an abort during the pre-fire countdown (§8.2.5), where no
+current ever reached the igniter — and those two situations call for very
+different behaviour when someone walks out to the rail.
+
+The wording states what happened without asserting what it means. Whether the
+igniter took is not knowable from the remote; the §10.2.2 continuity grid
+answers that, live, as soon as the toast clears.
+
+Note this was **not** a §7.2.9a violation, and the v1.39 audit that found "only
+five log-without-display sites, all legitimate" was correct by its own terms.
+§7.2.9a covers refusals, aborts and failures; a cease-fire is a *successful*
+operator action. The gap was in a neighbouring category the requirement did not
+reach: operator-initiated state changes whose **consequences** the operator
+needs to know about.
 - Exceptions:
   - STATUS_UPDATE shows base no longer in PRE_FIRE or FIRING unexpectedly → sync to base state. Return to IDLE. Stop sending CMD_FIRE.
 

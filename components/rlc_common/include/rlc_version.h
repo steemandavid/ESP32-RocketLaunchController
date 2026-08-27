@@ -7,7 +7,35 @@
 
 #pragma once
 
-/* 1.1.23 (2026-08-27): FIRE COMPLETE screen holds for 10 s.
+/* 1.1.24 (2026-08-27): a cease-fire tells the operator the channel was live.
+ *
+ * Operator report: releasing the fire button during the pulse dropped the
+ * remote back to the idle screen with no notification. Both cease-fire paths
+ * in STATE_FIRING — button released, and arm switch off — logged and returned
+ * to IDLE silently.
+ *
+ * That loses the fact that matters most when someone then walks out to the
+ * rail: the channel WAS energised, just for less than the full pulse. A silent
+ * return is indistinguishable from an abort during the pre-fire countdown,
+ * where no current ever reached the igniter, and the two call for very
+ * different behaviour at the pad.
+ *
+ *   button released   "CH n PULSE CUT SHORT"
+ *   arm switch off    "CH n CUT SHORT - ARM OFF"
+ *
+ * Named separately so the operator knows which input ended it, both with the
+ * attention beep. The wording states what happened without asserting what it
+ * means — whether the igniter took is not knowable from the remote, and the
+ * continuity grid answers that live as soon as the toast clears.
+ *
+ * Not a §7.2.9a violation: that requirement covers refusals, aborts and
+ * failures, and a cease-fire is a successful operator action. The v1.39 audit
+ * finding "only five log-without-display sites, all legitimate" was correct by
+ * its own terms. The gap was in a neighbouring category — operator-initiated
+ * state changes whose consequences the operator needs to know about. FSD
+ * §8.2.6 updated.
+ *
+ * 1.1.23 (2026-08-27): FIRE COMPLETE screen holds for 10 s.
  *
  * Operator: 5 s still was not long enough to read the igniter status and act
  * on it. FIRE_COMPLETE_SCREEN_MS 5000 -> 10000. POST_FIRE_COOLDOWN_MS is
@@ -434,5 +462,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  23
-#define RLC_VERSION_STRING "1.1.23"
+#define RLC_VERSION_PATCH  24
+#define RLC_VERSION_STRING "1.1.24"
