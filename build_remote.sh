@@ -52,6 +52,10 @@ echo "=== Building REMOTE unit ==="
 # Install remote sdkconfig as the active one
 cp "$SDKCONFIG_REMOTE" "$SCRIPT_DIR/sdkconfig"
 
+# The T-D09 display profiling harness (CONFIG_RLC_DISPLAY_PROFILE / --profile)
+# was removed in 1.1.11 once the measurements were taken. Recover it from git
+# history (firmware 1.1.10) if the display refresh ever needs re-measuring.
+
 # Configure and build (default build dir)
 idf.py build 2>&1 | grep -E "warning:|error:|Generated|build complete" || true
 

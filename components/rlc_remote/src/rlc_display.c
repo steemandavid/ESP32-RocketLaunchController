@@ -5,10 +5,22 @@
  *
  * Rendering model:
  *   All drawing goes into a PSRAM framebuffer (480*320*3 bytes). Every write
- *   grows a dirty bounding box; `flush()` pushes only that box over SPI
- *   (FSD §10.3 partial refresh). `display_task` (prio 2, core 1 — FSD §9.10)
- *   owns the framebuffer and the SPI device: no other task ever touches SPI,
- *   so the FSM and input tasks never block on the panel.
+ *   grows a dirty bounding box, but that box is only a coarse pre-filter:
+ *   `flush()` compares the box row by row against a shadow copy of what the
+ *   panel was last sent and transmits only the spans that actually changed
+ *   (FSD §10.3 partial refresh). The drawing code repaints every field on
+ *   every frame regardless of whether its text changed, so on the main status
+ *   screen the bounding box spans the whole panel and says nothing useful —
+ *   the pixel comparison is what makes the refresh partial.
+ *
+ *   Diffing rather than hand-maintained invalidation is deliberate: a missed
+ *   invalidation leaves a stale pixel, and this screen displays ARMED.
+ *
+ *   `display_task` (prio 2, core 1 — FSD §9.10) owns the framebuffer and the
+ *   SPI device: no other task ever touches SPI, so the FSM and input tasks
+ *   never block on the panel. The task is paced with xTaskDelayUntil at a
+ *   fixed DISPLAY_FRAME_MS period, so the frame rate does not sag with the
+ *   cost of the frame.
  *
  * Screens (FSD §10.2) are selected from the remote FSM state, with latched
  * overrides for ERROR / firmware mismatch and a timed overlay for NACKs.
@@ -144,6 +156,10 @@ static TaskHandle_t        s_task = NULL;
 
 /* Dirty bounding box (inclusive); x0 > x1 means "clean" */
 static int s_dx0, s_dy0, s_dx1, s_dy1;
+
+/* Last-transmitted copy of the framebuffer. flush() diffs against this so only
+ * genuinely changed pixels are sent to the panel. */
+static uint8_t *s_shadow = NULL;
 
 /* Requests posted by other tasks (mutex-protected) */
 typedef enum {
@@ -457,9 +473,48 @@ static void format_volts(char *buf, size_t len, uint16_t mv)
 
 /* ── Flush ────────────────────────────────────────────────────── */
 
+/* Does this row differ from the shadow copy, and over which pixel span?
+ * memcmp first, because the overwhelmingly common answer is "no": it is a
+ * fast reject over the whole row before the byte scans run at all. */
+static bool row_diff_span(const uint8_t *fb, const uint8_t *sh, int w,
+                          int *xa, int *xb)
+{
+    size_t n = (size_t)w * 3;
+    if (memcmp(fb, sh, n) == 0) return false;
+
+    size_t i = 0;
+    while (fb[i] == sh[i]) i++;
+    size_t j = n - 1;
+    while (fb[j] == sh[j]) j--;
+
+    *xa = (int)(i / 3);
+    *xb = (int)(j / 3);
+    return true;
+}
+
+/* Transmit rows ya..yb over the pixel span gx0..gx1, and bring the shadow
+ * copy up to date for exactly that region. */
+static void flush_run(int gx0, int gx1, int ya, int yb)
+{
+    int    w        = gx1 - gx0 + 1;
+    size_t rowbytes = (size_t)w * 3;
+
+    set_window(gx0, ya, gx1, yb);
+
+    /* The panel auto-increments inside the window, so the rows stream back to
+     * back. Rows are copied through an internal-RAM bounce buffer: the
+     * framebuffer lives in PSRAM. */
+    for (int y = ya; y <= yb; y++) {
+        const uint8_t *src = s_fb + ((size_t)y * DW + gx0) * 3;
+        memcpy(s_line, src, rowbytes);
+        spi_send_data(s_line, rowbytes);
+        memcpy(s_shadow + ((size_t)y * DW + gx0) * 3, src, rowbytes);
+    }
+}
+
 static void flush(void)
 {
-    if (!s_fb || !s_spi || dirty_empty()) return;
+    if (!s_fb || !s_shadow || !s_spi || dirty_empty()) return;
 
     int x0 = s_dx0 < 0 ? 0 : s_dx0;
     int y0 = s_dy0 < 0 ? 0 : s_dy0;
@@ -467,15 +522,43 @@ static void flush(void)
     int y1 = s_dy1 >= DH ? DH - 1 : s_dy1;
     int w  = x1 - x0 + 1;
 
-    set_window(x0, y0, x1, y1);
+    /* The dirty box is only a coarse pre-filter. The drawing code repaints
+     * every field on every frame whether or not its text changed, so on the
+     * main status screen the box degenerates to the whole panel — updates run
+     * from the top bar at y=0 to the instruction line at y=DH-30, and there is
+     * one box to hold them all. Comparing against the shadow copy is what
+     * actually decides the transfer: only genuinely changed pixels go out.
+     *
+     * Diffing rather than hand-maintained invalidation is deliberate. A missed
+     * invalidation leaves a stale pixel on the panel; this screen displays
+     * ARMED, and a stale ARMED is the one failure this display must not have.
+     * A pixel comparison cannot get that wrong by construction. */
+    int run_y0 = -1;                /* first row of the open run, -1 = none */
+    int run_xa = 0, run_xb = 0;     /* absolute pixel span, unioned over run */
 
-    /* The panel auto-increments inside the window, so the rows of the
-     * dirty box can be streamed back to back. Rows are copied through an
-     * internal-RAM bounce buffer: the framebuffer lives in PSRAM. */
     for (int y = y0; y <= y1; y++) {
-        memcpy(s_line, s_fb + ((size_t)y * DW + x0) * 3, (size_t)w * 3);
-        spi_send_data(s_line, w * 3);
+        const uint8_t *fbrow = s_fb     + ((size_t)y * DW + x0) * 3;
+        const uint8_t *shrow = s_shadow + ((size_t)y * DW + x0) * 3;
+
+        int xa, xb;
+        if (!row_diff_span(fbrow, shrow, w, &xa, &xb)) {
+            if (run_y0 >= 0) {
+                flush_run(run_xa, run_xb, run_y0, y - 1);
+                run_y0 = -1;
+            }
+            continue;
+        }
+
+        xa += x0;
+        xb += x0;
+        if (run_y0 < 0) {
+            run_y0 = y; run_xa = xa; run_xb = xb;
+        } else {
+            if (xa < run_xa) run_xa = xa;
+            if (xb > run_xb) run_xb = xb;
+        }
     }
+    if (run_y0 >= 0) flush_run(run_xa, run_xb, run_y0, y1);
 
     dirty_clear();
 }
@@ -1109,6 +1192,7 @@ static void display_task(void *arg)
     bool     overlay_drawn = false;
     int      frame = 0;
     int64_t  last_health_ms = now_ms();   /* DS-01 */
+    TickType_t last_wake = xTaskGetTickCount();
 
     while (1) {
         disp_data_t d;
@@ -1159,6 +1243,7 @@ static void display_task(void *arg)
 
         /* A retiring overlay leaves a hole — force a full redraw. */
         bool full = (want != current) || (overlay_drawn && !overlay_on);
+
         if (full) {
             switch (want) {
                 case SCR_SPLASH:        draw_splash_static();        break;
@@ -1214,6 +1299,7 @@ static void display_task(void *arg)
 
         flush();
 
+
         /* DS-01 / FSD §5.5.6: 5 s panel-ID re-read, run here so it is
          * serialised with the frame writes above. Skipped while an FSM event
          * is already pending would be pointless — the check is cheap (one
@@ -1241,7 +1327,20 @@ static void display_task(void *arg)
 
         frame++;
         esp_task_wdt_reset();
-        vTaskDelay(pdMS_TO_TICKS(DISPLAY_FRAME_MS));
+
+        /* Fixed-period pacing. A plain vTaskDelay here delays DISPLAY_FRAME_MS
+         * *after* the frame's work, so the period was work + 100 ms and could
+         * never be the 100 ms FSD §10.3 requires of the pre-fire countdown —
+         * it measured 300 ms before the flush was made incremental. Delaying
+         * until a fixed wake time makes the period 100 ms regardless of how
+         * long the frame took, as long as it took less than that. */
+        if (!xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(DISPLAY_FRAME_MS))) {
+            /* The frame overran its budget — a full redraw on a screen change
+             * still does, at ~230 ms. Re-base rather than let DelayUntil fire
+             * a burst of catch-up frames back to back with no delay at all,
+             * which would starve lower-priority work on this core. */
+            last_wake = xTaskGetTickCount();
+        }
     }
 }
 
@@ -1340,7 +1439,17 @@ int display_init(void)
         ESP_LOGE(TAG, "line buffer alloc failed");
         return -1;
     }
+    /* Shadow copy of what the panel was last sent (see flush()). Deliberately
+     * initialised to a value the cleared framebuffer cannot match, so the
+     * first flush repaints every row rather than trusting an untransmitted
+     * buffer that happens to compare equal. */
+    s_shadow = heap_caps_malloc((size_t)DW * DH * 3, MALLOC_CAP_SPIRAM);
+    if (!s_shadow) {
+        ESP_LOGE(TAG, "shadow buffer alloc failed (%d bytes PSRAM)", DW * DH * 3);
+        return -1;
+    }
     memset(s_fb, 0, (size_t)DW * DH * 3);
+    memset(s_shadow, 0xFF, (size_t)DW * DH * 3);
     dirty_clear();
     s_boot_ms = now_ms();
 
@@ -1351,7 +1460,8 @@ int display_init(void)
                  ((uint32_t)id[2] << 8) | id[3];
     s_healthy = (s_panel_id != 0);
 
-    /* Clear the panel to black so no garbage shows before the first frame */
+    /* Clear the panel to black so no garbage shows before the first frame.
+     * This is the only flush in which every pixel differs from the shadow. */
     mark_dirty(0, 0, DW, DH);
     flush();
 

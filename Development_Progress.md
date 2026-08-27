@@ -867,7 +867,12 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 ## Phase 4 — Display
 
 **FSD ref:** §4.3 Phase 4, §10 (Display Specification)
-**Status:** CODE COMPLETE — awaiting on-target verification
+**Status:** VERIFIED ON TARGET 2026-08-27 — **T-D01…T-D09 all pass.** T-D09
+initially failed at 3.3 Hz against the §10.3 ≥5 Hz floor; the flush was made
+incremental (pixel diffing against a shadow copy) and the frame loop given
+fixed-period pacing, and it retested at 10.0 Hz with the pre-fire countdown
+stepping at ~101 ms. See `Test_Report_Phase4_Display.md`. Version bump to 1.1.10
+still outstanding.
 
 Implemented independently of the base firing-sequence debugging: the display
 lives entirely in the remote unit (`components/rlc_remote/src/rlc_display.c`).
@@ -1136,15 +1141,95 @@ channels 4-8 are blocked by bug #19 (dead pixel at channel 4).
 
 | ID | Test | Status |
 |----|------|--------|
-| T-D01 | Panel ID read-back at boot (expect clone ID 0x2A403300) | TODO |
-| T-D02 | Splash holds 10 s, then transitions to main status | TODO |
-| T-D03 | Continuity grid matches base STATUS_UPDATE for all 8 channels | TODO |
-| T-D04 | Encoder rotation moves the cyan selection cursor | TODO |
-| T-D05 | ARMED screen on arm, red pulse, arm-sense confirmed | TODO |
-| T-D06 | Pre-fire countdown smoothness (100 ms steps) | TODO |
-| T-D07 | NACK overlay text + 3 s timeout, screen restored cleanly | TODO |
-| T-D08 | Link-lost screen and recovery back to main status | TODO |
-| T-D09 | Full-screen redraw time and steady-state frame rate | TODO |
+| T-D01 | Panel ID read-back at boot (expect clone ID 0x2A403300) | **PASS** 2026-08-27 — `ID 0x2A403300 (healthy)` |
+| T-D02 | Splash holds 10 s, then transitions to main status | **PASS** 2026-08-27 — drawn 1827 ms, MAIN redraw 11767 ms = 9.94 s held |
+| T-D03 | Continuity grid matches base STATUS_UPDATE for all 8 channels | **PASS** 2026-08-27 — bridged channel CONNECTED (●), other seven OPEN (○) |
+| T-D04 | Encoder rotation moves the cyan selection cursor | **PASS** 2026-08-27 — one channel per detent, no overshoot (divider=4) |
+| T-D05 | ARMED screen on arm, red pulse, arm-sense confirmed | **PASS** 2026-08-27 — border confirmed pulsing, not static |
+| T-D06 | Pre-fire countdown smoothness (100 ms steps) | **PASS** 2026-08-27 — initially 301 ms steps (§10.3 deviation); **retested at ~101 ms after the Finding 1 fix, deviation closed** |
+| T-D07 | NACK overlay text + 3 s timeout, screen restored cleanly | **PASS** 2026-08-27 — reason named in words, main screen restored with no residue |
+| T-D08 | Link-lost screen and recovery back to main status | **PASS** 2026-08-27, and **re-run on fw 1.1.10** after the flush was replaced — `contact` advanced in exact 5 s steps 3637→33637 ms over a 40 s outage, `attempts` 1→16, `missed_pings` frozen at 3; recovery clean. Both transitions flushed 153600 px in 1 run, exercising the diff's all-changed path |
+| T-D09 | Full-screen redraw time and steady-state frame rate | **FAIL then PASS** 2026-08-27 — first run 300 ms = **3.3 Hz** against the §10.3 ≥5 Hz floor. Fixed same day; retest **100.00 ms = 10.0 Hz**, render 33 ms avg, ~1200 px sent per frame against a 153600 px panel |
+
+Full write-up: `Test_Report_Phase4_Display.md` (commit `c3b5745` + T-D09
+profiling instrumentation). **9 PASS / 0 FAIL** after the Finding 1 fix.
+
+### Display Refresh — Finding 1 Fixed (2026-08-27)
+
+T-D09 failed at 3.3 Hz. The review-level diagnosis (one dirty bounding box
+spanning the panel) was right but incomplete; two further causes turned up while
+fixing it:
+
+1. **`draw_field()` repaints every field every frame** regardless of whether its
+   text changed. So the bounding box was not merely pessimistic — the pixels
+   genuinely were all being rewritten, and a rect list alone would still have
+   transmitted almost the whole panel.
+2. **`vTaskDelay` came *after* the frame's work**, making the period
+   `work + 100 ms`. Even an instantaneous flush could not have produced the
+   100 ms period §10.3 requires of the countdown.
+
+**Fix.** `flush()` now diffs the dirty box row by row against a shadow copy of
+what the panel was last sent (second 460800-byte PSRAM buffer) and transmits
+only the changed spans, coalescing consecutive changed rows into runs;
+`xTaskDelayUntil` replaces `vTaskDelay` with a re-base on overrun.
+
+Diffing was chosen over per-field invalidation deliberately: a missed
+invalidation leaves a stale pixel, and this display shows ARMED. A pixel
+comparison cannot get that wrong by construction, and it needed no changes to
+any drawing code.
+
+| Metric | Before | After |
+|---|---|---|
+| Steady frame period | 300 ms (3.3 Hz) | **100.00 ms (10.0 Hz)** |
+| Period during PRE_FIRE | 301 ms | **101 ms** |
+| Render + flush, steady | ~195 ms | **33 ms avg, 37 ms max** |
+| Pixels sent per frame | ~153600 (whole panel) | **~1200 worst frame** |
+| Full redraw | 232 ms | **89–188 ms** |
+
+**A measurement lesson worth keeping:** the first profiling build sampled one
+frame in twenty and reported `0 px` flushed for 30 s on a screen that was in
+fact updating. Point-sampling could not distinguish a perfectly efficient
+display from a frozen one. The profiling was changed to accumulate over the
+whole window before the result was believed.
+
+**Released as firmware 1.1.10**, then **1.1.11** once the profiling harness was
+removed. Both units are on 1.1.11 stock and relinked — the base logs
+`LINK_REQUEST from remote fw 1.1.11`, and a version mismatch would have refused
+the link rather than ACKing it. 1.1.11 renders identically to 1.1.10: the
+harness was passive and compiled out by default.
+
+**Worst-case full-panel flush: 215 ms for 153600 px in one run.** This needed
+separate instrumentation: after the fix a "full redraw" on a screen change only
+sends what differs from the previous screen (MAIN 202 ms / 116124 px, SPLASH
+105 ms / 36106 px), so none of those is a true all-pixels case. The only flush
+where every pixel differs from the shadow is the boot panel clear in
+`display_init()`, which runs before the frame loop and so was never logged.
+
+**T-D08 re-run on 1.1.10 — PASS.** It was not treated as carrying over: it had
+passed on the old whole-box flush, and LINK_LOST was the only §10.2 screen the
+diffing code had never drawn. The re-run also turned out to be the most
+informative of the session, because MAIN → LINK_LOST and back are the only
+transitions in the test set where *every* pixel changes: both flushed 153600 px
+in a single run, so the diff detected a complete change, coalesced it rather
+than fragmenting it, and dropped no rows. That is the principal regression risk
+of replacing the flush, closed by measurement rather than by argument. It also
+yielded the true worst-case redraw of **250 ms**, higher than the 215 ms boot
+clear (which only fills black and carries almost no render cost).
+
+**T-D09 instrumentation — added in 1.1.10, removed in 1.1.11.** T-D09 asks for
+two numbers that cannot be seen on the panel, and nothing measured them. A
+`CONFIG_RLC_DISPLAY_PROFILE` Kconfig option plus `./build_remote.sh --profile`
+were added, following the `--inject` pattern, and removed again once the
+measurements were taken. **Recover from git history at 1.1.10 if the display
+refresh ever needs re-measuring** — every timing figure in this section and in
+`Test_Report_Phase4_Display.md` §6 was taken with that harness and cannot be
+reproduced on a stock build.
+
+**Four §10.2 screens have still never been rendered on the panel** — the
+firmware-mismatch screen, the fire-complete screen, the error screen, and the
+`IGNITION ACTIVE` state of the firing screen. Three fall out of tests already
+planned (T-F01, T-S10b) at no extra cost; they should be observed there rather
+than assumed working.
 
 ---
 

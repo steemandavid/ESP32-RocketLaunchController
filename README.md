@@ -157,7 +157,10 @@ read elsewhere through getters, so there are no shared-state locks in the
 safety path.
 
 The remote's 480×320 ILI9488 display renders into a PSRAM framebuffer and
-flushes only the dirty bounding box over SPI, at 10 Hz. Continuity is shown with
+flushes over SPI at 10 Hz, sending only the pixels that actually changed: the
+dirty bounding box is a coarse pre-filter, and the flush then diffs it row by
+row against a shadow copy of what the panel was last sent. On a steady screen
+that is around 1200 pixels a frame out of 153600. Continuity is shown with
 distinct shapes as well as colours, so the grid stays readable regardless of
 colour vision. No text is drawn smaller than 12×16 px per character — anything
 smaller proved unreadable at arm's length in the field.
@@ -186,17 +189,25 @@ so the "pad is live" signal is never diluted into a data display.
 | 1 | Foundation and communication | Complete |
 | 2 | Input/output and debouncing | Complete |
 | 3 | State machines and command processing | Code complete |
-| 4 | Display | Code complete, layouts not yet verified on target |
+| 4 | Display | Verified on target 2026-08-27 — 9/9 pass |
 | 5 | Hardening and final testing | Not started |
 
 Known open items before any field use:
 
-- **CRITICAL (review 2026-08-27, BF-01):** the fire timer is never stopped
-  after a normal pulse completes. A *second* launch on the same power cycle
-  panics in `fire_timer_start()` and reboots the base **with the igniter
-  relay energized** — uncontrolled pulse duration. Untested path: no test has
-  completed a pulse and re-armed on one boot. **Until fixed: power-cycle the
-  base between launches.** See `Code_Review_AllPhases_20260827_0308.md`.
+- ~~The display refreshes at 3.3 Hz, not the ≥5 Hz FSD §10.3 requires~~ **Fixed
+  2026-08-27, now 10.0 Hz** (T-D09). The panel and the SPI clock were never the
+  problem. There was one dirty bounding box, and the main screen updates the top
+  bar, the mid-screen grid and the bottom instruction line, so its union was the
+  whole 480×320 panel every frame — but the deeper cause was that `draw_field()`
+  repaints every field every frame whether or not its text changed, so the
+  pixels really were all being rewritten. Compounding it, the frame loop delayed
+  100 ms *after* the work, making the period `work + 100 ms`, which could never
+  have met §10.3's 100 ms countdown even with an instant flush. The flush now
+  diffs against a shadow copy of what the panel was last sent and transmits only
+  changed spans (~1200 px per frame against 153600), and the loop is paced with
+  `xTaskDelayUntil`. Diffing rather than per-field invalidation is deliberate: a
+  missed invalidation leaves a stale pixel, and this screen shows ARMED. See
+  `Test_Report_Phase4_Display.md` §6.
 - The continuity sense reports three bands — **CONNECTED**, **MARGINAL**,
   **OPEN** — not four. A `SHORT` band was specified but proved unmeasurable at
   the 1 mA test current: a dead short and a 1.5 Ω igniter differ by about a
@@ -253,7 +264,9 @@ Known open items before any field use:
   Positively verified since 2026-08-27 by `tests/host/test_base_fsm.c` T-FSM03,
   which drives both the event path and the level backstop.
 - ~~Bug #31 — the fire timer was never stopped after a completed pulse~~ **Fixed
-  2026-08-27 (fw 1.1.9).** The most serious defect found so far, and it had
+  2026-08-27 (fw 1.1.9) — proven on the host, not yet on the pad.** Filed by the
+  full-codebase review as Critical finding **BF-01**; the same defect.
+  The most serious defect found so far, and it had
   never been hit because no test had ever completed a fire pulse and re-armed on
   the same power cycle. An expired one-shot GPTimer alarm disables the alarm but
   leaves the driver running, so the *second* launch of a power cycle hit
@@ -262,7 +275,13 @@ Known open items before any field use:
   the whole panic-and-reboot interval. Fixed three ways (stop on completion,
   stop-first on every start, and a checked return that latches ERROR instead of
   aborting) and regression-tested by an automated two-cycle test that runs on
-  every build.
+  every build (`tests/host/test_base_fsm.c` T-FSM05).
+  **Until the on-target two-cycle test runs (Phase 5 task 10), keep
+  power-cycling the base between launches.** The fix is proven on the host, not
+  on the pad — and this is a bug that sat in the code for months looking
+  perfectly fine, caught by review rather than by testing, so the hardware
+  evidence is worth having before the restriction is lifted.
+  See `Code_Review_AllPhases_20260827_0308.md`.
 - **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
   ever specified. Protection is firmware-only, and the ERROR state halts
   operation without disconnecting the load — so a unit left switched on, or one
@@ -301,6 +320,7 @@ Known open items before any field use:
 | `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.44 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
 | `Development_Progress.md` | Per-phase task and test tracking, hardware reference, bug history |
 | `RLC_Project_Summary.md` | Plain-language overview written for club members |
+| `Test_Report_Phase4_Display.md` | Phase 4 on-target display tests T-D01…T-D09 — 9 PASS / 0 FAIL (T-D09 failed at 3.3 Hz, fixed same day to 10.0 Hz, §6), plus a §10.2 coverage gap: four specified screens have never been rendered |
 | `changelog.md` | Session-by-session development log |
 | `Phase{1,2,3}_Code_Review*.md` | Code reviews against the specification |
 | `Code_Review_AllPhases_20260821_1430.md` | Full-codebase review: 7 Major findings, 4 gating live-fire, plus a documentation-consistency audit. All seven fixed in 28293b6. |

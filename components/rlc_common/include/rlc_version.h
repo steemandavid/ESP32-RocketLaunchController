@@ -7,7 +7,42 @@
 
 #pragma once
 
-/* 1.1.9 (2026-08-27): full-codebase review fix round (RLC-REVIEW-ALL-008).
+/* 1.1.11 (2026-08-27): stock build — the T-D09 display profiling harness
+ * (CONFIG_RLC_DISPLAY_PROFILE, ./build_remote.sh --profile) is removed now that
+ * the measurements are taken. No functional change: the harness was passive and
+ * off by default, so 1.1.11 renders identically to 1.1.10. Recover it from git
+ * history at 1.1.10 if the display refresh ever needs re-measuring — the
+ * numbers in Test_Report_Phase4_Display.md §6 were taken with it and cannot be
+ * reproduced on a stock build.
+ *
+ * 1.1.10 (2026-08-27): display refresh fix — FSD test T-D09 failed on target
+ * at 3.3 Hz against the §10.3 >=5 Hz floor, and the pre-fire countdown stepped
+ * at ~300 ms rather than the specified 100 ms.
+ *
+ * Three causes, only the first of which the code review had identified:
+ *   - one dirty bounding box, unioned over updates from the top bar at y=0 to
+ *     the instruction line at y=DH-30, so it spanned the whole panel;
+ *   - draw_field() repaints every field every frame whether or not its text
+ *     changed, so the pixels genuinely were all being rewritten and a rect
+ *     list alone would not have helped;
+ *   - vTaskDelay ran *after* the frame's work, making the period work+100 ms,
+ *     so 100 ms was unreachable even with an instantaneous flush.
+ *
+ * flush() now diffs the dirty box row by row against a shadow copy of what the
+ * panel was last sent (second 460800-byte PSRAM buffer) and transmits only the
+ * changed spans, coalescing consecutive changed rows into runs; the frame loop
+ * is paced with xTaskDelayUntil, re-basing on overrun. Diffing rather than
+ * per-field invalidation is deliberate: a missed invalidation leaves a stale
+ * pixel, and this display shows ARMED.
+ *
+ * Retested 100.00 ms / 10.0 Hz steady, 101 ms during PRE_FIRE, ~1200 px sent
+ * per frame against a 153600 px panel. Remote-only change, but the version
+ * check is strict on all three components — flash both units.
+ *
+ * Also adds CONFIG_RLC_DISPLAY_PROFILE / ./build_remote.sh --profile, the
+ * test-only instrumentation T-D09 needs (passive; off by default).
+ *
+ * 1.1.9 (2026-08-27): full-codebase review fix round (RLC-REVIEW-ALL-008).
  *
  * CRITICAL — BF-01: the fire GPTimer was never stopped on the *successful*
  * pulse-completion path. An expired one-shot alarm disables the alarm but
@@ -95,5 +130,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  9
-#define RLC_VERSION_STRING "1.1.9"
+#define RLC_VERSION_PATCH  11
+#define RLC_VERSION_STRING "1.1.11"

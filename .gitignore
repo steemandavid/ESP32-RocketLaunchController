@@ -7,6 +7,9 @@ build_base/
 build_remote/
 sdkconfig.*.resolved
 
+# test-only build marker (see build_base.sh --inject)
+.build_base_inject
+
 # strip-diag tool build output
 tools/strip-diag/build/
 tools/strip-diag/sdkconfig
