@@ -417,6 +417,46 @@ the "Tasks currently running" line. A real trip in the field will look identical
 and anyone chasing `battery_task` would debug the wrong thing. Inherent to the
 TWDT's reporting, not a defect.
 
+### The last three §15.4 tests — and a defect found by not running one
+
+**T-S06 PARTIAL PASS.** No logic analyser, so run with the halogen on ch 1
+across ~10 consecutive base power cycles: no flicker on any, arm and fire relays
+solid. This catches a relay actually *pulling in* — a sustained wrong gate
+level, the failure that matters. It cannot see a microsecond gate transient,
+which is what the written criterion measures, though a relay armature has
+milliseconds of inertia and physically cannot respond to one. Recorded as
+PARTIAL, not a pass on the written criterion.
+
+**T-S18 stays open, and no harness will ever close it.** It tests a *hardware*
+property: with the internal pulls disabled, a broken sense wire is held at the
+safe level by the external divider's 100 kΩ leg, and LOW = key OFF. Forcing
+`key_sense_get_debounced()` false would only re-test guard 1, which fires
+routinely, and would prove nothing about the wire. If ever run: **break the
+connection on the key-switch side of the divider**, not at the GPIO —
+disconnecting there orphans the divider and leaves the pin genuinely floating,
+which is a different and less safe test.
+
+**T-S10 is not runnable (soldered display) — and working out why produced more
+than the test would have.** An injection could substitute for the boot-halt
+*response*, never for whether a real MOSI break is *detected*. Reading that
+detection code found two defects, both fixed in **fw 1.1.28**:
+
+1. **The boot read discarded the SPI transaction status**, which §5.5.6 already
+   required — *"a health check that succeeds only because the SPI layer
+   swallowed an error is not a health check."* The **periodic** check has
+   honoured that since 1.1.9; the **boot** read never did.
+2. **The test was `s_panel_id != 0`.** A broken MOSI leaves MISO undriven: it
+   reads `0x00000000` (caught) or floats to **`0xFFFFFFFF`** (not caught). The
+   remote would boot believing a dead panel healthy — and every screen after
+   that is a lie, including ARMED.
+
+**The spec contradicted itself and the firmware implemented the weaker clause:**
+*"any non-zero read-back is considered valid"* against *"only a zero or
+**garbage** read-back … is treated as a fault"*, when all-ones is both. §5.5.6
+corrected (FSD v1.45) to require rejecting both undriven signatures and checking
+the SPI status. Verified on target that the real clone panel still reports
+`ID 0x2A403300 (healthy)` — the tightened check does not reject this hardware.
+
 ### New tooling
 
 | Path | Purpose |
@@ -431,10 +471,11 @@ TWDT's reporting, not a defect.
 - **§15.3 is complete.** T-F01/F02/F03/F08 PASS, T-F04/F05 by earlier evidence,
   T-F06/F07/F09 discharged by the host FSM harness. None needed live ignition.
 - ~~T-S19 needs burn-through~~ **PASS** (attested, earlier igniter testing). The green OPEN path has not been seen on the display, which postdates it.
-- **§15.4 is 13/19.** Only three genuinely open, and all three are physical:
-  T-S06 (oscilloscope on boot GPIO), T-S10 (display disconnected before boot),
-  T-S18 (pull the GPIO 42 sense wire, which also tests the wiring). T-S12/S13
-  are physically unreachable and discharged by host test T-FSM06.
+- **§15.4 is 14/19** (incl. T-S06 partial). Only **T-S10 and T-S18** genuinely
+  open, both blocked on physical access rather than effort — a soldered display
+  and a soldered key-sense wire. T-S10's *substance* is addressed by the 1.1.28
+  fix even though the test itself cannot run. T-S12/S13 remain physically
+  unreachable and discharged by host test T-FSM06.
 - The remote harness does **not** unblock T-F07/T-F09 — they need injections at
   specific FSM transitions that have not been written.
 - `gptimer_stop(): timer is not running` is logged at **ERROR** level on the
