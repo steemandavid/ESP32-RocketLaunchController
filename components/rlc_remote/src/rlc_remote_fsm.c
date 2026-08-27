@@ -1242,6 +1242,35 @@ static void check_timers(void)
         s_link_was_healthy = healthy;
     }
 
+    /* State tone (FSD §12.1). Driven from the tick rather than on transitions,
+     * for the same reason fire_button_set_live() is: the base dropping out
+     * underneath an ARMED remote arrives as a STATUS_UPDATE, not as a local
+     * state change, and a missed transition would leave the pad sounding armed
+     * when it is not. buzzer_set_background() is idempotent, so calling it
+     * every tick does not restart the pattern.
+     *
+     * Set as a BACKGROUND rather than played: ARMED is full of one-shot beeps
+     * — the arm-confirm double, and a triple from every FIRE guard refusal —
+     * and a plain buzzer_play() tone would be replaced by the first of them
+     * and never return. */
+    switch (s_state) {
+        case STATE_ARMED:
+            buzzer_set_background(BUZZER_ALARM_ARMED);
+            break;
+        case STATE_PRE_FIRE:
+        case STATE_FIRING:
+            /* PRE_FIRE shares the firing tone deliberately: the countdown is
+             * the part the operator must hear starting, and it is where an
+             * abort is still free. */
+            buzzer_set_background(BUZZER_ALARM_FIRING);
+            break;
+        default:
+            /* LINK_LOST and ERROR play their own repeating alarms through the
+             * normal path; leaving the background clear lets those stand. */
+            buzzer_set_background(BUZZER_OFF);
+            break;
+    }
+
     /* PRE_FIRE -> FIRING: local countdown elapsed (FSD §8.2.5) */
     if (s_state == STATE_PRE_FIRE && s_prefire_start_ms > 0) {
         if ((now_ms() - s_prefire_start_ms) >= PRE_FIRE_DELAY_MS) {

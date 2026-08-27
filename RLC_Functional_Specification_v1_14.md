@@ -2636,6 +2636,32 @@ The remote uses an active buzzer for audible feedback. Patterns are implemented 
 | `BEEP_CONTINUITY_LOST` | 200 on, 100 off, 200 on, 100 off, 200 on | Continuity → OPEN disarm (distinctive pattern) |
 | `ALARM_LINK_LOST` | 200 on, 200 off, repeating | Link lost alarm |
 | `ALARM_CRITICAL` | 100 on, 100 off, repeating | Critical error alarm |
+| `ALARM_ARMED` | 80 on, 1120 off, repeating | **State tone: ARMED.** ~0.8 Hz heartbeat. Added 2026-08-27 (fw 1.1.27) |
+| `ALARM_FIRING` | 90 on, 160 off, repeating | **State tone: PRE_FIRE and FIRING.** ~4 Hz. Added 2026-08-27 (fw 1.1.27) |
+
+**State tones (added 2026-08-27, fw 1.1.27).** Before this the remote was silent
+throughout ARMED and FIRING — the operator had only the display and the ring
+LED, and the base siren covers the pad rather than the operator, who may not be
+looking at the panel.
+
+The tempo gap between the two is the point: the step into the firing sequence
+must be unmistakable by ear without looking. `ALARM_ARMED` is deliberately
+sparse rather than urgent — it may sound for the full 10 s arm window, and both
+pre-existing repeating patterns (`ALARM_LINK_LOST`, `ALARM_CRITICAL`) are ~2.5 Hz
+*fault* patterns, so an urgent armed tone would read as "something is wrong"
+when nothing is. PRE_FIRE shares `ALARM_FIRING` because the countdown is the
+part the operator must hear starting, and it is where an abort is still free.
+
+**These are background patterns, not played patterns.** A repeating pattern
+sounds only until the next `buzzer_play()` replaces it, and ARMED is full of
+one-shots — the arm-confirm `BEEP_DOUBLE` and a `BEEP_TRIPLE` from every §8.2.4
+FIRE guard refusal. A played tone would be silenced by the first refusal and
+never return. `buzzer_set_background()` is re-entered whenever nothing else is
+sounding, and is idempotent so it can be driven from the FSM tick rather than
+on transitions — necessary because the base dropping out underneath an ARMED
+remote arrives as a `STATUS_UPDATE`, not a local state change, and a missed
+transition would leave the remote sounding armed when it is not.
+`buzzer_stop()` clears the background as well as silencing.
 
 ### 12.2 Siren Patterns (Base only)
 

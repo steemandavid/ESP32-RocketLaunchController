@@ -51,6 +51,12 @@ feedback that detects a welded relay; a dead-man repeat-message scheme during
 firing; 10 s auto-disarm; and an unrecoverable ERROR state that requires a
 physical power cycle rather than attempting to self-heal.
 
+The remote sounds two distinct state tones so the operator need not be looking
+at the panel: a sparse ~0.8 Hz heartbeat while ARMED, and an insistent ~4 Hz
+pattern through the pre-fire countdown and the pulse. The tempo gap is what
+carries the meaning. They are deliberately unlike the two fault alarms, which
+are both ~2.5 Hz, so "the pad is live" never sounds like "something is wrong".
+
 Battery readings take the **median** of a 33-sample burst rather than a mean,
 because a sample clipped at the ADC's full scale can only bias a mean *upward* —
 making a flat pack read as healthy, which is the one direction a battery guard

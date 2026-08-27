@@ -16,6 +16,11 @@
 static const char *TAG = "rlc_buzzer";
 
 static QueueHandle_t s_pattern_queue = NULL;
+
+/* Pattern re-entered whenever nothing else is sounding. See the header for why
+ * a state tone cannot simply be buzzer_play()ed once. volatile: written by the
+ * FSM task, read by the buzzer task; a single machine word, single writer. */
+static volatile rlc_buzzer_pattern_t s_background = BUZZER_OFF;
 static TaskHandle_t s_buzzer_task = NULL;
 
 static inline void buzzer_drive(bool on)
@@ -66,7 +71,13 @@ static void buzzer_task(void *arg)
     rlc_buzzer_pattern_t pattern;
 
     while (1) {
-        if (xQueueReceive(s_pattern_queue, &pattern, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        bool got = (xQueueReceive(s_pattern_queue, &pattern,
+                                  pdMS_TO_TICKS(1000)) == pdTRUE);
+        if (!got) {
+            /* Idle. Fall through to the background below. */
+            pattern = BUZZER_OFF;
+        }
+        if (got) {
             switch (pattern) {
                 case BUZZER_BEEP_SHORT: {
                     buzzer_step_t steps[] = {{100, true}};
@@ -116,8 +127,48 @@ static void buzzer_task(void *arg)
                     play_steps(steps, 2, true);
                     break;
                 }
+                case BUZZER_ALARM_ARMED: {
+                    /* Slow and sparse: the pad is live and standing by, which
+                     * may last the full 10 s arm window. Deliberately unlike
+                     * ALARM_CRITICAL and ALARM_LINK_LOST, which are both
+                     * urgent 2.5 Hz patterns — this one is a heartbeat, not an
+                     * alarm, and must not read as a fault. */
+                    buzzer_step_t steps[] = {{80, true}, {1120, false}};
+                    play_steps(steps, 2, true);
+                    break;
+                }
+                case BUZZER_ALARM_FIRING: {
+                    /* Fast and insistent: the countdown is running or the
+                     * igniter is live. Roughly 4 Hz against ARMED's 0.8 Hz, so
+                     * the transition into the firing sequence is unmistakable
+                     * by ear alone without looking at the panel. */
+                    buzzer_step_t steps[] = {{90, true}, {160, false}};
+                    play_steps(steps, 2, true);
+                    break;
+                }
                 case BUZZER_OFF:
                     buzzer_drive(false);
+                    break;
+            }
+        }
+
+        /* Whatever just finished, return to the state tone if one is set.
+         * play_steps() returns as soon as a new pattern is queued and pushes
+         * it back to the front, so this never swallows an incoming beep. */
+        rlc_buzzer_pattern_t bg = s_background;
+        if (bg != BUZZER_OFF && uxQueueMessagesWaiting(s_pattern_queue) == 0) {
+            switch (bg) {
+                case BUZZER_ALARM_ARMED: {
+                    buzzer_step_t steps[] = {{80, true}, {1120, false}};
+                    play_steps(steps, 2, true);
+                    break;
+                }
+                case BUZZER_ALARM_FIRING: {
+                    buzzer_step_t steps[] = {{90, true}, {160, false}};
+                    play_steps(steps, 2, true);
+                    break;
+                }
+                default:
                     break;
             }
         }
@@ -172,7 +223,20 @@ void buzzer_play(rlc_buzzer_pattern_t pattern)
     (void)xQueueOverwrite(s_pattern_queue, &pattern);
 }
 
+void buzzer_set_background(rlc_buzzer_pattern_t pattern)
+{
+    if (pattern == s_background) return;   /* idempotent — do not restart */
+    s_background = pattern;
+    /* Nudge the task so the change takes effect now rather than after its 1 s
+     * idle timeout. BUZZER_OFF silences whatever is sounding; the loop then
+     * picks up the new background immediately. */
+    buzzer_play(BUZZER_OFF);
+}
+
 void buzzer_stop(void)
 {
+    /* Clears the background too: "stop" that leaves a state tone which resumes
+     * a moment later would not be a stop. */
+    s_background = BUZZER_OFF;
     buzzer_play(BUZZER_OFF);
 }

@@ -7,7 +7,37 @@
 
 #pragma once
 
-/* 1.1.26 (2026-08-27): remove the slack that let 1.1.25 still miss a base-side
+/* 1.1.27 (2026-08-27): audible state tones for ARMED and the firing sequence.
+ *
+ * Operator: ARMED and FIRING had no sound on the remote at all — only the
+ * display and the ring LED. The base siren covers the pad; this covers the
+ * operator, who may not be looking at the panel.
+ *
+ *   BUZZER_ALARM_ARMED    80on/1120off  (~0.8 Hz)  pad live, standing by
+ *   BUZZER_ALARM_FIRING   90on/160off   (~4 Hz)    sequence running
+ *
+ * The tempo gap is the point: the step into the firing sequence is
+ * unmistakable by ear without looking. ARMED is deliberately sparse rather
+ * than urgent — it may run the full 10 s arm window, and it must not read like
+ * ALARM_CRITICAL or ALARM_LINK_LOST, which are both 2.5 Hz fault patterns.
+ * PRE_FIRE shares the firing tone: the countdown is the part that must be
+ * heard starting, and it is where an abort is still free.
+ *
+ * Needed a new mechanism, not just two patterns. A repeating pattern plays
+ * until the next buzzer_play() replaces it, and ARMED is full of one-shots —
+ * the arm-confirm double beep, and a triple from every FIRE guard refusal — so
+ * a plain tone would be killed by the first refusal and never return. New
+ * buzzer_set_background(): the player re-enters it whenever nothing else is
+ * sounding. Idempotent, so it is driven from the FSM tick rather than on
+ * transitions — the same reason fire_button_set_live() is, since the base
+ * dropping out underneath an ARMED remote arrives as a STATUS_UPDATE, not as a
+ * local state change, and a missed transition would leave the remote sounding
+ * armed when it is not.
+ *
+ * buzzer_stop() clears the background as well: a stop that leaves a tone to
+ * resume a moment later is not a stop.
+ *
+ * 1.1.26 (2026-08-27): remove the slack that let 1.1.25 still miss a base-side
  * cut.
  *
  * 1.1.25 allowed 200 ms of clock-skew slack on the elapsed-time test, so a
@@ -514,5 +544,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  26
-#define RLC_VERSION_STRING "1.1.26"
+#define RLC_VERSION_PATCH  27
+#define RLC_VERSION_STRING "1.1.27"
