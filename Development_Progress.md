@@ -3715,6 +3715,39 @@ dropped arm. The base stayed ARMED and ran its full timeout. Also confirms
 `LINK_REJECT_BUSY` end to end — the 1.1.17 behaviour that made the FSD's
 "silently ignores" wording obsolete.
 
+### T-S07 — watchdog reboot verified, and a diagnostic trap (2026-08-27)
+
+Run with the base `x` key, which hangs `bfsm_task` without feeding the TWDT.
+
+```
+2685038  INJECT: hanging FSM task — watchdog should reboot within 5 s
+2689288  Task watchdog got triggered. The following tasks/users did not reset
+2689288   - battery_task (CPU 0)
+2689288  Tasks currently running:
+2689288  CPU 0: bfsm_task
+         rst:0xc (RTC_SW_CPU_RST)
+```
+
+**4250 ms** from hang to reset, inside the 5 s requirement. Post-boot:
+`state=1 armed=0 firing=0 arm=0 err=0x00`, with continuity reading normally on
+all channels — that last part is the evidence the **channel** relays are
+de-energised, since continuity sensing only works with them in NC. `arm=0` is
+the arm relay.
+
+**The watchdog output names the wrong task, and it is worth knowing.** The
+headline blames `battery_task` — but that is the *victim*: it shares CPU 0 with
+the spinning `bfsm_task` and was starved of the time it needed to feed. The
+culprit appears only on the "Tasks currently running" line. Anyone reading a
+real watchdog trip on this unit and chasing `battery_task` would be debugging
+the wrong task. This is inherent to how the TWDT reports, not a firmware
+defect — but the trip that finally matters in the field will look exactly like
+this one.
+
+The injection deliberately hangs the FSM task rather than any other, because
+that is the task the TWDT is meant to cover for the safety state machine. It
+also, as it turns out, demonstrates that a hang there takes down a co-scheduled
+task's watchdog feed first.
+
 ### Phase 5 FSD Safety Tests (§15.4)
 
 | ID | Test | Status |
@@ -3725,7 +3758,7 @@ dropped arm. The base stayed ARMED and ran its full timeout. Also confirms
 | T-S04 | Hold fire button at boot, then arm → no fire (fresh press) | **PASS** 2026-08-27 — button held through remote boot and through arming; no countdown, no pulse, lamp dark. The debouncer seeding at boot with the button already low does not read as authorisation |
 | T-S05 | Corrupt message (bit flip) → rejected | **PASS** 2026-08-27 (remote `c` injection) — `CMD integrity CRC mismatch (type 0x20)` on the base, corrupted CMD_ARM rejected in the link layer before reaching the FSM, and the sequence number deliberately not advanced. The remote's *visible* toast that run was COMM DEGRADED, from the automatic retry landing on a leftover `g` flag — the retry was uncorrupted, since the injection is one-shot |
 | T-S06 | GPIO init order verification (oscilloscope on boot) | TODO |
-| T-S07 | Watchdog: infinite loop → reboot within 5 s | TODO |
+| T-S07 | Watchdog: infinite loop → reboot within 5 s | **PASS** 2026-08-27 (base `x` injection) — FSM task hung at 2685038, `Task watchdog got triggered` at 2689288 = **4250 ms**, `rst:0xc (RTC_SW_CPU_RST)`. Post-boot `state=1 armed=0 firing=0 arm=0 err=0x00` and continuity reading on all channels, which requires the channel relays in NC — both criteria met |
 | T-S08 | Hold fire button + arm → no fire (fresh press required) | **PASS** 2026-08-27 — button held before and through ARMED entry; no fire. Release-then-press did start the countdown, confirming the `0xFF→0x00` transition is what authorises |
 | T-S09 | LINK_REQUEST while ARMED → **rejected with `LINK_REJECT_BUSY`** (was "silently ignored" before fw 1.1.17); session and armed state unaffected | **PASS** 2026-08-27 (remote `l` injection, fired automatically 70 ms after the base logged ARMED) — `LINK_REQUEST from remote fw 1.1.27` → `rejected by app-state guard (busy)` → `LINK_REJECT sent, reason=0x02`. **The criterion is proven by what did not happen:** no LINK_ACK, no new session token, no dropped arm — the base stayed ARMED and ran its full `ARM TIMEOUT (10009 ms)`. A handshake attempt cannot reset the session out from under a live pad. **FSD §15.4 row still says "silently ignores" and needs updating** |
 | T-S10 | Display SPI failure at boot → ERROR | TODO |
