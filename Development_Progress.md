@@ -3395,7 +3395,7 @@ behaviour rather than hardware — worth a low-priority look.
 | 12 | Host suite wired into the build (`build_base.sh` / `build_remote.sh` run `tests/host/run.sh` and refuse to build on failure) | §15.5 | **DONE 2026-08-27** — the runner existed but nothing invoked it. Still no CI runner; that remains TODO. |
 | 13 | T-C06 replay tool: capture a real frame off the air and re-transmit it | §15.1 | TODO — the *rule* is now host-tested (`test_seqgap.c` T-U04) and the base emits NACK 0x08 rather than dropping silently, but no on-air capture/replay tool exists. |
 
-### OPEN — Enforce arming-sequence order, with feedback (raised 2026-08-27, T-S08)
+### RESOLVED — Arming-sequence order enforced, fw 1.1.19 (2026-08-27)
 
 Raised by the operator while T-S08 passed: the guards correctly *refuse*
 out-of-order input, but they refuse it **silently**, so the operator learns
@@ -3428,9 +3428,28 @@ which is precisely the gap §7.2.9a closed for commands in 1.1.6 and for the
 link handshake in 1.1.17. The input layer is the third place it was never
 applied.
 
-Not yet implemented. Needs a decision on where the checks live (remote FSM vs
-input tasks), on toast wording, and on whether a held button at arm time
-refuses the ARM locally or disarms after the fact.
+**Implemented in fw 1.1.19 and verified on target:**
+
+```
+656857  arm switch ON with fire button held    -> RELEASE FIRE BUTTON FIRST
+662167  arm switch ON with encoder held        -> RELEASE ENCODER FIRST
+668947  FIRE pressed while not armed — refused -> NOT ARMED - ARM FIRST
+670287  ARM rejected: fire button already held -> RELEASE FIRE BUTTON FIRST
+```
+
+The last is the behavioural change: the long-press is consumed and refused
+rather than acted on. Previously it armed the base with the operator already
+holding fire, and the held press then did nothing.
+
+**The arm switch is deliberately not forced off on a bad sequence.** It is a
+physical switch the firmware cannot move, so clearing its state internally
+would put the display out of step with the panel in front of the operator. The
+refusal that carries the safety weight is the one on the ARM.
+
+`encoder_button_is_pressed()` added to expose state the encoder already
+tracked. The checks live in the remote FSM's STATE_IDLE handler, alongside the
+existing `ARM rejected: arm switch OFF` guard — which the same capture shows
+still working, so the new guards join a family rather than replacing one.
 
 ### Bug #31 Two-Cycle Regression — PASSED ON TARGET (2026-08-27)
 

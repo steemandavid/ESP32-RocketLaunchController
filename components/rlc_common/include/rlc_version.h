@@ -7,7 +7,41 @@
 
 #pragma once
 
-/* 1.1.18 (2026-08-27): a mismatch also reaches a remote on OLD firmware.
+/* 1.1.19 (2026-08-27): the arming sequence must be walked in order, and says
+ * so when it is not.
+ *
+ * Raised by the operator during T-S04/T-S08. Both tests PASSED — a fire button
+ * held through ARMED entry cannot fire, because authorisation needs a
+ * 0xFF->0x00 transition *after* entry — but the refusals were silent. A press
+ * that does nothing and says nothing is indistinguishable from a dead button,
+ * and the natural response to apparent non-response is to try again, which is
+ * the wrong instinct at a pad. This is the third place §7.2.9a was never
+ * applied, after commands (1.1.6) and the link handshake (1.1.17).
+ *
+ *   FIRE pressed in IDLE          was a bare "ignored" comment; now beeps and
+ *                                 toasts "NOT ARMED - ARM FIRST"
+ *   ARM attempted with fire held  now REFUSED outright, "RELEASE FIRE BUTTON
+ *                                 FIRST". Arming into a state where the
+ *                                 operator is already pressing fire and
+ *                                 nothing happens is the confusing case: the
+ *                                 most obvious input in the most critical
+ *                                 state, silently inert. Refusing is honest.
+ *   arm switch ON with an input   was not handled at all in IDLE; now toasts
+ *   already held                  "RELEASE FIRE BUTTON FIRST" / "RELEASE
+ *                                 ENCODER FIRST"
+ *
+ * The order enforced is: arm key ON -> encoder held then released -> fire
+ * held. The arm switch is deliberately NOT forced off on a bad sequence — it
+ * is a physical switch the firmware cannot move, and pretending otherwise
+ * would put the display out of step with the panel. The refusal that carries
+ * the safety weight is on the ARM.
+ *
+ * Adds encoder_button_is_pressed() so the FSM can see a held encoder; the
+ * state was already tracked, just not exposed.
+ *
+ * Remote-only, but the version check is strict — flash both units.
+ *
+ * 1.1.18 (2026-08-27): a mismatch also reaches a remote on OLD firmware.
  *
  * 1.1.17's LINK_REJECT only helps once both units carry it: an older remote
  * has no handler for message type 0x03 and drops it at the dispatch switch's
@@ -298,5 +332,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  18
-#define RLC_VERSION_STRING "1.1.18"
+#define RLC_VERSION_PATCH  19
+#define RLC_VERSION_STRING "1.1.19"

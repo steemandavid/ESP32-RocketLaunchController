@@ -49,6 +49,14 @@ void encoder_register_long_press_cb(rlc_encoder_long_press_cb_t cb);
 uint8_t encoder_get_channel(void);
 
 /**
+ * True while the encoder push button is held (debounced).
+ *
+ * Exposed so the FSM can refuse to start the arming sequence with an input
+ * already held — see the §7.2.9a sequence guards in rlc_remote_fsm.c.
+ */
+bool encoder_button_is_pressed(void);
+
+/**
  * Narrow the selectable channel range to what the base actually has
  * (FSD §8.2.2 — num_channels from LINK_ACK). Values outside 1..NUM_CHANNELS
  * are ignored; the current selection is clamped down if needed.

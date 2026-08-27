@@ -607,6 +607,24 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* Attempt to ARM (FSD §8.2.3) */
             uint8_t ch = encoder_get_channel();
 
+            /* Sequence guard: refuse the ARM outright if the fire button is
+             * already held.
+             *
+             * The fresh-press rule (T-S04/T-S08) already makes this safe — a
+             * button held through ARMED entry cannot fire, because authorisation
+             * needs a 0xFF->0x00 transition *after* entry. But arming into a
+             * state where the operator is already pressing fire and nothing
+             * happens is the confusing case: the most obvious input in the most
+             * critical state is silently inert. Refusing the ARM and naming the
+             * reason is the honest answer. The sequence is arm key on, encoder
+             * held then released, THEN fire held — in that order. */
+            if (fire_button_is_pressed()) {
+                ESP_LOGW(TAG, "ARM rejected: fire button already held");
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("RELEASE FIRE BUTTON FIRST");
+                break;
+            }
+
             /* RM-02 / FSD §8.2.2: refuse a channel the base does not have,
              * locally. The base NACKs it (INVALID_CHANNEL) so this is not a
              * safety gap, but a local refusal names the real reason and does
@@ -780,7 +798,36 @@ static void process_event(const rlc_fsm_event_t *evt)
              * arm was a permanent banner. */
             display_toast("HOLD TO ARM");
         } else if (evt->type == EVT_FIRE_BUTTON_PRESSED) {
-            /* Ignored in IDLE (FSD §8.2.3) */
+            /* Refused in IDLE (FSD §8.2.3) — but say so.
+             *
+             * This was a bare "ignored" comment: the press did nothing and the
+             * operator was told nothing, which is indistinguishable from a dead
+             * button. §7.2.9a exists for exactly this, and the natural response
+             * to apparent non-response is to press harder or try again — the
+             * wrong instinct at a pad. */
+            ESP_LOGW(TAG, "FIRE pressed while not armed — refused");
+            buzzer_play(BUZZER_BEEP_TRIPLE);
+            display_toast("NOT ARMED - ARM FIRST");
+        } else if (evt->type == EVT_ARM_SWITCH_CHANGED && evt->data.arm_state.armed) {
+            /* Arm switch turned ON. Nothing here starts the arming sequence —
+             * that needs the encoder long-press — but if an input is already
+             * held the operator is walking the sequence out of order and gets
+             * no indication of it, because the held input will simply be
+             * discarded later. Name it at the moment it becomes wrong.
+             *
+             * The switch itself is left ON: it is a physical switch and the
+             * firmware cannot move it, so pretending otherwise would put the
+             * display out of step with the panel. The refusal that matters is
+             * on the ARM, above. */
+            if (fire_button_is_pressed()) {
+                ESP_LOGW(TAG, "arm switch ON with fire button held");
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("RELEASE FIRE BUTTON FIRST");
+            } else if (encoder_button_is_pressed()) {
+                ESP_LOGW(TAG, "arm switch ON with encoder held");
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("RELEASE ENCODER FIRST");
+            }
         } else if (evt->type == EVT_LINK_LOST) {
             do_enter_link_lost();
         } else if (evt->type == EVT_STATUS_UPDATE) {

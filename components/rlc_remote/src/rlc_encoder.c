@@ -226,6 +226,11 @@ uint8_t encoder_get_channel(void)
     return s_channel;
 }
 
+bool encoder_button_is_pressed(void)
+{
+    return s_button_debounced_pressed;
+}
+
 void encoder_poll_button(void)
 {
     int level = gpio_get_level(PIN_ENCODER_SW);
