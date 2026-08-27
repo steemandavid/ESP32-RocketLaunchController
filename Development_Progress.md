@@ -3831,9 +3831,32 @@ debouncing, correct for a sensor. Pinned by `test_debounce.c` T-D07/T-D08, and
 **the test was verified to FAIL against the old behaviour** rather than merely
 passing alongside it.
 
-**Retest evidence note:** E1 and E2 were re-run after the fix and the operator
-observed no fire, but the serial captures had been killed to free the ports for
-flashing, so that retest rests on operator observation rather than a log.
+**Retest, logged (2026-08-27).** The first retest rested on operator observation
+because the captures had been killed to free the ports for flashing; re-run with
+both units logging. Six separate mashing bursts, every one aborted, **0
+`Fire timer started` on the base**:
+
+```
+494597 ARMED -> PRE_FIRE   494667 released during PRE_FIRE — abort   (70 ms)
+497577 ARMED -> PRE_FIRE   497597 abort                              (20 ms)
+500497 ARMED -> PRE_FIRE   500547 abort                              (50 ms)
+504637 ARMED -> PRE_FIRE   504657 abort                              (20 ms)
+507937 ARMED -> PRE_FIRE   507957 abort                              (20 ms)
+511477 ARMED -> PRE_FIRE   511497 abort                              (20 ms)
+```
+
+The abort latencies — mostly **20 ms, exactly the 2-sample threshold** — are the
+fix visible in the timing. The same releases previously produced nothing at all;
+the defect capture shows PRE_FIRE at 655397 surviving a full 5040 ms. E1 re-run
+alongside: a dozen rapid arm/disarm cycles, clean `DISARMED -> IDLE` each, no
+false `RELAY WELDED`.
+
+**Incidental, not a defect:** two `ARM NACK: 0x04 (NO CONTINUITY)` appeared
+during rapid cycling on a channel that reads fine at rest. Continuity sensing
+only works with the channel relay in NC and there is a 50 ms settling delay
+(`CONT_RELAY_DROPOUT_MS`), so re-arming faster than that can catch a reading
+that has not re-settled and the base refuses — the safe direction. It means very
+rapid re-arming can occasionally be rejected with no cause the operator can see.
 
 ### Phase 5 FSD Safety Tests (§15.4)
 
