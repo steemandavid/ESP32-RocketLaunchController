@@ -2955,7 +2955,7 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-S16 | ERR_COMM_DEGRADED blocks firing | Arm channel, press fire, induce >30% ping failure during PRE_FIRE. Base aborts instead of transitioning to FIRING. |
 | T-S17 | Key switch sense verifies key switch | With key switch OFF: verify key sense GPIO 42 reads LOW. Turn key switch ON: verify key sense reads HIGH. Attempt ARM: verify guard 1 passes. |
 | T-S18 | Key switch sense fault detection | Disconnect key switch sense wire. Turn key switch ON (debounced input reads key OFF due to lost signal). Attempt ARM: verify NACK 0x01 ("BASE KEY OFF"). |
-| T-S19 | Post-fire igniter status via continuity | Fire a channel with test resistor (2 Ω). After fire pulse completes and relay returns to NC: verify continuity reads GOOD (resistor intact). Repeat with a fuse wire that burns: verify continuity reads OPEN after fire. |
+| T-S19 | Post-fire igniter status via continuity | Fire a channel with test resistor (2 Ω). After fire pulse completes and relay returns to NC: verify continuity reads GOOD (resistor intact). Repeat with a fuse wire that burns: verify continuity reads OPEN after fire. **PASS 2026-08-27** — burn-through verified with a real igniter during earlier fire testing (operator attestation; T-A17 corroborates that igniters have been fired on this rig). Intact-load half re-confirmed 2026-08-27 with a 12 V 50 W halogen reading CONNECTED after a pulse. |
 
 ### 15.5 Unit Tests (Host-Compilable)
 

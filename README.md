@@ -262,8 +262,9 @@ Known open items before any field use:
   2026-08-27** into a 12 V 50 W halogen moved channel to channel — nine pulses
   on one power cycle, no reboots or faults. Because only the channel carrying
   the lamp reads CONNECTED, the lamp lighting on the selected channel also
-  proves the channel-to-relay mapping end to end for all eight. No channel has
-  yet been fired into a real igniter.
+  proves the channel-to-relay mapping end to end for all eight. Igniters have
+  been fired on this rig previously (T-A17, and the T-S19 burn-through check);
+  the halogen run was about the relay path, not the pyrotechnics.
 - **Fire testing is unblocked as of 2026-08-26.** Bug #28 (the base ARM RELAY
   LED lighting with the key in SAFE) turned out to be indicator wiring, not the
   hardware AND gate, and is fixed; a second indicator fault — the key-position

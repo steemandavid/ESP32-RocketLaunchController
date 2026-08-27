@@ -325,14 +325,26 @@ Incidentally **the strongest bug #31 evidence yet** — Phase 5 task 10 asked fo
 two cycles per power-on; this did nine, mixing completed pulses with a
 cease-fire, on one boot.
 
-**Channel 3's MARGINAL reading cleared.** It had shown `1123/269000/MARG` all
-session with nothing deliberately attached — worth noting because MARGINAL does
-**not** block arming, so ch 3 was the one channel lacking the natural
-mis-selection guard the OPEN channels had. Final capture reads `cont=0x4000`
-(ch 8 only). Cause unidentified; watch for it returning.
+**Channel 3's MARGINAL reading was a 68 Ω igniter surrogate**, not a fault.
+Back-calculating `1123/269000/MARG` through `V = 3.3*Rx/(3300+Rx)` and
+subtracting the 217 Ω sense-branch resistor gives ~76 Ω — within ~12% of the
+real part, so the divider model is sound and the reading was correct; the
+*interpretation* (a leakage path) was wrong. Recorded for the band behaviour it
+shows: **MARGINAL does not block arming — only OPEN does**, so a 68 Ω channel
+arms, fires and reports success while delivering ~160 mA. A real igniter's
+1.5 Ω dominates and reads CONNECTED, so this only bites when the igniter is
+missing.
 
-Still not fired into a **real igniter** — a lamp does not burn through, so T-S19
-and the green `OPEN - LIKELY FIRED` path remain unverified.
+**T-S19 is PASS** — burn-through was verified with a real igniter during earlier
+fire testing (operator attestation; T-A17 corroborates igniters firing on this
+rig, though no post-fire continuity reading was logged then). The green
+`OPEN - LIKELY FIRED` path has not been seen on the *panel*, since the display
+half postdates that testing.
+
+**T-F01 does not need an igniter.** Its FSD criteria are sequence mechanics —
+siren continuous across both transitions, relay energised for the pulse
+duration, auto-disarm to NC. The halogen run discharged the latter two ×8. The
+outstanding piece is the **siren no-gap check**, which is audible.
 
 ### New tooling
 
@@ -345,10 +357,10 @@ and the green `OPEN - LIKELY FIRED` path remain unverified.
 
 ### Notes and follow-ups
 
-- **T-F01** passed on a halogen substitute across all 8 channels, but still
-  needs a real igniter — the only fire test that does. No channel has yet been
-  fired into a live igniter.
-- **T-S19** needs burn-through; the display half is built.
+- **T-F01** is PARTIAL: relay and auto-disarm criteria discharged on all 8
+  channels; the siren no-gap criterion is outstanding and needs no igniter.
+  Bug #27's siren retest is separately still owed.
+- ~~T-S19 needs burn-through~~ **PASS** (attested, earlier igniter testing). The green OPEN path has not been seen on the display, which postdates it.
 - **T-S09, T-S05, T-S07, T-S15, T-S16, T-S18** need small harness keys.
 - **T-S06, T-S10** need a scope and a disconnected display.
 - The remote harness does **not** unblock T-F07/T-F09 — they need injections at

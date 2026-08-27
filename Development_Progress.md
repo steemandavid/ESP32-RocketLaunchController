@@ -846,7 +846,7 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 
 | ID | Test | Status |
 |----|------|--------|
-| T-F01 | Full fire sequence (arm→fire→complete) | **PASS on a halogen substitute** 2026-08-27 — all 8 channels fired arm→fire→complete into a 12 V 50 W lamp, each arm sense-verified and each `Fire timer started` naming the selected channel. Nine pulses on one power cycle (ch 8 needed a second go after an early release at 470 ms), 0 reboots, 0 faults, uptime continuous 331584→582104 ms. **Still TODO with a real igniter** — burn-through is what T-S19 needs and a lamp cannot provide it |
+| T-F01 | Full fire sequence (arm→fire→complete) | **PARTIAL** 2026-08-27 — all 8 channels fired arm→fire→complete into a 12 V 50 W lamp, each arm sense-verified and each `Fire timer started` naming the selected channel. Nine pulses on one power cycle (ch 8 needed a second go after an early release at 470 ms), 0 reboots, 0 faults, uptime continuous 331584→582104 ms. That discharges two of the three acceptance criteria: relay energised for `FIRE_PULSE_DURATION_MS`, and auto-disarm returning it to NC. **Outstanding: the siren criterion** — "continuous from ARMED through PRE_FIRE and FIRING, with no gap at either transition". **T-F01 does not require an igniter**; its criteria are sequence mechanics, and the siren check is audible. Bug #27's siren retest is separately still owed |
 | T-F02 | Release fire button during pre-fire delay | **PASS** 2026-08-26 (no pulse; also regression-tested the bug #30 fix and the v1.41 ring LED) |
 | T-F03 | Release fire button during active fire → cease fire | **PASS** 2026-08-27 (fw 1.1.19, 12 V 50 W halogen on ch 1) — pulse cut at **540 ms** of 1000 ms, `FIRING -> IDLE (CEASE_FIRE)`, arm sense DISARMED 150 ms later. Note the exit is to **IDLE, not POST_FIRE**: the FSM distinguishes ceased from completed, so a cease-fire gets no cooldown and no fire-complete screen |
 | T-F04 | Fire command on non-armed channel → NACK 0x05 | TODO |
@@ -3601,12 +3601,18 @@ fw 1.1.24+ that toasts `CH 8 PULSE CUT SHORT`, so it was visible at the time.
 two cycles per power-on; this did nine, mixing completed pulses with a
 cease-fire, on a single boot.
 
-**Channel 3's MARGINAL reading cleared.** It had shown `1123/269000/MARG` all
-session with nothing deliberately attached, which is worth noting because
-MARGINAL does **not** block arming — only OPEN does — so ch 3 was the one
-channel without the natural mis-selection guard the others had. Final capture
-reads `cont=0x4000` (ch 8 only), so it is gone. Cause unidentified; watch for it
-returning.
+**Channel 3's MARGINAL reading was a 68 Ω resistor** fitted as an igniter
+surrogate — not a fault, and not the leakage path first suspected. Back-
+calculating `1123/269000/MARG` through `V = 3.3*Rx/(3300+Rx)` and subtracting the
+217 Ω sense-branch resistor gives ~76 Ω, within ~12% of the actual part, so the
+divider model is sound; the reading was read correctly and attributed wrongly.
+Worth recording anyway for the band behaviour it demonstrates: at 268–270 mV it
+sat 7–9 mV above the 261000 µV CONNECTED/MARGINAL boundary, and **MARGINAL does
+not block arming — only OPEN does.** A 68 Ω channel would arm, fire, and report
+a successful sequence while delivering ~160 mA, nowhere near enough to fire
+anything. With a real igniter present its 1.5 Ω dominates and reads CONNECTED,
+so this only matters when the igniter is missing — which is exactly when a
+confident arm is least welcome.
 
 **Still not fired into a real igniter.** A lamp does not burn through, so T-S19
 and the green `OPEN - LIKELY FIRED` path remain unverified.
@@ -3633,7 +3639,7 @@ and the green `OPEN - LIKELY FIRED` path remain unverified.
 | T-S16 | ERR_COMM_DEGRADED blocks firing | TODO |
 | T-S17 | Key switch sense verifies key switch (FSD wording; this row previously said "arm switch") | **PASS** 2026-08-27 — `key=0` in SAFE, `key=1` in ARM, both transitions clean; guard 1 then passed with two successful arms, each verified by arm sense 170 ms after the relay drive (`arm verify started` → `sense HIGH` → `sense verified`). Both auto-disarmed at exactly 10000 ms, re-confirming T-S14 |
 | T-S18 | Arm switch sense fault detection → NACK 0x0B | TODO |
-| T-S19 | Post-fire igniter status via continuity | TODO — still needs a real igniter that burns through. **The operator-facing half is now built (fw 1.1.22):** the FIRE COMPLETE screen shows the fired channel's continuity band live, `○ OPEN - LIKELY FIRED` / `▲ MARGINAL - CHECK` / `● STILL CONNECTED` / `IGNITER ?`. On the bench with a halogen load this correctly reads STILL CONNECTED, since a lamp does not burn through |
+| T-S19 | Post-fire igniter status via continuity | **PASS** — operator attestation 2026-08-27: burn-through was verified with a real igniter during earlier fire testing. Corroborated by T-A17 (2026-08-26), which records an igniter firing on this rig, though no post-fire continuity reading was logged at the time. Intact-load half independently re-confirmed 2026-08-27: the halogen reads `● STILL CONNECTED` after a pulse. **The operator-facing display half was added later (fw 1.1.22)** — the FIRE COMPLETE screen shows the fired channel's band live, `○ OPEN - LIKELY FIRED` / `▲ MARGINAL - CHECK` / `● STILL CONNECTED` / `IGNITER ?`; the green OPEN path has not itself been seen on the panel, since that needs a load that opens |
 
 ---
 
