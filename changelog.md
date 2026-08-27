@@ -457,6 +457,72 @@ corrected (FSD v1.45) to require rejecting both undriven signatures and checking
 the SPI status. Verified on target that the real clone panel still reports
 `ID 0x2A403300 (healthy)` — the tightened check does not reject this hardware.
 
+### Edge-case testing found a dead-man defeat — fw 1.1.29
+
+Phase 5 task 5, aimed at known seams rather than random mashing. E1 (rapid
+arm/disarm), E3 (encoder during countdown) and E4 (channel change while armed)
+all passed. **E2 did not: mashing the fire button fired the channel.**
+
+```
+655397  ARMED -> PRE_FIRE (ch 1)
+660437  PRE_FIRE -> FIRING (local countdown elapsed)   <- full 5040 ms, no abort
+660917  Fire button released — CEASE_FIRE
+```
+
+Other attempts in the same run aborted correctly, so this was not a mis-run: on
+that attempt the FSM never saw a release across five seconds of mashing.
+
+**Mechanism.** The fire button used symmetric `DEBOUNCE_8BIT` at a 10 ms poll,
+so a release was only reported after **80 ms of continuous release**. Mash faster
+and the shift register never reaches all-high: no release reported, FSM sees a
+continuous hold, `CMD_FIRE` repeats keep flowing, and **both dead-man layers stay
+satisfied** — the remote's release detection and the base's
+`FIRE_AUTHORIZATION_TIMEOUT_MS` both sit downstream of that one decision, so
+neither can catch it.
+
+**Not only about deliberate mashing.** A worn or chattering contact produces the
+identical signal, as would a shaking hand. The operator would believe they were
+not holding the button while the system fired.
+
+**The underlying error was symmetry**, and it was in the *spec* as much as the
+code — §5.3 stated the shift-register rules as universal. For a dead-man the two
+directions have opposite consequences: a missed release fires an igniter the
+operator has let go of; a spurious release only aborts, which is the direction
+that cuts current.
+
+**Faster polling was considered and rejected.** It narrows the blind window
+without closing it, and 8 samples at 1 ms is 8 ms — inside typical bounce
+duration (1–10 ms) — so it would erode the bounce rejection debouncing exists
+for, in *both* directions, at 10× the polling cost.
+
+**Fix:** opt-in `rlc_debounce_set_fast_release()`. Press keeps 8 samples (80 ms);
+release needs 2 (20 ms), which sits between bounce (1–10 ms, rejected) and a
+human release (30–80 ms, caught). Other consumers keep symmetric debouncing.
+Pinned by `test_debounce.c` T-D07/T-D08, and **the test was verified to FAIL
+against the old behaviour** rather than merely passing alongside it. §5.3 now
+requires the asymmetry (FSD v1.46).
+
+**Retest, logged on both units** — the first retest had rested on observation
+because the captures were killed to free the ports for flashing:
+
+```
+494597 ARMED -> PRE_FIRE   494667 released during PRE_FIRE — abort   (70 ms)
+497577 ARMED -> PRE_FIRE   497597 abort                              (20 ms)
+500497 ARMED -> PRE_FIRE   500547 abort                              (50 ms)
+504637 ARMED -> PRE_FIRE   504657 abort                              (20 ms)
+507937 ARMED -> PRE_FIRE   507957 abort                              (20 ms)
+511477 ARMED -> PRE_FIRE   511497 abort                              (20 ms)
+```
+
+Six bursts, every one aborted, **0 `Fire timer started`**. The latencies —
+mostly exactly the 20 ms threshold — are the fix visible in the timing.
+
+**Incidental, not a defect:** two `ARM NACK: 0x04 (NO CONTINUITY)` during rapid
+cycling on a channel fine at rest. Continuity sensing needs the channel relay in
+NC and there is a 50 ms settling delay, so re-arming faster than that catches an
+unsettled reading and the base refuses — the safe direction. It does mean very
+rapid re-arming can be rejected with no cause the operator can see.
+
 ### New tooling
 
 | Path | Purpose |
@@ -471,6 +537,12 @@ the SPI status. Verified on target that the real clone panel still reports
 - **§15.3 is complete.** T-F01/F02/F03/F08 PASS, T-F04/F05 by earlier evidence,
   T-F06/F07/F09 discharged by the host FSM harness. None needed live ignition.
 - ~~T-S19 needs burn-through~~ **PASS** (attested, earlier igniter testing). The green OPEN path has not been seen on the display, which postdates it.
+- **Phase 5 task 5 (edge cases) is PART-RUN.** Still to do: power cycling
+  *under load* (during FIRING — T-S01 covered armed, not firing), simultaneous
+  inputs (fire release and arm switch off together), and sustained repetition
+  for drift. Given E2, the simultaneous-input cases look most likely to find
+  something: they probe the same assumption, that events arrive one at a time
+  and are each seen.
 - **§15.4 is 14/19** (incl. T-S06 partial). Only **T-S10 and T-S18** genuinely
   open, both blocked on physical access rather than effort — a soldered display
   and a soldered key-sense wire. T-S10's *substance* is addressed by the 1.1.28

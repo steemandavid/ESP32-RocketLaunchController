@@ -51,6 +51,14 @@ feedback that detects a welded relay; a dead-man repeat-message scheme during
 firing; 10 s auto-disarm; and an unrecoverable ERROR state that requires a
 physical power cycle rather than attempting to self-heal.
 
+The fire button debounces **asymmetrically** — 80 ms to register a press, 20 ms
+to register a release. Symmetric debouncing is right for a sensor and wrong for
+a dead-man: a missed release fires an igniter the operator has let go of, while
+a spurious release only aborts, which is the direction that cuts current. This
+was a live defect until firmware 1.1.29, found by mashing the button in
+edge-case testing — releases shorter than 80 ms were invisible, so the system
+saw a continuous hold and fired.
+
 The remote sounds two distinct state tones so the operator need not be looking
 at the panel: a sparse ~0.8 Hz heartbeat while ARMED, and an insistent ~4 Hz
 pattern through the pre-fire countdown and the pulse. The tempo gap is what

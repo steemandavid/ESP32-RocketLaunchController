@@ -59,6 +59,7 @@
 | 1.43 | 2026-08-27 | Doc-consistency sweep from full code review (App D.4, §15.3 T-F05, §8.2.3/App B.2 stale text, §12.2 siren table, SHORT-band remnants, App C corrections, §14 gaps). |
 | 1.44 | 2026-08-27 | **All findings of the full-codebase review (RLC-REVIEW-ALL-008) applied; firmware 1.1.8 → 1.1.9.** Spec changes accompanying the fixes: §7.2.4 guard 2 restated as a freshness test that must not be folded into guard 4's failure-rate test, and its action 2 now requires a stopped-first, return-checked fire-timer start that never aborts; §7.2.5 gains an explicit "stop the fire timer" step on the *successful* pulse-completion path — the omission that made a second launch per power cycle panic with the igniter energised (BF-01, CRITICAL); §5.5.6's runtime display health check corrected to run in every state (the old "during IDLE" wording contradicted its own ARMED/PRE_FIRE/FIRING requirement) and given two-consecutive-failure and SPI-return-code requirements; §5.4.6/§7.3.1 relay-settling delay specified and now actually implemented (`CONT_RELAY_DROPOUT_MS` had been dead since it was defined); §9.10 task tables audited against the built firmware (`espnow_rx` added, link manager renamed and re-levelled, encoder stack corrected) and `buzzer_task` moved back to 1/core 1 in firmware rather than relaxing the spec; §12.1 `BEEP_PING_FAIL` pinned to rising-edge semantics; §14.5 `CONT_TRACE_INTERVAL_MS` default 1000 → 0 for field builds; §7.3.1 step 2 SHORT-band remnant corrected to MARGINAL. |
 | 1.45 | 2026-08-27 | **§5.5.6 boot display health check corrected; firmware 1.1.28.** The section contradicted itself — "any non-zero read-back is considered valid" against "only a zero or *garbage* read-back or SPI failure is treated as a fault" — when all-ones is both garbage and non-zero. The firmware implemented the weaker clause (`s_panel_id != 0`), so a broken display MOSI leaving MISO undriven and floating to 0xFFFFFFFF would have booted as healthy with a dead panel, and every screen after that — including ARMED — would have been a lie. The boot read also discarded the SPI transaction status, which the same section already required and which the *periodic* check has honoured since 1.1.9. §5.5.6 now requires rejecting **both** undriven signatures (0x00000000 and 0xFFFFFFFF) and checking the SPI status; the clone-panel allowance (0x2A403300) is unchanged and verified still accepted on target. Found by working out what a fault-injection harness could substitute for T-S10, which is not runnable on this hardware (soldered display) — reading the code the test targets proved more productive than the test would have been. |
+| 1.46 | 2026-08-27 | **§5.3 dead-man debounce asymmetry; firmware 1.1.29. SAFETY DEFECT.** Edge-case testing (Phase 5 task 5) found that **rapidly mashing the fire button fired the channel**. The button used symmetric 8-bit debouncing at a 10 ms poll, so a release was only reported after 80 ms of continuous release; mash faster and the register never fills, no release is reported, the FSM sees a continuous hold, `CMD_FIRE` repeats keep flowing, and **both** dead-man layers stay satisfied — the remote's release detection and the base's `FIRE_AUTHORIZATION_TIMEOUT_MS` both sit downstream of that one decision. A worn or chattering contact produces the identical signal, and the operator would believe they were not holding the button while the system fired. §5.3 now requires dead-man inputs to debounce **asymmetrically** — 80 ms to press, 20 ms to release — because a missed release fires an igniter the operator has let go of while a spurious release only aborts. Retest logged: six mashing bursts, every one aborted (mostly at exactly the 20 ms threshold), zero pulses. |
 
 ## Table of Contents
 
@@ -540,13 +541,42 @@ All digital inputs (except the rotary encoder A/B pins) shall use a shift-regist
 
 | Input type | Register width | Polling interval | Debounce time | Stable values |
 |---|---|---|---|---|
-| **Fire button** | **8-bit** | 10 ms | **80 ms** | 0x00 = pressed, 0xFF = released |
+| **Fire button** | **8-bit** | 10 ms | **80 ms to press, 20 ms to release** (asymmetric — see below) | 0x00 = pressed, 0xFF = released |
 | Base arm switch (via sense circuit §5.4.3) | 16-bit | 10 ms | 160 ms | 0xFFFF = arm relay closed (HIGH, VBAT on fire bus), 0x0000 = arm relay open (LOW) |
 | Base key switch (via sense circuit §5.4.3b) | 16-bit | 10 ms | 160 ms | 0xFFFF = key ON (HIGH, VBAT at coil+), 0x0000 = key OFF (LOW) |
 | Remote arm switch | 16-bit | 10 ms | 160 ms | 0x0000 = armed, 0xFFFF = disarmed |
 | Encoder push button | 16-bit | 10 ms | 160 ms | 0x0000 = pressed, 0xFFFF = released |
 
 **Note:** The base arm relay feedback sense circuit (§5.4.3) reads HIGH when VBAT is on the fire bus (arm relay closed), and the base key switch sense circuit (§5.4.3b) reads HIGH when the key switch is ON. Both are opposite polarity from the remote arm switch (active LOW with pull-up). The debounce engine handles both polarities — the stable values are configured per input.
+
+**Dead-man inputs SHALL debounce asymmetrically (added v1.46, firmware 1.1.29).**
+The rules above are symmetric: the same number of agreeing samples is required to
+go active as to go inactive. That is correct for a *sensor*, where both
+directions are equally trustworthy. It is **wrong for a dead-man input**, where
+the two directions have opposite safety consequences — a missed release fires an
+igniter the operator has let go of, while a spurious release only aborts, which
+is the direction that cuts current. Requiring equal evidence for both makes the
+system exactly as reluctant to stop as it is to start.
+
+The **fire button** SHALL therefore require the full 8 samples (80 ms) to
+register a **press**, so that noise cannot start a fire sequence, but only 2
+samples (20 ms) to register a **release**. 20 ms lies in a genuine gap: switch
+contact bounce is 1–10 ms and is rejected, while a real human release is
+30–80 ms and is caught. A 1-sample threshold would report bounce as release.
+
+This was a live defect until firmware 1.1.29, found in edge-case testing:
+**rapidly mashing the fire button fired the channel.** Releases shorter than the
+80 ms window never filled the register, so no release was ever reported, the FSM
+saw a continuous hold, `CMD_FIRE` repeats kept flowing, and both dead-man layers
+stayed satisfied — the remote's release detection and the base's
+`FIRE_AUTHORIZATION_TIMEOUT_MS` both sit downstream of that single decision, so
+neither could catch it. A worn or chattering contact produces the identical
+signal. Faster polling was considered and rejected: 8 samples at 1 ms is 8 ms,
+inside typical bounce duration, so it would erode bounce rejection in *both*
+directions while only narrowing the blind window rather than closing it.
+
+Pinned by `tests/host/test_debounce.c` T-D07 and T-D08, the latter confirming
+that non-dead-man inputs keep symmetric behaviour.
 
 **Note:** Continuity inputs use ADC sampling with multi-sample averaging and hysteresis-based band classification (see §5.4.2), not the shift-register debounce engine.
 
