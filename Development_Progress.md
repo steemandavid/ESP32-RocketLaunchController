@@ -3390,24 +3390,111 @@ behaviour rather than hardware — worth a low-priority look.
 | 7 | Final version number setting | §4.3 | TODO |
 | 8 | Rotate ESP-NOW/integrity keys and move them out of the tracked repo (bug #20) | §6.2.1, §6.2.2 | TODO |
 | 9 | Runtime display health check (FSD §5.5.6): 5 s panel-ID re-read; display failure during ARMED/PRE_FIRE/FIRING → CMD_DISARM + ERROR | §5.5.6 | **DONE 2026-08-27 (fw 1.1.9)** — `display_health_check()` in `rlc_display.c`, run inside `display_task` so it is serialised with frame writes; SPI return codes counted (they were all discarded before); two consecutive bad reads required; failure posts `EVT_DISPLAY_FAULT`, and the remote FSM then ceases fire / disarms and latches ERROR from any state. Still to do on target: **T-S10b** — pull the display flex mid-session and confirm the disarm. |
-| 10 | G3 test: two complete fire cycles per power-on (BF-01 regression — fire timer stop + checked `gptimer_start`) | §15.3 | **Host regression DONE 2026-08-27** — `tests/host/test_base_fsm.c` T-FSM05, run on every build. **On-target run still TODO** and is the gating item for lifting the one-launch-per-power-cycle restriction in practice. |
+| 10 | G3 test: two complete fire cycles per power-on (BF-01 regression — fire timer stop + checked `gptimer_start`) | §15.3 | **DONE 2026-08-27 — host AND on target.** Two full arm→fire→complete cycles on one power cycle into a 12 V 50 W halogen on ch 1, fw 1.1.18. **0 reboots**, uptime continuous 451744 → 541944 ms across both, finished `state=1 IDLE err=0x00`. Cycles timing-identical (5000 ms countdown, 1050 ms pulse, ~2040 ms cooldown) — that symmetry is the proof, since it is exactly what the bug prevented. **The one-launch-per-power-cycle restriction is lifted.** See the section below. |
 | 11 | FSM host event-injection harness (FSD §4.5) | §4.5, §15.5 | **DONE 2026-08-27** — `tests/host/test_base_fsm.c` (111 checks) drives the production base FSM. Discharges the review-substitute for T-F06/F07/F09 and T-S12/S13, the host half of T-A05, the base half of T-U07, and gives bug #30 positive verification. **Remote FSM harness still TODO** — same technique, `rlc_remote_fsm.c`. |
 | 12 | Host suite wired into the build (`build_base.sh` / `build_remote.sh` run `tests/host/run.sh` and refuse to build on failure) | §15.5 | **DONE 2026-08-27** — the runner existed but nothing invoked it. Still no CI runner; that remains TODO. |
 | 13 | T-C06 replay tool: capture a real frame off the air and re-transmit it | §15.1 | TODO — the *rule* is now host-tested (`test_seqgap.c` T-U04) and the base emits NACK 0x08 rather than dropping silently, but no on-air capture/replay tool exists. |
+
+### OPEN — Enforce arming-sequence order, with feedback (raised 2026-08-27, T-S08)
+
+Raised by the operator while T-S08 passed: the guards correctly *refuse*
+out-of-order input, but they refuse it **silently**, so the operator learns
+nothing about why nothing happened. The system should require the sequence to
+be walked in order and say so when it is not:
+
+1. **Fire button pressed with no arm active** → toast. Today the press is
+   simply ignored, which is indistinguishable from a dead button — the exact
+   failure mode §7.2.9a was written against ("a refusal that only beeps is
+   indistinguishable from an input that never registered, and the natural
+   response to apparent non-response is to try again").
+2. **Arm key turned while the fire button or encoder is already held** → toast.
+   The fresh-press rule already makes this safe (T-S04/T-S08 prove it), but the
+   operator gets no indication that their held input is being discarded.
+3. **Only this order may progress:** arm key ON → encoder held then released
+   (long-press to arm) → fire button held.
+
+4. **Extended after T-S04 (operator, same session): a held button should
+   INTERRUPT the sequence, not merely be reported.** If the fire button is
+   held at the moment of arming, the arm should be refused or aborted outright
+   rather than proceeding into ARMED where the held input is silently
+   discarded. Arming into a state where the operator is already pressing fire
+   and nothing happens is the confusing case — better to refuse the arm and
+   name the reason than to enter a state whose most obvious input is inert.
+
+This is a usability-of-safety issue rather than a safety hole: the interlocks
+work, and T-S04/T-S08 both confirm a button held through ARMED entry cannot
+fire. What is missing is the operator feedback, and now also the active abort —
+which is precisely the gap §7.2.9a closed for commands in 1.1.6 and for the
+link handshake in 1.1.17. The input layer is the third place it was never
+applied.
+
+Not yet implemented. Needs a decision on where the checks live (remote FSM vs
+input tasks), on toast wording, and on whether a held button at arm time
+refuses the ARM locally or disarms after the fact.
+
+### Bug #31 Two-Cycle Regression — PASSED ON TARGET (2026-08-27)
+
+The gating item for the one-launch-per-power-cycle restriction. Bug #31 left the
+fire GPTimer running after a completed pulse, so the *second* `fire_timer_start()`
+of a power cycle hit `ESP_ERROR_CHECK` and panic-rebooted the base **with the arm
+relay and the channel relay still energised** — the igniter carrying full current
+for the whole panic-and-reboot interval. It had never been hit because no test had
+ever completed a pulse and re-armed on one boot.
+
+**It does not need pyrotechnics.** `POST_FIRE → IDLE` is a pure
+`POST_FIRE_COOLDOWN_MS` timer with no continuity condition, so the second arm is
+available whether or not the load burned through. The defect is in the timer, not
+the igniter. Run into a **12 V 50 W halogen** on channel 1 — ~4.2 A hot against a
+20 A contact rating, and switching a 12 V halogen is the duty these automotive
+relays were designed for. The lamp also gives visible per-pulse confirmation,
+which an igniter cannot (it only fires once).
+
+Firmware 1.1.18, base uptime continuous throughout:
+
+```
+cycle 1   467644  IDLE -> ARMED (ch 1, sense verified)
+          472764  ARMED -> PRE_FIRE
+          477764  Fire timer started: ch 1, 1000 ms      (5000 ms countdown)
+          477764  PRE_FIRE -> FIRING
+          478814  Fire timer stopped                      (1050 ms pulse)
+          478834  FIRING -> POST_FIRE
+          480874  POST_FIRE -> IDLE                       (2040 ms cooldown)
+
+cycle 2   527304  IDLE -> ARMED (ch 1, sense verified)
+          528164  ARMED -> PRE_FIRE
+          533164  Fire timer started: ch 1, 1000 ms
+          533164  PRE_FIRE -> FIRING
+          534214  Fire timer stopped
+          534234  FIRING -> POST_FIRE
+          536274  POST_FIRE -> IDLE
+```
+
+**0 reboots in the capture**, final state `state=1 IDLE err=0x00`. The two cycles
+are timing-identical, which is the substance of the result: the second behaved
+exactly like the first.
+
+**Cosmetic finding.** Cycle 1 logs `E (477764) gptimer: gptimer_stop(418): timer
+is not running` immediately before the timer starts — the fix's defensive
+stop-before-every-start, firing on the first pulse of a power cycle when there is
+genuinely nothing to stop. It does not appear on cycle 2, because by then the
+completion handler has left the timer in a stoppable state. Harmless, but it
+prints at **ERROR** level on every first shot, which will send someone hunting a
+fault that is not there. Worth guarding with a "has ever been started" flag or
+demoting the log.
 
 ### Phase 5 FSD Safety Tests (§15.4)
 
 | ID | Test | Status |
 |----|------|--------|
-| T-S01 | Power cycle base while armed → safe boot | TODO |
-| T-S02 | Power cycle remote while base armed → link loss disarm | TODO |
+| T-S01 | Power cycle base while armed → safe boot | **PASS** 2026-08-27 — booted IDLE with the key still in ARM, no auto-rearm, relays NC. Operator confirmed **no lamp flash** through boot, so no GPIO glitch on the channel drive (a free look at what T-S06 scopes). Also latched `ERR_VBAT_CRITICAL` at **7287 mV** on the way down as power was removed — correct, and a third independent pass of T-S03 |
+| T-S02 | Power cycle remote while base armed → link loss disarm | **PASS** 2026-08-27 — `PING drought (1542 ms) — LINK LOST` then arm sense DISARMED 170 ms later; last PING to fire-path-dead **1712 ms**. Detection at 1542 ms vs the FSD's "within 1.5 s": the extra 42 ms is link-task tick granularity on a `>= 3 x 500 ms` threshold, not drift |
 | T-S03 | Base battery below VBAT_CRITICAL_MV → ERROR state | **PASS** (2026-08-26) — taken to 7978 mV, latched `ERROR flags=0x02`, correctly stayed latched at 12.1–12.7 V until power cycle |
-| T-S04 | Hold fire button at boot, then arm → no fire (fresh press) | TODO |
+| T-S04 | Hold fire button at boot, then arm → no fire (fresh press) | **PASS** 2026-08-27 — button held through remote boot and through arming; no countdown, no pulse, lamp dark. The debouncer seeding at boot with the button already low does not read as authorisation |
 | T-S05 | Corrupt message (bit flip) → rejected | TODO |
 | T-S06 | GPIO init order verification (oscilloscope on boot) | TODO |
 | T-S07 | Watchdog: infinite loop → reboot within 5 s | TODO |
-| T-S08 | Hold fire button + arm → no fire (fresh press required) | TODO |
-| T-S09 | LINK_REQUEST while ARMED → silently ignored | TODO |
+| T-S08 | Hold fire button + arm → no fire (fresh press required) | **PASS** 2026-08-27 — button held before and through ARMED entry; no fire. Release-then-press did start the countdown, confirming the `0xFF→0x00` transition is what authorises |
+| T-S09 | LINK_REQUEST while ARMED → **rejected with `LINK_REJECT_BUSY`** (was "silently ignored" before fw 1.1.17); session and armed state unaffected | TODO — **not reachable on target as written.** `tick_remote()` only sends LINK_REQUEST in LINKING or LOST, so a linked remote never sends one, and rebooting it to force one takes ~1.9 s — by which time the base has hit link loss at 1.5 s and disarmed. Needs a remote-harness key that forces a LINK_REQUEST while linked. **FSD §15.4 row still says "silently ignores" and needs updating to match 1.1.17** |
 | T-S10 | Display SPI failure at boot → ERROR | TODO |
 | T-S11 | 5 consecutive send failures → immediate link loss | PASS | Triggered on-target during RF shielding test (RSSI -98 dBm) |
 | T-S12 | Fire pulse on link loss (COMPLETE_PULSE=true) | TODO |
@@ -3415,7 +3502,7 @@ behaviour rather than hardware — worth a low-priority look.
 | T-S14 | Arm timeout (10 s auto-disarm) | **PASS** (2026-08-26) — `ARM TIMEOUT (10022 ms)` against a 10000 ms constant, observed repeatedly |
 | T-S15 | ERR_COMM_DEGRADED blocks arming | TODO |
 | T-S16 | ERR_COMM_DEGRADED blocks firing | TODO |
-| T-S17 | Arm switch sense verifies arm switch | TODO |
+| T-S17 | Key switch sense verifies key switch (FSD wording; this row previously said "arm switch") | **PASS** 2026-08-27 — `key=0` in SAFE, `key=1` in ARM, both transitions clean; guard 1 then passed with two successful arms, each verified by arm sense 170 ms after the relay drive (`arm verify started` → `sense HIGH` → `sense verified`). Both auto-disarmed at exactly 10000 ms, re-confirming T-S14 |
 | T-S18 | Arm switch sense fault detection → NACK 0x0B | TODO |
 | T-S19 | Post-fire igniter status via continuity | TODO |
 

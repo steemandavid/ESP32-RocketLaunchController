@@ -310,11 +310,11 @@ Known open items before any field use:
   stop-first on every start, and a checked return that latches ERROR instead of
   aborting) and regression-tested by an automated two-cycle test that runs on
   every build (`tests/host/test_base_fsm.c` T-FSM05).
-  **Until the on-target two-cycle test runs (Phase 5 task 10), keep
-  power-cycling the base between launches.** The fix is proven on the host, not
-  on the pad — and this is a bug that sat in the code for months looking
-  perfectly fine, caught by review rather than by testing, so the hardware
-  evidence is worth having before the restriction is lifted.
+  **Verified on target 2026-08-27 and the power-cycle-between-launches
+  restriction is lifted.** Two full arm→fire→complete cycles on one power cycle
+  into a 12 V 50 W halogen: 0 reboots, uptime continuous across both, and the
+  two cycles timing-identical — which is the substance of it, since behaving
+  the second time exactly as the first is what the bug prevented.
   See `Code_Review_AllPhases_20260827_0308.md`.
 - **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
   ever specified. Protection is firmware-only, and the ERROR state halts
