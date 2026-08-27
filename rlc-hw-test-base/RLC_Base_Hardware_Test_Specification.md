@@ -242,7 +242,7 @@ The fire timer SHALL use a hardware timer (not `vTaskDelay`). The timer callback
 
 ### 6.6 RGB LED
 
-WS2812 single-pixel driver using ESP32-S3 RMT peripheral on GPIO 47. Brightness scaling configurable. The `led test` command SHALL cycle through all patterns defined in the main FSD §11.1.
+WS2812 driver (8-pixel strip + parallel on-board LED) using the ESP32-S3 RMT peripheral on GPIO 48. Brightness scaling configurable. The `led test` command SHALL cycle through all patterns defined in the main FSD §11.1.
 
 ### 6.7 Arm Sense and Key Sense Inputs
 

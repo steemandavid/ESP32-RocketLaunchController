@@ -11,10 +11,10 @@ are the discounted web prices at those dates.
 | Qty | Part code | Description | Unit | Line | Purpose |
 |---|---|---|---|---|---|
 | 5 | `BAT85` | Schottky diode 30 V / 0.2 A, DO-35 | €0.21 | €1.05 | ADC/GPIO overvoltage clamp — bug #22 (remote GPIO 1) + spares for the base GPIO 21/42 clamps (bug #18) |
-| 2 | `R10W/10` | 10 Ω 10 W ±5 % wirewound cement, Ø10×49 mm | €0.62 | €1.24 | Igniter substitute — **GOOD** band |
-| 2 | `R5W/22` | 22 Ω 5 W ±5 % wirewound | €0.37 | €0.74 | Igniter substitute — **GOOD** band, low-current |
+| 2 | `R10W/10` | 10 Ω 10 W ±5 % wirewound cement, Ø10×49 mm | €0.62 | €1.24 | Igniter substitute — **CONNECTED** band |
+| 2 | `R5W/22` | 22 Ω 5 W ±5 % wirewound | €0.37 | €0.74 | Igniter substitute — **CONNECTED** band, low-current |
 | 2 | `R11W220` | 220 Ω 11 W wirewound ceramic, SETA RB58, Ø9×46 mm | €1.75 | €3.50 | Igniter substitute — **MARGINAL** band |
-| 2 | `R10W/100` | 100 Ω 10 W ±5 % wirewound cement | €0.50 | €1.00 | Igniter substitute — **MARGINAL**, sits just over the GOOD/MARGINAL edge (threshold + hysteresis test) |
+| 2 | `R10W/100` | 100 Ω 10 W ±5 % wirewound cement | €0.50 | €1.00 | Igniter substitute — **MARGINAL**, sits just over the CONNECTED/MARGINAL edge (threshold + hysteresis test) |
 | 4 | `30PF1` | Rechte connectorrij 1×20 pin, **vrouwelijk**, P 2,54 mm (0.1" female header strip) | €0.79 | €3.16 | Sockets for the test resistors / harness, dev-board mounting |
 | 10 | `RC220E` | 220 Ω 1 % metal film, 1/4 W | €0.12 | €1.20 | Sense-branch series resistor, one per channel + spares — limits the fault current the 3V3 clamp injects into the rail (bug #18) |
 | 2 | `TL431` | Shunt regulator 2,495–36 V ±2 %, TO-92 | €1.07 | €2.14 | 3.3 V rail clamp at ~3.57 V (bug #24) |
@@ -55,26 +55,29 @@ candidate that could drift at elevated temperature (leakage ≈ doubles per 10 �
 Do **not** substitute a 1N5819 (stocked, €0.21) — as a 1 A power Schottky its
 leakage biases readings *upward*, masking a flat pack.
 
-**Continuity band boundaries** (computed from `CONT_*_UV` in
-`components/rlc_common/include/rlc_config.h` through the real sense network:
-3.3 V, R_ref 3.3 kΩ, R_pull 100 kΩ). Note these are **not** the 20 Ω / 500 Ω the
-FSD glossary states:
+**Continuity band boundaries** (recalculated 2026-08-27 against the production
+thresholds in `components/rlc_common/include/rlc_config.h`, through the real
+sense network: 3.3 V, R_ref 3.3 kΩ, R_sense 217 Ω, R_pull 100 kΩ). Three bands
+since v1.29 — there is no SHORT band (folded into CONNECTED) and GOOD is named
+CONNECTED. These now match the FSD glossary (~67 Ω / ~500 Ω, §3 and §14.5):
 
 | Boundary | Threshold | Actual resistance |
 |---|---|---|
-| SHORT / GOOD | 500 µV | 0.50 Ω |
-| GOOD / MARGINAL | 66 000 µV | 67.4 Ω |
-| MARGINAL / OPEN | 1 500 000 µV | 2.83 kΩ |
+| CONNECTED / MARGINAL | 261 000 µV | ~67 Ω |
+| MARGINAL / OPEN | 586 000 µV | ~500 Ω |
+
+(0 dB attenuation: the ADC saturates at its 950 mV full scale, reached around
+~1.1 kΩ — everything above that reads OPEN regardless of exact value.)
 
 Where the selected parts land, and what they dissipate on a 1 s fire pulse at
 12.6 V (3S full charge):
 
 | Part | Sense reading | Band | Margin | Fire pulse |
 |---|---|---|---|---|
-| R10W/10 (10 Ω) | 9.97 mV | GOOD | 6.6× below the MARGINAL edge, 20× above SHORT | 1.26 A, 15.9 W → 16 J, safe transiently on a 10 W cement body |
-| R5W/22 (22 Ω) | 21.9 mV | GOOD | 3× below the MARGINAL edge, 44× above SHORT | 0.57 A, 7.2 W → 7 J, comfortable on a 5 W body for 1 s |
-| R11W220 (220 Ω) | 206 mV | MARGINAL | 3× above the GOOD edge, 7× below OPEN | 57 mA, 0.72 W |
-| R10W/100 (100 Ω) | 97 mV | MARGINAL | only 1.5× over the GOOD edge — deliberate boundary case | 126 mA, 1.6 W |
+| R10W/10 (10 Ω) | ~212 mV | CONNECTED | 1.2× below the MARGINAL edge | 1.26 A, 15.9 W → 16 J, safe transiently on a 10 W cement body |
+| R5W/22 (22 Ω) | ~222 mV | CONNECTED | 1.2× below the MARGINAL edge | 0.57 A, 7.2 W → 7 J, comfortable on a 5 W body for 1 s |
+| R11W220 (220 Ω) | ~384 mV | MARGINAL | 1.5× above the CONNECTED edge, 1.5× below OPEN | 57 mA, 0.72 W |
+| R10W/100 (100 Ω) | ~289 mV | MARGINAL | only 1.1× over the CONNECTED edge — deliberate boundary case (inside the ±5 mV hysteresis of a fresh transition) | 126 mA, 1.6 W |
 
 **No arc-realistic load in this order.** The 8.2 Ω 50 W `R50W/8E2` (4 in parallel
 = 2.05 Ω, 6.1 A) was considered and dropped — it is the only combination here
@@ -86,8 +89,8 @@ below) before treating a fire test as representative.
 
 **Safety.** Never leave a sub-ohm resistor connected through a fire pulse — 0.1 Ω
 across 12.6 V is 126 A, far beyond the relay contacts and any sane pack
-discharge. Low-value parts are for exercising the SHORT band on the *continuity*
-path only, with the channel relay de-energised.
+discharge. Low-value parts are for exercising the low end of the CONNECTED band
+on the *continuity* path only, with the channel relay de-energised.
 
 **Female 0.1" header strips.** `30PF1` is a 1×20 socket strip on 2.54 mm pitch,
 >20 in stock at all three stores. It is **not** pre-scored for breaking
@@ -120,6 +123,9 @@ these when ordering the rest.
 
 ## Bug #27 — base siren driver (needed, part codes NOT yet looked up)
 
+**RESOLVED 2026-08-26** — driver fitted, measured <200 mA. Retained as parts
+record only.
+
 Added 2026-08-21. The base siren is not connected: GPIO 40 drives nothing and
 the IRLZ44N driver has not been fitted, so the pad currently has **no audible
 warning during ARMED / PRE_FIRE / FIRING**. See Development_Progress bug #27
@@ -147,9 +153,9 @@ even though it is not installed.
 
 | Part code | Description | Price | Reads as | Use |
 |---|---|---|---|---|
-| `R50W/8E2` | 8.2 Ω 50 W power resistor | €5.37 | 8.2 mV, GOOD | 4 in parallel = 2.05 Ω / 6.1 A — arc-realistic fire load, ~19 W each |
-| `R11W1K` | 1 kΩ 11 W SETA RB58 | €1.75 | 761 mV, MARGINAL | near-OPEN edge test |
-| `R25W/3K3` | 3.3 kΩ 25 W | €3.10 | 1.62 V, OPEN | OPEN simulator (only 1 in stock at Aalst) |
+| `R50W/8E2` | 8.2 Ω 50 W power resistor | €5.37 | ~205 mV, CONNECTED | 4 in parallel = 2.05 Ω / 6.1 A — arc-realistic fire load, ~19 W each |
+| `R11W1K` | 1 kΩ 11 W SETA RB58 | €1.75 | ~881 mV, OPEN | above the ~500 Ω OPEN edge, below the 950 mV saturation point — readable OPEN |
+| `R25W/3K3` | 3.3 kΩ 25 W | €3.10 | saturates (>950 mV), OPEN | OPEN simulator (only 1 in stock at Aalst) |
 | `1N5711` | Schottky 70 V / 15 mA DO-35, 200 nA leakage | €0.54 | — | lowest-leakage clamp option; only 1 piece in stock |
 | `1N4148` | Si signal diode 75 V / 200 mA DO-35 | €0.12 | — | nA-leakage interim clamp, clamps at ~4.0 V instead of ~3.6 V |
 | `30PF2` | Rechte connectorrij 2×20 pin, vrouwelijk, P 2,54 | €0.80 | — | dual-row female header, if a 2×n socket is ever needed |

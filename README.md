@@ -179,6 +179,12 @@ so the "pad is live" signal is never diluted into a data display.
 
 Known open items before any field use:
 
+- **CRITICAL (review 2026-08-27, BF-01):** the fire timer is never stopped
+  after a normal pulse completes. A *second* launch on the same power cycle
+  panics in `fire_timer_start()` and reboots the base **with the igniter
+  relay energized** — uncontrolled pulse duration. Untested path: no test has
+  completed a pulse and re-armed on one boot. **Until fixed: power-cycle the
+  base between launches.** See `Code_Review_AllPhases_20260827_0308.md`.
 - The continuity sense reports three bands — **CONNECTED**, **MARGINAL**,
   **OPEN** — not four. A `SHORT` band was specified but proved unmeasurable at
   the 1 mA test current: a dead short and a 1.5 Ω igniter differ by about a
@@ -269,13 +275,14 @@ Known open items before any field use:
 
 | Document | Contents |
 |---|---|
-| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.33 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
+| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.43 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
 | `Development_Progress.md` | Per-phase task and test tracking, hardware reference, bug history |
 | `RLC_Project_Summary.md` | Plain-language overview written for club members |
 | `changelog.md` | Session-by-session development log |
 | `Phase{1,2,3}_Code_Review*.md` | Code reviews against the specification |
 | `Code_Review_AllPhases_20260821_1430.md` | Full-codebase review: 7 Major findings, 4 gating live-fire, plus a documentation-consistency audit. All seven fixed in 28293b6. |
 | `Code_Review_AllPhases_20260821_1523.md` | Post-fix re-review: all 7 prior Majors verified fixed; 2 new Majors found (arm key at boot, siren stale-callback race) and 13 minors. Fixed in firmware 1.1.1. |
+| `Code_Review_AllPhases_20260827_0308.md` | Full-codebase review vs FSD v1.42: verdict FAIL — 1 Critical (BF-01 fire timer not stopped after pulse → second launch per power cycle panics with relay energized), 8 Major, 44 Minor. Bug #30 fix verified sound; host suite re-run 265/265. Doc-consistency sweep applied same session (FSD → v1.43). |
 
 ## Hardware
 

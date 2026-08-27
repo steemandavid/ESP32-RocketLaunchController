@@ -60,8 +60,8 @@ This is the part I'd most like your feedback on. The system was designed so that
   - Battery voltage above minimum (10.5 V on base)
   - Arm sense feedback confirms the arm relay actually closed (contact welding detection)
   - Communication link quality is acceptable
-- **Continuity is watched for the whole time the pad is armed**, not just at the moment of arming. If the igniter on the armed channel goes open-circuit — someone pulls a lead, a clip falls off — the base disarms itself and silences the siren within about a second. This was added in August 2026 after bench testing showed the pad staying armed with a disconnected igniter.
   - Message integrity verified (CRC32 + session token + sequence number — see below)
+- **Continuity is watched for the whole time the pad is armed**, not just at the moment of arming. If the igniter on the armed channel goes open-circuit — someone pulls a lead, a clip falls off — the base disarms itself and silences the siren within about a second. This was added in August 2026 after bench testing showed the pad staying armed with a disconnected igniter.
 - **Dead-man switch**: during firing, the remote sends repeated "fire alive" messages. If the base stops receiving them (operator released the button, or link was lost), power is cut.
 - **Auto-disarm**: if the system is armed but no fire command is received within 10 seconds, it disarms automatically.
 - **Contact welding detection**: if the arm relay is supposed to be off but the feedback GPIO reads that it's still conducting, the system enters a permanent error state that requires a power cycle to clear.

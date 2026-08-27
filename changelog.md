@@ -1,5 +1,91 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-27 — Full-codebase review vs FSD: verdict FAIL (1 Critical), documentation swept to FSD v1.43
+
+Read-only review of all production code, tests/tooling, and documentation
+against the FSD, run as 7 parallel tracks (base fire path, remote operator
+path, comms/protocol, common infra, display, tests+tools, documentation
+consistency). No code was modified. Report:
+`Code_Review_AllPhases_20260827_0308.md` (commit reviewed: `5b6515f`, fw 1.1.8).
+
+### Verdict and headline numbers
+
+**FAIL** — 1 Critical, 8 Major, 44 Minor, 38 Info.
+
+**The Critical (BF-01) gates live fire:** `fire_timer_stop()` is never called
+on the *successful* fire-pulse completion path. The GPTimer stays in RUN
+state, so on a **second launch after one power cycle** `gptimer_start()`
+returns `ESP_ERR_INVALID_STATE` and the `ESP_ERROR_CHECK` in
+`fire_timer_start()` panics and reboots the base **with the channel and arm
+relays energized** — uncontrolled ignition pulse duration, then a mid-fire
+reboot. Verified against the actual toolchain (ESP-IDF v5.4.1 per
+`build_base/project_description.json`). Never seen in testing because no test
+has completed a pulse and then re-armed on one boot (T-F02 aborts pre-pulse).
+Toolchain-sensitive: on IDF 5.5.x the panic disappears and becomes a silent
+timing hazard instead — the fix (stop the timer on EVT_FIRE_PULSE_DONE, plus
+a checked return instead of `ESP_ERROR_CHECK`) is required under both.
+**Operational mitigation until fixed: power-cycle the base between launches.**
+
+### The 8 Majors
+
+| ID | Finding |
+|---|---|
+| DS-01 | FSD §5.5.6 runtime display health check entirely missing — a mid-session panel/SPI fault freezes the last-rendered ARMED screen while the FSM keeps accepting fire commands. Added to the Phase 5 table |
+| CM-01 | Unlocked race in `rlc_link_send_status_update()` (base status task vs link task on tx-seq/state) — same class the author already fixed in `rlc_link_send_cmd` |
+| TT-04 | Zero automated tests for either safety-critical FSM (§4.5 mandate). A host event-injection harness would discharge §4.5, T-F06/F07/F09's review-substitute, T-A05's host half, T-U04/07/09/16, T-C06 and bug #30 positive verification in one work item |
+| DOC-01/13/TT-03 | FSD App D.4 + T-F05 contradicted the implemented v1.35 continuity-loss disarm ("informational only") — fixed in this session's doc sweep |
+| DOC-02 | Stale "DATA STALE — CANNOT ARM" text in §8.2.3/App B.2 — fixed |
+| DOC-03/04/TT-05 | Both 2026-08-21 hw-test-spec defects still present (base spec: RGB on GPIO 47, actually 48; remote spec flashed the *base* board's by-id) — fixed |
+| TT-01 | `tools/test_tr04.py` ports stale/wrong (BASE_PORT = dead chip #3 adapter; REMOTE_PORT = now the base board). Live by-ids: base `5B5E042156`, remote `5B5E043219` — **not fixed, tool repair pending** |
+| TT-02 | `vbat_fit.py` cannot parse current `vbat-cal` output (`CSV,` vs `MEDIAN`/`ADCMAP,` lines; verified by execution) — **not fixed, tool repair pending** |
+
+### Verified clean
+
+- Bug #30 / fw 1.1.8 level-triggered continuity backstop: sound and
+  effectively unbypassable in its spec scope (two independent layers).
+- All FSD §14 constants and Appendix C pins match the code exactly
+  (`PRE_FIRE_DELAY_MS=5000`, `FIRE_PULSE_DURATION_MS=1000`, margin 250;
+  zero pin mismatches across 21 base + 18 remote).
+- Protocol 1:1 vs App A (message types, NACK codes, error flags, struct
+  sizes); fuzz/replay frame safety solid.
+- Host test suite re-run during review: **12 binaries / 265 checks /
+  0 failures** — exactly matching the FSD's claim.
+- Prior-review fixes (N3 TWDT ordering, 2026-08-21 Majors) re-verified in
+  place.
+
+### Documentation sweep (same session, 9 files, +121/−82)
+
+FSD bumped to **v1.43** (revision row added): App D.4 and T-F05 rewritten to
+the implemented continuity-loss disarm semantics; "DATA STALE — CANNOT ARM"
+→ "NO BASE STATUS DATA" (2 places); SIREN_ARMED table → continuous (v1.35);
+SHORT-band remnants annotated deprecated in §3/§5.4.2/§7.3.1/§14.5; App C.1
+GPIO 42 spare-list error fixed + key-sense row added; §14 gained the missing
+constants (`FIRE_PROTECTED_CHANNEL_MASK`, ADC atten/full-scale, splash, trace,
+VBAT_FULL, calibrated divider ratios); §7.2.9a moved from inside §6 to after
+§7.2.9; T-C0x expected results updated to v1.18 LED behaviour; T-S12/S13
+annotated unreachable; §10.2.0 palette as-built note; three
+`FIRE_PULSE_DURATION_MS` "2000 ms" prose staleness fixed (code/§14.1 = 1000).
+Base hw-test spec: GPIO 47→48 + 8-pixel wording. Remote hw-test spec: by-id
+now the remote's own debug unit (MAC `AC:A7:04:E2:F2:8C`), board-serial
+alternative noted. Development_Progress: header → v1.43/fw 1.1.8; consolidated
+fw 1.1.2–1.1.8 section (was zero-coverage); DS-01 + BF-01 two-fire-cycle test
+added to Phase 5 table; T-S07 2 s→5 s; stale "thresholds not restored" clause
+deleted. Test_Report_Phase3_G2 header reconciled with its own totals.
+README: v1.43, BF-01 critical notice in Known-open-items, review added to
+docs table. Project Summary list structure fixed. Gotron shopping list:
+band-boundary table recalculated against production thresholds (261/586 mV,
+217 Ω), bug #27 marked RESOLVED.
+
+### Follow-ups
+
+1. **Fix BF-01** (fire timer stop + checked `gptimer_start` return), then add
+   a G3 test: two complete fire cycles per power-on.
+2. DS-01 display health check, CM-01 mutex — next firmware items.
+3. Repair `test_tr04.py` and `vbat_fit.py` (TT-01/TT-02).
+4. Phase 5 kickoff with the FSM host-injection harness (TT-04) as centerpiece.
+5. Remaining 44 Minors at maintainer's pace; RM-06 (fire-repeat button check)
+   and CI-06 (encoder-before-ADC comment) are one-liners.
+
 ## 2026-08-26 — Hardware bugs closed, G2 arming suite complete, firmware 1.1.1 → 1.1.8
 
 Hardware rework by the operator closed the last three open hardware defects.
@@ -131,9 +217,12 @@ spontaneous hardware event.
 
 ### Version
 
-**Firmware 1.1.1 → 1.1.4 over the session.** 1.1.2 = continuous siren +
+**Firmware 1.1.1 → 1.1.8 over the session.** 1.1.2 = continuous siren +
 continuity-loss disarm (base-only). 1.1.3 = `PRE_FIRE_DELAY_MS` 5 s. 1.1.4 =
-remote reports why an ARM was refused. No wire-protocol change at any step, but
+remote reports why an ARM was refused. 1.1.5 = channel-mismatch toast. 1.1.6 =
+no silent refusals / NACK `0x0E`. 1.1.7 = fire-button ring LED reports state.
+1.1.8 = bug #30 level-triggered continuity backstop. No wire-protocol change at
+any step except the 1.1.6 NACK reason, but
 the strict version check covers all three components, so **both units must be
 flashed together** — which they were, at each bump.
 
@@ -148,7 +237,7 @@ flashed together** — which they were, at each bump.
 | `components/rlc_base/src/rlc_continuity.c` | Change callback carries channel + band (both the normal and the ADC-fail-safe path) |
 | `components/rlc_base/include/rlc_continuity.h` | `continuity_register_change_cb()` signature + rationale |
 | `components/rlc_common/include/rlc_fsm_events.h` | `EVT_CONTINUITY_CHANGED = 0x19` and its payload struct |
-| `components/rlc_common/include/rlc_version.h` | 1.1.1 → 1.1.2 |
+| `components/rlc_common/include/rlc_version.h` | 1.1.1 → 1.1.8 (bumped at each release over the session) |
 | `RLC_Functional_Specification_v1_14.md` | → **v1.35**: §5.4.4 as-built indicator note, §5.4.8 as-built driver note, §7.2.2/§7.2.3/§7.4.1 siren, §7.2.7/§7.3.1 continuity-loss disarm, state diagram, both transition tables, new tests T-A16/T-A17/T-A18, two revision entries (v1.34 hardware, v1.35 firmware) |
 | `Development_Progress.md` | Bugs #19/#27/#28 → RESOLVED with full entries; new bug #29 entry; new "Firmware 1.1.2 — Siren Continuous in ARMED" entry; T-L18 → PASS; G2 widened to T-A01..T-A18; fire-testing hold lifted |
 | `README.md` | Fire-testing status, siren status, bug #19 note, operating-sequence siren wording |

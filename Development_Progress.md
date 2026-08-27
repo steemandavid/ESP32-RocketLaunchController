@@ -1,8 +1,8 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.33 (2026-08-25)
-**Firmware:** 1.1.1
+**Spec:** RLC-FSPEC-001 v1.43 (2026-08-27)
+**Firmware:** 1.1.8
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -47,11 +47,9 @@ on-target defect log in the Phase 3 section.
 | 19 | Base LED strip: data chain breaks after pixel 3 — pixels 4-8 dark | Hardware | **RESOLVED 2026-08-26** — strip replaced. Root cause was **pixel 3's output stage**: the LED rendered its own colour correctly but no longer passed data downstream. All 8 pixels now respond. | Nothing. T-L15 and T-L18 unblocked. |
 | 18 | Base ESP32 destroyed by relay-arc coupling on the continuity ADC inputs | Hardware + firmware | Software fix DONE and audited. **As-built 2026-08-23: snubbers on ALL 8 channel relays + arm relay; 1N5819 clamps to GND and 3V3 on ALL 8 sense pins; 217 Ω sense-branch resistors on ALL 8 channels (thresholds recalibrated, verified on target).** Only the 3.3 V rail clamp (TL431 at ~3.57 V) is still missing, and with the 217 Ω fitted it is now belt-and-braces rather than the primary defence | Nothing further — `FIRE_PROTECTED_CHANNEL_MASK` widened to 0xFF on 2026-08-23. Only the TL431 rail clamp is still outstanding, now covering the multi-channel fault case rather than the single-channel one |
 
-Non-blocking items tracked elsewhere: the bench battery thresholds in
-`rlc_config.h` (FSD §5.6.2 production values not yet restored), the
-unimplemented FSD §7 remote-battery arming guard / NACK `0x0C` (both in "Phase 4
-Findings — Battery Thresholds"), and the FSD §10.2.0 continuity palette
-deviation.
+Non-blocking items tracked elsewhere: the unimplemented FSD §7 remote-battery
+arming guard / NACK `0x0C` (in "Phase 4 Findings — Battery Thresholds"), and the
+FSD §10.2.0 continuity palette deviation.
 
 **Full-codebase review 2026-08-21** (`Code_Review_AllPhases_20260821_1430.md`,
 commit cd4ddf0): verdict MAYBE. All Phase 1–3 review fixes verified present
@@ -1604,6 +1602,23 @@ the 1N5819 rating question from bug #27 with a 5x margin.
 
 ---
 
+### Firmware 1.1.2–1.1.8 (2026-08-26)
+
+Consolidated record — the G2 campaign and its fixes shipped seven releases in
+one day. One line each; `changelog.md` carries the detail.
+
+- **1.1.2** — siren continuous in ARMED + continuity-loss disarm (bug #29).
+- **1.1.3** — `PRE_FIRE_DELAY_MS` 2 s → 5 s (operator decision from T-A17).
+- **1.1.4** — remote ARM-refusal reporting (base in ERROR names the flag).
+- **1.1.5** — channel-mismatch toast ("CHANNEL MISMATCH ERROR").
+- **1.1.6** — no-silent-refusals sweep; base answers commands in ERROR with
+  NACK `0x0E`.
+- **1.1.7** — fire-button ring LED reports state, not the button.
+- **1.1.8** — bug #30: level-triggered backstop for the continuity-loss
+  disarm.
+
+---
+
 ### Firmware 1.1.2 — Siren Continuous in ARMED (2026-08-26)
 
 **Operator finding.** The 500 ms ARMED pulse **interferes with the siren's own
@@ -3044,6 +3059,8 @@ behaviour rather than hardware — worth a low-priority look.
 | 6 | Documentation: build instructions, flash procedure, wiring diagram | §4.3 | TODO |
 | 7 | Final version number setting | §4.3 | TODO |
 | 8 | Rotate ESP-NOW/integrity keys and move them out of the tracked repo (bug #20) | §6.2.1, §6.2.2 | TODO |
+| 9 | Runtime display health check (FSD §5.5.6): 5 s panel-ID re-read; display failure during ARMED/PRE_FIRE/FIRING → CMD_DISARM + ERROR | §5.5.6 | TODO — flagged MISSING by the 2026-08-27 full code review (DS-01) |
+| 10 | G3 test: two complete fire cycles per power-on (BF-01 regression — fire timer stop + checked `gptimer_start`) | §15.3 | TODO |
 
 ### Phase 5 FSD Safety Tests (§15.4)
 
@@ -3055,7 +3072,7 @@ behaviour rather than hardware — worth a low-priority look.
 | T-S04 | Hold fire button at boot, then arm → no fire (fresh press) | TODO |
 | T-S05 | Corrupt message (bit flip) → rejected | TODO |
 | T-S06 | GPIO init order verification (oscilloscope on boot) | TODO |
-| T-S07 | Watchdog: infinite loop → reboot within 2 s | TODO |
+| T-S07 | Watchdog: infinite loop → reboot within 5 s | TODO |
 | T-S08 | Hold fire button + arm → no fire (fresh press required) | TODO |
 | T-S09 | LINK_REQUEST while ARMED → silently ignored | TODO |
 | T-S10 | Display SPI failure at boot → ERROR | TODO |

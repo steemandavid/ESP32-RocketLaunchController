@@ -2,17 +2,19 @@
 
 **Date:** 2026-08-26
 **Tester:** Code Test Agent (log analysis) + operator (hardware)
-**FSD Reference:** RLC_Functional_Specification_v1_14.md (v1.37)
-**Firmware tested:** 1.1.2 → 1.1.4 (changed mid-campaign, see §4)
-**Commit:** af5d319
+**FSD Reference:** RLC_Functional_Specification_v1_14.md (v1.40)
+**Firmware tested:** 1.1.2 → 1.1.6 (changed mid-campaign, see §4 and §7)
+**Commit:** c543548
 **Scope:** FSD §15.2 arming tests T-A01…T-A18, on target, both units
 
 ---
 
 ## Executive Summary
 
-**14 PASS, 0 FAIL, 2 not runnable as written, 2 deferred to a fault-injection
-harness.** The three new continuity-loss disarm tests (T-A16/17/18) added with
+**18 PASS / 0 FAIL / 2 N/A** (T-A05 and T-A15 not runnable as written; the
+deferred T-A11/T-A13 — and later T-A19/T-A20 — were closed via the
+fault-injection harness, §5 and §7). The three new continuity-loss disarm
+tests (T-A16/17/18) added with
 bug #29 all pass, including the regression guard that a *non-armed* channel
 going OPEN must not disarm.
 
