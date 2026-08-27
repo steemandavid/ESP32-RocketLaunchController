@@ -37,6 +37,18 @@ int base_fsm_start(void);
  */
 QueueHandle_t base_fsm_get_queue(void);
 
+#if CONFIG_RLC_FAULT_INJECTION
+/**
+ * TEST ONLY (T-S07): make the FSM task spin without feeding the watchdog.
+ *
+ * Set from the injection console. The spin happens in the FSM task because
+ * that is the task the TWDT actually covers — spinning anywhere else would
+ * prove nothing about watchdog coverage of the safety state machine. Expect a
+ * reboot within WATCHDOG_TIMEOUT_S, and all relays de-energised afterwards.
+ */
+void base_fsm_inject_wdt_hang(void);
+#endif
+
 /**
  * Get the state machine task handle (for fire timer notifications).
  */

@@ -132,6 +132,42 @@ rlc_link_state_t rlc_link_get_state(void);
  */
 int64_t rlc_link_ms_since_contact(void);
 
+#if CONFIG_RLC_FAULT_INJECTION || CONFIG_RLC_REMOTE_FAULT_INJECTION
+/* ── Test-only hooks (TEST BUILDS ONLY) ────────────────────────────
+ *
+ * These live here rather than in either unit's fault-injection module because
+ * the state they manipulate is inside the link layer, and reaching into it
+ * from rlc_base/rlc_remote would invert the dependency. Compiled out entirely
+ * unless one of the injection options is set.
+ */
+
+/**
+ * Force rlc_link_is_healthy() to report a degraded link (T-S15, T-S16).
+ *
+ * The real condition is >30% loss across a 10-sample ping window, which RF
+ * shielding can only produce approximately and cannot time. T-S16 needs the
+ * degradation to land inside the 5 s pre-fire countdown, so it has to be
+ * armable in advance rather than induced by hand.
+ */
+void rlc_link_force_degraded(bool on);
+
+/**
+ * Send one LINK_REQUEST immediately, whatever the current link state (T-S09).
+ *
+ * tick_remote() only sends LINK_REQUEST in LINKING or LOST, so a linked remote
+ * never emits one — and rebooting it to force the issue takes ~1.9 s, by which
+ * time the base has already hit link loss at 1.5 s and disarmed. There is no
+ * way to test the base's app-state guard without this.
+ */
+void rlc_link_force_link_request(void);
+
+/**
+ * Corrupt one byte of the next outgoing frame, after its CRC is computed
+ * (T-S05), so the peer's integrity check rejects it. One-shot.
+ */
+void rlc_link_corrupt_next_tx(void);
+#endif
+
 /**
  * Number of fire channels the base reported in LINK_ACK (FSD §8.2.2).
  * Remote side only; returns this build's NUM_CHANNELS until a handshake has

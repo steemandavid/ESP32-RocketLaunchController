@@ -95,6 +95,13 @@ static int64_t           s_last_contact_ms = 0;
 static uint8_t           s_peer_num_channels = NUM_CHANNELS;
 static uint16_t          s_missed_pings = 0;
 
+#if CONFIG_RLC_FAULT_INJECTION || CONFIG_RLC_REMOTE_FAULT_INJECTION
+/* Test-only injection state — see rlc_link.h. volatile: written by a console
+ * task, read by the link task. */
+static volatile bool     s_force_degraded  = false;
+static volatile bool     s_corrupt_next_tx = false;
+#endif
+
 /* LINK_REQUEST retry counter (remote). */
 static uint16_t          s_linkreq_attempts = 0;
 
@@ -1256,6 +1263,20 @@ int rlc_link_send_cmd(uint8_t msg_type, uint32_t seq, const void *payload, uint1
     int len = rlc_msg_build(buf, msg_type, seq, token, payload, payload_len);
     if (len <= 0) return -1;
 
+#if CONFIG_RLC_FAULT_INJECTION || CONFIG_RLC_REMOTE_FAULT_INJECTION
+    /* T-S05: flip one payload bit AFTER rlc_msg_build() has computed the
+     * integrity CRC, so the frame is well-formed but its CRC no longer matches
+     * and the peer must reject it (App D.3 -> NACK 0x06). Applied to a command
+     * rather than a status frame on purpose: the command path is the one with
+     * a guard worth testing, and a silent drop there was CM-02's finding. */
+    if (s_corrupt_next_tx) {
+        s_corrupt_next_tx = false;
+        buf[len - 1] ^= 0x01;
+        ESP_LOGE(TAG, "INJECT: corrupted outgoing msg_type=0x%02X seq=%lu",
+                 msg_type, (unsigned long)seq);
+    }
+#endif
+
     return rlc_espnow_send(s_peer_mac, buf, len);
 }
 
@@ -1289,6 +1310,9 @@ uint32_t rlc_link_next_seq(void)
 
 bool rlc_link_is_healthy(void)
 {
+#if CONFIG_RLC_FAULT_INJECTION || CONFIG_RLC_REMOTE_FAULT_INJECTION
+    if (s_force_degraded) return false;
+#endif
     /* Compute degraded status from window. */
     lock();
     int fails = 0;
@@ -1301,3 +1325,20 @@ bool rlc_link_is_healthy(void)
     if (count < HEARTBEAT_WINDOW_SIZE) return true;  /* Not enough data yet */
     return (fails * 100 / count) <= 30;
 }
+
+#if CONFIG_RLC_FAULT_INJECTION || CONFIG_RLC_REMOTE_FAULT_INJECTION
+void rlc_link_force_degraded(bool on)
+{
+    s_force_degraded = on;
+}
+
+void rlc_link_force_link_request(void)
+{
+    send_link_request();
+}
+
+void rlc_link_corrupt_next_tx(void)
+{
+    s_corrupt_next_tx = true;
+}
+#endif

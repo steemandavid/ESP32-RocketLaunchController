@@ -66,6 +66,15 @@ static QueueHandle_t s_evt_queue = NULL;
 static TaskHandle_t  s_fsm_task = NULL;
 
 /* Forward declarations */
+#if CONFIG_RLC_FAULT_INJECTION
+static volatile bool s_inject_wdt_hang = false;
+
+void base_fsm_inject_wdt_hang(void)
+{
+    s_inject_wdt_hang = true;
+}
+#endif
+
 static void base_fsm_task(void *arg);
 static void send_ack(uint8_t msg_type, uint32_t seq_num, uint8_t channel);
 static void send_nack(uint8_t msg_type, uint32_t seq_num, uint8_t reason);
@@ -1017,6 +1026,13 @@ static void base_fsm_task(void *arg)
         /* Check software timers */
         check_timers();
 
+#if CONFIG_RLC_FAULT_INJECTION
+        if (s_inject_wdt_hang) {
+            ESP_LOGE(TAG, "INJECT: hanging FSM task — watchdog should reboot "
+                          "within %d s (T-S07)", WATCHDOG_TIMEOUT_S);
+            for (;;) { /* deliberately never feeds the TWDT */ }
+        }
+#endif
         esp_task_wdt_reset();
     }
 }

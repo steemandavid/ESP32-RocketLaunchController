@@ -3617,6 +3617,32 @@ confident arm is least welcome.
 **Still not fired into a real igniter.** A lamp does not burn through, so T-S19
 and the green `OPEN - LIKELY FIRED` path remain unverified.
 
+### Fault-Injection Keys for T-S05/S07/S09/S15/S16 (2026-08-27)
+
+Five §15.4 tests were unreachable from outside the firmware. Keys added to the
+two consoles; **all guarded by the existing Kconfig options, so the stock
+binaries are unchanged** and no version bump was warranted.
+
+| Key | Console | Test | Why it cannot be induced otherwise |
+|---|---|---|---|
+| `g` | base | T-S15, T-S16 | Forces `rlc_link_is_healthy()` false. The real condition is >30% loss over a 10-sample ping window; RF shielding produces that only approximately and **cannot time it**, and T-S16 needs the degradation to land inside the 5 s pre-fire countdown |
+| `x` | base | T-S07 | Hangs the **FSM task** without feeding the TWDT. Deliberately that task, because it is the one the watchdog covers — spinning anywhere else would prove nothing about coverage of the safety state machine |
+| `c` | base | T-S05 | Flips one bit of the next outgoing command *after* `rlc_msg_build()` computes its integrity CRC, so the frame is well-formed but must be rejected (App D.3 → NACK `0x06`) |
+| `l` | remote | T-S09 | Sends a LINK_REQUEST while linked. `tick_remote()` only sends one in LINKING or LOST, and rebooting to force the issue takes ~1.9 s — by which time the base has hit link loss at 1.5 s and disarmed |
+
+**The shared hooks live in `rlc_common/rlc_link.c`, not in either unit's
+injection module.** The state they manipulate is inside the link layer, and
+reaching into it from `rlc_base`/`rlc_remote` would invert the dependency.
+Guarded by `CONFIG_RLC_FAULT_INJECTION || CONFIG_RLC_REMOTE_FAULT_INJECTION`.
+
+**T-S05 corrupts a command rather than a status frame** on purpose: the command
+path is the one with a guard worth testing, and silently dropping a bad command
+was CM-02's finding in the 1.1.9 review.
+
+Not yet run — the keys are the deliverable here. T-S15/S16 and T-S09 need an
+operator to arm; T-S07 reboots the base by design and its second criterion (all
+relays de-energised after the reboot) is the half that matters.
+
 ### Phase 5 FSD Safety Tests (§15.4)
 
 | ID | Test | Status |

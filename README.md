@@ -108,7 +108,10 @@ emits a malformed ACK, and the remote's own ERROR guard normally stops an ARM
 ever reaching a base in ERROR. Console keys: `s` withholds STATUS_UPDATE while
 heartbeats keep flowing (T-A11), `a` corrupts the channel of one ARM ACK
 (T-A13), `e` forces the base into ERROR while STATUS_UPDATE keeps reporting
-IDLE so an ARM still reaches it (T-A19), `?` prints state.
+IDLE so an ARM still reaches it (T-A19), `w` reports a welded arm relay,
+`g` forces a degraded link (T-S15/T-S16), `x` hangs the FSM task to trip the
+watchdog (T-S07), `c` corrupts the next outgoing command (T-S05), `?` prints
+state.
 
 **This firmware deliberately lies to the remote and is not safe for live use.**
 It announces itself four ways — a compile `#warning`, a boot banner, a
@@ -118,7 +121,8 @@ a later normal build. Reflash with plain `./build_base.sh flash` afterwards.
 
 `./build_remote.sh --inject` is the remote-side counterpart
 (`CONFIG_RLC_REMOTE_FAULT_INJECTION`), with the same safeguards. Keys: `d`
-posts a display fault, `b` a critical battery. Both latch the remote's terminal
+posts a display fault, `b` a critical battery, `l` forces a LINK_REQUEST
+while linked (T-S09). Both latch the remote's terminal
 ERROR, which is the only way to reach the `REMOTE FAULT` status-band state —
 it is latched by four conditions, none of them producible from the base or from
 the air, and reaching them for real means pulling the display flex or

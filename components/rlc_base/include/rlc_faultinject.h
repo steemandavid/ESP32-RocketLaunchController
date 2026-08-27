@@ -33,6 +33,15 @@
  *   w   toggle a reported ERR_RELAY_FAULT (welded arm relay). Needs the arm
  *       sense HIGH with the FSM outside the firing path, which cannot be
  *       produced without jumpering GPIO 21 on a live base
+ *   g   toggle a forced degraded link (T-S15, T-S16). The real condition is
+ *       >30% loss over a 10-sample ping window, which RF shielding produces
+ *       only approximately and cannot time — and T-S16 needs it to land inside
+ *       the 5 s pre-fire countdown
+ *   x   hang the FSM task without feeding the watchdog (T-S07). The spin is in
+ *       the FSM task because that is the task the TWDT covers; spinning
+ *       anywhere else would prove nothing about coverage of the state machine
+ *   c   corrupt one bit of the next outgoing command, after its integrity CRC
+ *       is computed (T-S05), so the peer must reject it
  *   ?   print current injection state
  */
 

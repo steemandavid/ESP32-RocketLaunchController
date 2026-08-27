@@ -15,6 +15,7 @@
 #include "rlc_base_fsm.h"
 #include "rlc_status_update.h"
 #include "rlc_fsm_events.h"
+#include "rlc_link.h"
 
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
@@ -36,6 +37,7 @@ static volatile bool    s_suppress_status = false;
 static volatile bool    s_lie_state       = false;
 static volatile bool    s_wrong_ch_armed  = false;
 static volatile bool    s_relay_fault     = false;
+static volatile bool    s_degraded        = false;
 static volatile uint8_t s_wrong_ch_last   = 0;
 
 bool fault_inject_suppress_status(void)
@@ -82,8 +84,11 @@ static void print_state(void)
              s_wrong_ch_armed  ? "ARMED - fires on the next ARM ACK"         : "off");
     ESP_LOGW(TAG, "[FI] reported ERR_RELAY_FAULT   : %s",
              s_relay_fault ? "ON" : "off");
+    ESP_LOGW(TAG, "[FI] forced link degraded      : %s",
+             s_degraded ? "ON" : "off");
     ESP_LOGW(TAG, "[FI] keys: s = suppression, a = wrong-channel, "
-                  "e = force ERROR w/ fresh cache, ? = this");
+                  "e = force ERROR w/ fresh cache, w = weld, g = degraded link, "
+                  "x = watchdog hang, c = corrupt next cmd, ? = this");
 }
 
 static void fi_console_task(void *arg)
@@ -136,6 +141,23 @@ static void fi_console_task(void *arg)
             ESP_LOGE(TAG, "INJECT: base forced to ERROR; STATUS_UPDATE keeps "
                           "reporting IDLE so the remote will still send ARM "
                           "-> NACK 0x0E. No time limit.");
+            break;
+        case 'g':
+            s_degraded = !s_degraded;
+            rlc_link_force_degraded(s_degraded);
+            ESP_LOGE(TAG, "INJECT: forced ERR_COMM_DEGRADED %s (T-S15/T-S16)",
+                     s_degraded ? "ON" : "off");
+            print_state();
+            break;
+        case 'x':
+            ESP_LOGE(TAG, "INJECT: hanging the FSM task (T-S07) — expect a "
+                          "watchdog reboot, then check the relays are safe");
+            base_fsm_inject_wdt_hang();
+            break;
+        case 'c':
+            rlc_link_corrupt_next_tx();
+            ESP_LOGE(TAG, "INJECT: next outgoing command will be corrupted "
+                          "(T-S05)");
             break;
         case 'w':
             s_relay_fault = !s_relay_fault;

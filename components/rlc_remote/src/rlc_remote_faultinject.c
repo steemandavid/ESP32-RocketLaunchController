@@ -13,6 +13,7 @@
 
 #include "rlc_remote_fsm.h"
 #include "rlc_fsm_events.h"
+#include "rlc_link.h"
 
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
@@ -27,7 +28,7 @@ static const char *TAG = "rlc_rfi";
 static void print_state(void)
 {
     ESP_LOGW(TAG, "[RFI] keys: d = DISPLAY FAULT, b = BATTERY CRITICAL, "
-                  "? = this");
+                  "l = force LINK_REQUEST, ? = this");
     ESP_LOGW(TAG, "[RFI] both latch a terminal ERROR — power cycle to clear");
 }
 
@@ -68,6 +69,15 @@ static void rfi_console_task(void *arg)
             /* Terminal battery path. Reaching it for real needs a bench
              * supply taking the pack below REMOTE_VBAT_CRITICAL_MV. */
             post_event(EVT_BATTERY_CRITICAL, "EVT_BATTERY_CRITICAL (-> ERROR)");
+            break;
+        case 'l':
+            /* T-S09: tick_remote() only sends LINK_REQUEST in LINKING or LOST,
+             * so a linked remote never emits one — and rebooting to force the
+             * issue takes ~1.9 s, by which time the base has hit link loss at
+             * 1.5 s and disarmed. This is the only way to put a LINK_REQUEST
+             * in front of the base's app-state guard while it is still ARMED. */
+            ESP_LOGE(TAG, "INJECT: forcing a LINK_REQUEST while linked (T-S09)");
+            rlc_link_force_link_request();
             break;
         case '?':
             print_state();
