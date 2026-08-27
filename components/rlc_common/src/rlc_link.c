@@ -283,11 +283,11 @@ static void send_link_request(void)
     }
 }
 
-static void send_link_ack(void)
+static void send_link_ack_with_token(uint32_t token)
 {
     uint8_t buf[RLC_MSG_MAX_SIZE];
     rlc_payload_link_ack_t p = {0};
-    p.session_token = s_session_token;
+    p.session_token = token;
     p.base_firmware_version[0] = RLC_VERSION_MAJOR;
     p.base_firmware_version[1] = RLC_VERSION_MINOR;
     p.base_firmware_version[2] = RLC_VERSION_PATCH;
@@ -296,8 +296,13 @@ static void send_link_ack(void)
     int len = rlc_msg_build(buf, MSG_LINK_ACK, 0, 0, &p, sizeof(p));
     if (len > 0) {
         rlc_espnow_send(s_peer_mac, buf, len);
-        ESP_LOGI(TAG, "LINK_ACK sent, token=0x%08lx", (unsigned long)s_session_token);
+        ESP_LOGI(TAG, "LINK_ACK sent, token=0x%08lx", (unsigned long)token);
     }
+}
+
+static void send_link_ack(void)
+{
+    send_link_ack_with_token(s_session_token);
 }
 
 /**
@@ -490,6 +495,23 @@ static void handle_link_request(const uint8_t *payload, uint16_t plen)
                  req->remote_firmware_version[2],
                  RLC_VERSION_MAJOR, RLC_VERSION_MINOR, RLC_VERSION_PATCH);
         send_link_reject(LINK_REJECT_VERSION_MISMATCH);
+
+        /* And a LINK_ACK carrying our version, with the session token zeroed.
+         *
+         * A remote on older firmware has no LINK_REJECT handler — an unknown
+         * message type falls straight through the dispatch switch — but it has
+         * always had its own version check in handle_link_ack(). This is the
+         * only route by which such a remote can learn why it cannot link,
+         * rather than retrying forever behind a frozen splash. A mismatch
+         * means one unit is on old firmware, so covering that direction is the
+         * whole point.
+         *
+         * No reset_session(), no LINKED: the base's own lock-out is unchanged
+         * and no session is created. The token is zeroed because there is no
+         * session to hand out, and every version of handle_link_ack() checks
+         * the version before it touches the token. */
+        send_link_ack_with_token(0);
+
         set_state(RLC_LINK_STATE_VERSION_MISMATCH);
         return;
     }

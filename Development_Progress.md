@@ -1253,10 +1253,29 @@ blind retries before.
 transient, and locking the remote out until a power cycle would be worse than
 the silence it replaces.
 
-**Known limitation:** this needs *both* units on 1.1.17+. Against an older peer
-a mismatch still presents as a silent retry loop. Having the base send its
-LINK_ACK before the version check would also cover that direction, since the
-remote's own check predates the base-side one — not implemented.
+**Old remotes covered too (fw 1.1.18).** 1.1.17's LINK_REJECT only helped once
+both units carried it: an older remote has no handler for message type 0x03 and
+drops it at the dispatch switch's `default` case. Since a version mismatch means
+one unit *is* on older firmware, that left the very case it was written for
+uncovered. On a mismatch the base now also sends a **LINK_ACK carrying its
+version, with the session token zeroed** — every version of `handle_link_ack()`
+has checked the peer version before touching anything else, so an old remote
+latches VERSION_MISMATCH from that. No `reset_session()`, no LINKED: the base's
+lock-out is unchanged and no session is created. Both frames go out; whichever
+lands first wins, and the dispatch guard on VERSION_MISMATCH drops the second.
+
+Verified by building a **simulated pre-1.1.17 remote** — `MSG_LINK_REJECT` case
+deleted from the dispatch, version forced to 1.1.91 — against a 1.1.18 base:
+
+```
+1907  LINK_REQUEST sent (attempt 1)
+1917  FW MISMATCH: base 1.1.18 / remote 1.1.91     <- handle_link_ack(), not
+1927  link state 1 -> 5  (VERSION_MISMATCH)           handle_link_reject()
+```
+
+The log line proves which path fired: that message belongs to
+`handle_link_ack()`, so the detection came through the ACK, exactly as the
+fallback intends.
 
 ### Remote Fault-Injection Harness (2026-08-27)
 

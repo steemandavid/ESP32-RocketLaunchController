@@ -7,7 +7,24 @@
 
 #pragma once
 
-/* 1.1.17 (2026-08-27): the base says WHY it refused a handshake.
+/* 1.1.18 (2026-08-27): a mismatch also reaches a remote on OLD firmware.
+ *
+ * 1.1.17's LINK_REJECT only helps once both units carry it: an older remote
+ * has no handler for message type 0x03 and drops it at the dispatch switch's
+ * default case. Since a version mismatch means one unit IS on older firmware,
+ * that left the case it was written for uncovered.
+ *
+ * On a mismatch the base now also sends a LINK_ACK carrying its version, with
+ * the session token zeroed. Every version of handle_link_ack() has checked the
+ * peer version before touching anything else, so an old remote latches
+ * VERSION_MISMATCH and shows the §10.2.1 screen from that. No reset_session(),
+ * no LINKED — the base's own lock-out is unchanged and no session is created.
+ *
+ * Both frames go out: new remotes latch on the REJECT (its log names the
+ * reason), old ones on the ACK. Whichever lands first wins; the dispatch guard
+ * on VERSION_MISMATCH drops the second.
+ *
+ * 1.1.17 (2026-08-27): the base says WHY it refused a handshake.
  *
  * PROTOCOL CHANGE — new MSG_LINK_REJECT (0x03). Both units must be flashed
  * together, which the strict version check already enforces.
@@ -281,5 +298,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  17
-#define RLC_VERSION_STRING "1.1.17"
+#define RLC_VERSION_PATCH  18
+#define RLC_VERSION_STRING "1.1.18"
