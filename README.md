@@ -110,6 +110,14 @@ flash-time warning, and a build failure if the option did not reach the built
 config — and `sdkconfig.base` is never modified, so the option cannot leak into
 a later normal build. Reflash with plain `./build_base.sh flash` afterwards.
 
+`./build_remote.sh --inject` is the remote-side counterpart
+(`CONFIG_RLC_REMOTE_FAULT_INJECTION`), with the same safeguards. Keys: `d`
+posts a display fault, `b` a critical battery. Both latch the remote's terminal
+ERROR, which is the only way to reach the `REMOTE FAULT` status-band state —
+it is latched by four conditions, none of them producible from the base or from
+the air, and reaching them for real means pulling the display flex or
+flattening the pack.
+
 ```
 
 ./tests/host/run.sh             # host-compiled unit tests, no hardware needed
@@ -165,6 +173,32 @@ distinct shapes as well as colours, so the grid stays readable regardless of
 colour vision. No text is drawn smaller than 12×16 px per character — anything
 smaller proved unreadable at arm's length in the field.
 
+Across the bottom of **every** screen runs a **system status band**, a coloured
+field reporting the state of the fire path so it is legible from across a
+launch site without reading anything:
+
+| Band | Meaning |
+|---|---|
+| Green `SAFE` | Base safe and remote arm switch off — positively confirmed |
+| Yellow `BASE KEY ARMED` / `REMOTE ARMED` | One key turned; the arming sequence cannot proceed |
+| Orange `READY TO ARM` | Both keys turned — one long-press from a live relay |
+| Red `ARM RELAY LIVE` | Arm relay engaged, VBAT on the fire path |
+| Flashing red/amber `RELAY WELDED` | Contacts closed when they should not be |
+| Red `BASE FAULT` / `REMOTE FAULT` | A unit has faulted and cannot be trusted |
+| Grey `STATUS UNKNOWN` | Not known — link down, stale, or before the first report |
+
+Grey rather than green whenever the state is unknown: green is a positive claim
+that the pad is safe to approach, so it must never appear on a dead link. One
+key and two keys are separated because that is the only step in the sequence
+where the risk actually changes. The band names its state in words as well as
+colour, for the same reason the continuity grid pairs colour with shapes — and
+because two hues that looked well separated in the source proved
+indistinguishable on the actual panel.
+
+It occupies the area that already held the status and instruction lines, so the
+channel grid is untouched: that grid fills the panel width exactly, and a border
+would have had to shrink the cells.
+
 Both units carry an 8-pixel NeoPixel strip, one pixel per igniter channel,
 showing the same continuity colours as the remote's grid: all three resolve
 them from the `RLC_COLOR_CONT_*` constants in `rlc_config.h`, written as HTML
@@ -189,7 +223,7 @@ so the "pad is live" signal is never diluted into a data display.
 | 1 | Foundation and communication | Complete |
 | 2 | Input/output and debouncing | Complete |
 | 3 | State machines and command processing | Code complete |
-| 4 | Display | Verified on target 2026-08-27 — 9/9 pass |
+| 4 | Display | Verified on target 2026-08-27 — 9/9 pass; status band added and its 7 states verified |
 | 5 | Hardening and final testing | Not started |
 
 Known open items before any field use:

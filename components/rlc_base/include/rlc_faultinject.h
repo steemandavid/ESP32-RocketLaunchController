@@ -30,6 +30,9 @@
  *   e   force ERROR while leaving the remote's cached status fresh and
  *       healthy — the only way to reach the NACK_BASE_ERROR (0x0E) path,
  *       since the remote's local guard otherwise refuses to send the command
+ *   w   toggle a reported ERR_RELAY_FAULT (welded arm relay). Needs the arm
+ *       sense HIGH with the FSM outside the firing path, which cannot be
+ *       produced without jumpering GPIO 21 on a live base
  *   ?   print current injection state
  */
 
@@ -69,11 +72,18 @@ bool fault_inject_take_wrong_channel(uint8_t *ch);
  */
 bool fault_inject_lie_state(void);
 
+/**
+ * True while STATUS_UPDATE should report ERR_RELAY_FAULT, so the remote sees a
+ * welded arm relay (BASE_ARM_WELD) without the hardware being in that state.
+ */
+bool fault_inject_relay_fault(void);
+
 #else  /* injection compiled out — these fold to nothing */
 
 static inline void fault_inject_init(void) { }
 static inline bool fault_inject_suppress_status(void) { return false; }
 static inline bool fault_inject_take_wrong_channel(uint8_t *ch) { (void)ch; return false; }
 static inline bool fault_inject_lie_state(void) { return false; }
+static inline bool fault_inject_relay_fault(void) { return false; }
 
 #endif /* CONFIG_RLC_FAULT_INJECTION */

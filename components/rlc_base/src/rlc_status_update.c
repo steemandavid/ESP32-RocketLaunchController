@@ -80,6 +80,14 @@ static void send_update(void)
     /* Error flags from the FSM */
     p.error_flags = base_state_get_error_flags();
 
+    /* Test builds only: report a welded arm relay. The condition needs the arm
+     * sense HIGH while the FSM is not in a firing-path state, which cannot be
+     * produced from outside the firmware without jumpering GPIO 21 on a live
+     * base. Compiles to nothing in a normal build. */
+    if (fault_inject_relay_fault()) {
+        p.error_flags |= ERR_RELAY_FAULT;
+    }
+
     /* CI-02 / FSD §13.1 bit 0: ERR_VBAT_LOW. The FSM never raises this — it
      * only ever latches ERR_VBAT_CRITICAL, which is terminal — so the bit was
      * dead and the remote could not show a base "VBAT LOW" warning at all.

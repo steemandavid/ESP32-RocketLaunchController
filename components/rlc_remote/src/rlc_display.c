@@ -98,6 +98,15 @@ static const char *TAG = "rlc_disp";
 #define C_ARMED_BG   0xB40000   /* red    — armed channel background */
 #define C_AMBER      0xFFA000
 #define C_GREEN      0x00C000
+#define C_BAND_UNKNOWN 0x505050 /* grey   — status band, state not known */
+/* One-key yellow and both-keys orange are pushed to the extremes of what the
+ * panel can put between red and green: 100% green against 31%. The first
+ * attempt used C_WARN (0xFFDC00, 87% green) against 0xFF6000 (38%), which is
+ * a clear separation on paper and was indistinguishable on the actual glass —
+ * both read as orange. Dedicated constants rather than reusing C_WARN, so
+ * tuning the band cannot drag the warning-text colour along with it. */
+#define C_BAND_ONEKEY  0xFFFF00 /* yellow — status band, one key turned */
+#define C_BAND_READY   0xFF5000 /* orange — status band, both keys turned */
 
 #define R8(c)  (uint8_t)(((c) >> 16) & 0xFF)
 #define G8(c)  (uint8_t)(((c) >>  8) & 0xFF)
@@ -386,11 +395,26 @@ static void draw_text_centred(int y, const char *s, int scale, uint32_t fg)
     draw_text((DW - text_width(s, scale)) / 2, y, s, scale, fg);
 }
 
+/* Centred text over a cleared background spanning [x, x+w).
+ *
+ * The bounds are explicit because this fill used to span the full panel width
+ * unconditionally, which punched a notch through the left and right edges of
+ * whatever frame the text sat inside. Every refresh of a value did it, so the
+ * LINK LOST amber border and the ARMED / FIRING / FIRE COMPLETE box outlines
+ * visibly broke wherever a live field crossed them. Callers pass the interior
+ * of whatever encloses them; text is centred within that span, not the panel. */
+static void draw_text_centred_bg_in(int x, int w, int y, const char *s,
+                                    int scale, uint32_t fg, uint32_t bg)
+{
+    fill_rect(x, y, w, CHAR_H(scale), bg);
+    draw_text(x + (w - text_width(s, scale)) / 2, y, s, scale, fg);
+}
+
+/* Full-panel-width variant, for text that is not inside a frame. */
 static void draw_text_centred_bg(int y, const char *s, int scale,
                                  uint32_t fg, uint32_t bg)
 {
-    fill_rect(0, y, DW, CHAR_H(scale), bg);
-    draw_text((DW - text_width(s, scale)) / 2, y, s, scale, fg);
+    draw_text_centred_bg_in(0, DW, y, s, scale, fg, bg);
 }
 
 /* Field of fixed width, cleared then written (avoids ghosting when the
@@ -572,6 +596,7 @@ typedef struct {
     rlc_link_status_t           link;
     uint16_t                    vbat_mv;
     bool                        remote_key_armed;
+    bool                        remote_error_latched;   /* set by the frame loop */
     rlc_payload_status_update_t status;
     bool                        status_fresh;
     uint32_t                    prefire_remain_ms;
@@ -608,15 +633,229 @@ static const char *base_arm_label(base_arm_state_t s)
     }
 }
 
-static uint32_t base_arm_colour(base_arm_state_t s, bool blink_on)
+/* base_arm_colour() lived here and colour-coded the BASE field on the main
+ * screen (green/amber/red, flashing on WELD). The status band now carries that
+ * mapping across the whole bottom of every screen, so the per-field colour was
+ * a quieter duplicate of it — and on a saturated band it would have been the
+ * less legible of the two. The words in the field still name the state; see
+ * sys_status_colour(). */
+
+/* ── System status band ───────────────────────────────────────────
+ *
+ * A coloured field across the bottom of every screen, so the state of the
+ * fire path is legible at a glance from across a launch site without reading
+ * anything. It occupies the area that already held the status and instruction
+ * lines, which keeps the channel grid untouched — that grid fills the panel
+ * width exactly (see the _Static_assert below) and has no room to give.
+ *
+ *   GREEN   base SAFE and remote arm switch off — positively confirmed safe
+ *   YELLOW  one key turned — the arming sequence cannot proceed
+ *   ORANGE  both keys turned — one long-press from a live relay
+ *   RED     arm relay engaged — VBAT is live on the fire path
+ *   GREY    not known
+ *
+ * Yellow and orange are separated deliberately. One key turned is a state the
+ * hardware will not act on; both turned is one operator action away from
+ * energising the igniter circuit. Collapsing them into a single amber would
+ * hide the only transition in the sequence where the risk actually changes.
+ *
+ * Grey rather than green whenever the state is not known, following the
+ * §10.2.2 rule that unknown is never displayed as SAFE. Green here is a
+ * positive claim that the pad is safe to approach, so it must never appear
+ * on a dead link or before the first STATUS_UPDATE.
+ *
+ * A welded relay flashes red/amber: the fire path is live when it should not
+ * be, which is worse than a normal ARM and is the one case worth making
+ * impossible to ignore.
+ */
+
+/* 252, not 248: the ARMED / FIRING / FIRE COMPLETE box spans y 70..249, and a
+ * band starting at 248 would paint over the bottom two rows of its outline.
+ * Pinned by a _Static_assert where BOX_H is defined. */
+#define BAND_Y  252
+
+typedef enum {
+    SYS_UNKNOWN = 0,
+    SYS_SAFE,
+    SYS_KEY_BASE,       /* base key only   — sequence cannot proceed */
+    SYS_KEY_REMOTE,     /* remote arm only — sequence cannot proceed */
+    SYS_KEY_BOTH,       /* both            — one long-press from a live relay */
+    SYS_BASE_FAULT,
+    SYS_REMOTE_FAULT,
+    SYS_RELAY_LIVE,
+    SYS_WELD,
+} sys_status_t;
+
+/* A weld must persist before it is believed.
+ *
+ * On a normal ARMED -> IDLE disarm the base reports base_state = IDLE before
+ * base_arm_sense has fallen — the relay takes time to release, and the sense
+ * is debounced on top of that. rlc_base_arm_state() then sees the sense HIGH
+ * with the FSM outside the firing path, which is precisely its weld condition,
+ * and returns BASE_ARM_WELD. Measured on target at 180 ms and 220 ms across
+ * two ordinary disarms.
+ *
+ * Left alone that flashes the loudest warning the display has, twice a
+ * session, during routine operation — which teaches the operator that it means
+ * nothing. 500 ms still reports a genuine weld far sooner than the base's own
+ * confirm count, which is what the early check in rlc_arm_state.h exists to
+ * beat, so the trade costs little of its purpose.
+ *
+ * The hysteresis lives here rather than in rlc_base_arm_state(): that function
+ * is a pure function of one snapshot, is shared with the base, and is compiled
+ * directly into the host tests (T-M01..T-M07). Keeping it stateless is worth
+ * more than the convenience of putting the timer inside it. */
+#define WELD_CONFIRM_MS 500
+
+/* Base arm state with the link gate and the weld hysteresis applied. Every
+ * caller should use this rather than rlc_base_arm_state() directly. */
+static base_arm_state_t base_arm_state_settled(const disp_data_t *d)
+{
+    /* Link state gates everything, and does so BEFORE the staleness window.
+     *
+     * Link loss is declared at 1500 ms; a STATUS_UPDATE is only considered
+     * stale after 4000 ms (2 x STATUS_UPDATE_INTERVAL_MS). Keying off
+     * freshness alone therefore left a 2.5 s window in which the base could be
+     * switched off, the LINK LOST screen up, and the display still showing the
+     * last state received before the power was cut. Observed on target. The
+     * link being down is itself proof that the base state is not known,
+     * whatever the age of the last packet says. */
+    bool linked = (d->link.state == RLC_LINK_STATE_LINKED);
+    base_arm_state_t bs = rlc_base_arm_state(&d->status, d->status_fresh && linked);
+
+    static int64_t weld_since_ms = 0;
+    if (bs == BASE_ARM_WELD) {
+        int64_t now = now_ms();
+        if (weld_since_ms == 0) weld_since_ms = now;
+        if (now - weld_since_ms < WELD_CONFIRM_MS) {
+            /* Not believed yet — but the arm sense IS high, so the fire path
+             * may well be live. Report ARMED, never anything safer: during a
+             * disarm that is the literal truth (the relay is still releasing),
+             * and during a real weld it is the conservative reading. */
+            return BASE_ARM_ARMED;
+        }
+    } else {
+        weld_since_ms = 0;
+    }
+    return bs;
+}
+
+static sys_status_t system_status(const disp_data_t *d)
+{
+    base_arm_state_t bs = base_arm_state_settled(d);
+
+    /* Relay state first: it is the only signal that says whether the fire
+     * path is live, and it outranks both key switches and every fault. */
+    if (bs == BASE_ARM_WELD)  return SYS_WELD;
+    if (bs == BASE_ARM_ARMED) return SYS_RELAY_LIVE;
+
+    /* A faulted remote is not a trustworthy reporter of anything below. */
+    if (d->remote_error_latched) return SYS_REMOTE_FAULT;
+
+    if (bs == BASE_ARM_UNKNOWN) return SYS_UNKNOWN;
+
+    /* A base in ERROR, or reporting any error flag, gets the same red as a
+     * live relay. That is not dilution of the "pad is live" signal: a base
+     * that has faulted cannot be trusted to have reported its relay state
+     * accurately either, so treating it as possibly live is the honest
+     * reading rather than a cautious one. The word says which it is. */
+    if (d->status.error_flags != 0 || d->status.base_state == STATE_ERROR)
+        return SYS_BASE_FAULT;
+
+    /* One key or two is a real difference, not a shade of the same thing.
+     * With one turned the arming sequence cannot start at all — the base
+     * refuses without its key, and the remote will not send without its arm
+     * switch. With both turned, a single long-press closes the arm relay and
+     * puts VBAT on the fire path. That is the step change worth seeing from
+     * across a launch site, so the two states get separate colours. */
+    bool base_key   = (bs == BASE_ARM_READY);
+    bool remote_key = d->remote_key_armed;
+
+    if (base_key && remote_key) return SYS_KEY_BOTH;
+    if (base_key)               return SYS_KEY_BASE;
+    if (remote_key)             return SYS_KEY_REMOTE;
+    return SYS_SAFE;
+}
+
+static uint32_t sys_status_colour(sys_status_t s)
 {
     switch (s) {
-        case BASE_ARM_SAFE:  return C_GREEN;
-        case BASE_ARM_READY: return C_AMBER;
-        case BASE_ARM_ARMED: return C_FAULT;
-        case BASE_ARM_WELD:  return blink_on ? C_FAULT : C_WARN;  /* flashing */
-        default:             return C_GREY;
+        case SYS_SAFE:       return C_GREEN;
+        case SYS_KEY_BASE:   return C_BAND_ONEKEY; /* yellow */
+        case SYS_KEY_REMOTE: return C_BAND_ONEKEY; /* yellow */
+        case SYS_KEY_BOTH:   return C_BAND_READY;  /* orange, next to red */
+        case SYS_BASE_FAULT:
+        case SYS_REMOTE_FAULT:
+        case SYS_RELAY_LIVE: return C_ARMED_BG;
+        case SYS_WELD:       return (((now_ms() / 400) % 2) == 0)
+                                        ? C_ARMED_BG : C_AMBER;
+        default:             return C_BAND_UNKNOWN;
     }
+}
+
+static const char *sys_status_word(sys_status_t s)
+{
+    switch (s) {
+        case SYS_SAFE:       return "SAFE";
+        /* Name which key is turned: with only one, the useful information is
+         * which end still needs attention. */
+        case SYS_KEY_BASE:   return "BASE KEY ARMED";
+        case SYS_KEY_REMOTE: return "REMOTE ARMED";
+        /* Not "READY TO FIRE" — the next step arms the relay, it does not
+         * fire. Overstating it here would be the wrong kind of wrong. */
+        case SYS_KEY_BOTH:   return "READY TO ARM";
+        case SYS_BASE_FAULT:   return "BASE FAULT";
+        case SYS_REMOTE_FAULT: return "REMOTE FAULT";
+        case SYS_RELAY_LIVE: return "ARM RELAY LIVE";
+        case SYS_WELD:       return "RELAY WELDED";
+        default:             return "STATUS UNKNOWN";
+    }
+}
+
+/* Black or white, whichever reads on the given background (Rec. 601 luma).
+ * Text drawn on the band uses this rather than its own colour: the band
+ * already carries the state, and guaranteed contrast matters more here than
+ * a second colour code layered on top of a saturated field. */
+static uint32_t band_fg(uint32_t bg)
+{
+    unsigned luma = (299u * R8(bg) + 587u * G8(bg) + 114u * B8(bg)) / 1000u;
+    return (luma >= 110) ? C_BLACK : C_WHITE;
+}
+
+/* Band geometry. `inset` is the thickness of any full-screen frame the screen
+ * draws, so the band stops short of it instead of painting over it. */
+static inline int band_x(int inset) { return inset; }
+static inline int band_w(int inset) { return DW - 2 * inset; }
+static inline int band_h(int inset) { return DH - BAND_Y - inset; }
+
+/* Fill the band. `with_word` draws the status in words for screens that have
+ * no text of their own down there — colour alone is never the sole carrier of
+ * meaning in this UI, the same reason the continuity grid pairs colour with
+ * shapes. Returns the background colour so callers can draw onto it. */
+static uint32_t draw_status_band(const disp_data_t *d, int inset, bool with_word)
+{
+    sys_status_t s  = system_status(d);
+    uint32_t     bg = sys_status_colour(s);
+
+    /* One line per transition. This band is a safety indicator, and until now
+     * the only way to check it was to look at the panel — which is exactly how
+     * the green-while-the-base-is-off case survived. Logging the state makes
+     * it verifiable from a capture. WELD is excluded from the comparison
+     * because its colour alternates; the state itself does not. */
+    static sys_status_t s_last_logged = (sys_status_t)-1;
+    if (s != s_last_logged) {
+        s_last_logged = s;
+        ESP_LOGI(TAG, "status band -> %s", sys_status_word(s));
+    }
+
+    fill_rect(band_x(inset), BAND_Y, band_w(inset), band_h(inset), bg);
+
+    if (with_word) {
+        int y = BAND_Y + (band_h(inset) - CHAR_H(3)) / 2;
+        draw_text_centred_bg_in(band_x(inset), band_w(inset), y,
+                                sys_status_word(s), 3, band_fg(bg), bg);
+    }
+    return bg;
 }
 
 /* ── Screen: top status bar (shared by MAIN / ARMED / FIRING) ── */
@@ -798,21 +1037,33 @@ static void draw_main_dynamic(const disp_data_t *d)
     }
 
     /* Status area — base key switch, arm sense, remote key (FSD §10.2.2).
-     * Labels are abbreviated so the whole row fits at scale 2. */
+     * Labels are abbreviated so the whole row fits at scale 2.
+     *
+     * Both bottom rows sit on the system status band, so they are drawn onto
+     * its colour rather than black, and in the band's contrast colour rather
+     * than their own. The band already states the arm state louder than a
+     * coloured word can, and legibility on a saturated field wins over a
+     * second colour code. The words still say it for anyone who cannot rely
+     * on the hue. */
     char buf[64];
+    uint32_t bg = draw_status_band(d, 0, false);
+    uint32_t fg = band_fg(bg);
+
     int y = DH - 66;
     snprintf(buf, sizeof(buf), "SEL CH %u", d->selected);
-    draw_field(6, y, 8 * CHAR_W(2), buf, 2, C_SELECTED, C_BLACK);
+    draw_field(6, y, 8 * CHAR_W(2), buf, 2, fg, bg);
 
     /* BASE reflects the fire path, REMOTE the operator's own switch.
      * "SEL CH 1   BASE READY   REMOTE ARMED" is 36 of the 40 characters
      * available at the scale-2 font floor. */
-    base_arm_state_t bs = rlc_base_arm_state(&d->status, d->status_fresh);
-    bool weld_blink = ((now_ms() / 400) % 2) == 0;
+    /* Same settled state the band uses: this field showed the identical false
+     * WELD! flash on every disarm, and it also read SAFE on a dead link for as
+     * long as the last status stayed inside its freshness window. */
+    base_arm_state_t bs = base_arm_state_settled(d);
     snprintf(buf, sizeof(buf), "BASE %s   REMOTE %s",
              base_arm_label(bs),
              d->remote_key_armed ? "ARMED" : "SAFE");
-    draw_field(120, y, DW - 126, buf, 2, base_arm_colour(bs, weld_blink), C_BLACK);
+    draw_field(120, y, DW - 126, buf, 2, fg, bg);
 
     if (d->status_fresh && d->status.error_flags) {
         /* Name the fault rather than making the operator decode a bitmask.
@@ -829,13 +1080,29 @@ static void draw_main_dynamic(const disp_data_t *d)
             snprintf(buf, sizeof(buf), "BASE ERROR 0x%02X: %s",
                      ef, rlc_error_flag_str(ef));
         }
-        draw_text_centred_bg(DH - 30, buf, 2, C_FAULT, C_BLACK);
-    } else if (!d->remote_key_armed) {
-        snprintf(buf, sizeof(buf), "TURN ARM KEY TO ARM CH %u", d->selected);
-        draw_text_centred_bg(DH - 30, buf, 2, C_GREY, C_BLACK);
+        draw_text_centred_bg_in(0, DW, DH - 30, buf, 2, fg, bg);
     } else {
-        snprintf(buf, sizeof(buf), "HOLD ENCODER TO ARM CH %u", d->selected);
-        draw_text_centred_bg(DH - 30, buf, 2, C_WARN, C_BLACK);
+        /* Name the step that is actually outstanding. This used to test only
+         * the remote arm switch, so with the remote armed and the base key
+         * still in SAFE it read "HOLD ENCODER TO ARM CH n" — an instruction
+         * the base will refuse, because arming needs its key too. It now
+         * distinguishes all four combinations, which also gives the one-key
+         * and both-keys states a wording difference and not just a hue. */
+        switch (system_status(d)) {
+            case SYS_KEY_BOTH:
+                snprintf(buf, sizeof(buf), "HOLD ENCODER TO ARM CH %u", d->selected);
+                break;
+            case SYS_KEY_REMOTE:
+                snprintf(buf, sizeof(buf), "TURN BASE KEY TO ARM CH %u", d->selected);
+                break;
+            case SYS_KEY_BASE:
+                snprintf(buf, sizeof(buf), "%s", "FLIP REMOTE ARM SWITCH");
+                break;
+            default:
+                snprintf(buf, sizeof(buf), "TURN ARM KEY TO ARM CH %u", d->selected);
+                break;
+        }
+        draw_text_centred_bg_in(0, DW, DH - 30, buf, 2, fg, bg);
     }
 }
 
@@ -845,6 +1112,11 @@ static void draw_main_dynamic(const disp_data_t *d)
 #define BOX_Y   70
 #define BOX_W   360
 #define BOX_H   180
+
+/* The status band is painted after the box on these screens, so it must start
+ * below it or it silently eats rows off the bottom of the outline. */
+_Static_assert(BOX_Y + BOX_H <= BAND_Y,
+               "centre box overlaps the status band");
 
 static void draw_armed_static(void)
 {
@@ -877,8 +1149,9 @@ static void draw_armed_dynamic(const disp_data_t *d, bool blink_on)
     }
     snprintf(buf, sizeof(buf), "CONTINUITY %s",
              band_known ? continuity_label(band) : "?");
-    draw_text_centred_bg(BOX_Y + 112, buf, 2,
-                         band_known ? continuity_colour(band) : C_FAULT, C_BLACK);
+    draw_text_centred_bg_in(BOX_X + 6, BOX_W - 12, BOX_Y + 112, buf, 2,
+                            band_known ? continuity_colour(band) : C_FAULT,
+                            C_BLACK);
 
     draw_text_centred(BOX_Y + 140, "HOLD FIRE TO LAUNCH", 2, C_WHITE);
 
@@ -886,10 +1159,11 @@ static void draw_armed_dynamic(const disp_data_t *d, bool blink_on)
      * arm-relay confirmation the remote had never been sent. It now comes from
      * the real arm sense, so NOT CONFIRMED means the relay has not verified. */
     bool sense_ok = d->status_fresh && d->status.base_arm_sense;
-    snprintf(buf, sizeof(buf), "ARM SENSE %s   REMOTE %s",
+    snprintf(buf, sizeof(buf), "BASE ARM SENSE %s   REMOTE %s",
              sense_ok ? "OK" : (d->status_fresh ? "NOT OK" : "?"),
              d->remote_key_armed ? "ARMED" : "SAFE");
-    draw_text_centred_bg(DH - 26, buf, 2, sense_ok ? C_GREEN : C_FAULT, C_BLACK);
+    uint32_t bg = draw_status_band(d, 0, false);
+    draw_text_centred_bg_in(0, DW, DH - 26, buf, 2, band_fg(bg), bg);
 }
 
 /* ── Screen: PRE_FIRE / FIRING — FSD §10.2.4 ──────────────────── */
@@ -917,17 +1191,22 @@ static void draw_firing_dynamic(const disp_data_t *d, bool blink_on)
     draw_text_centred(BOX_Y + 28, buf, 4, C_WHITE);
 
     if (igniting) {
-        draw_text_centred_bg(BOX_Y + 92, "IGNITION ACTIVE", 3, C_WHITE, C_ARMED_BG);
+        draw_text_centred_bg_in(BOX_X + 8, BOX_W - 16, BOX_Y + 92,
+                                "IGNITION ACTIVE", 3, C_WHITE, C_ARMED_BG);
     } else {
         /* Pre-fire countdown, refreshed every 100 ms (FSD §10.3) */
         uint32_t ms = d->prefire_remain_ms;
         snprintf(buf, sizeof(buf), "PRE-FIRE %lu.%lus",
                  (unsigned long)(ms / 1000), (unsigned long)((ms % 1000) / 100));
-        draw_text_centred_bg(BOX_Y + 92, buf, 3, C_WARN, C_BLACK);
+        draw_text_centred_bg_in(BOX_X + 8, BOX_W - 16, BOX_Y + 92, buf, 3,
+                                C_WARN, C_BLACK);
     }
 
-    draw_text_centred_bg(BOX_Y + 138, "RELEASE TO ABORT", 2,
-                         C_WHITE, igniting ? C_ARMED_BG : C_BLACK);
+    draw_text_centred_bg_in(BOX_X + 8, BOX_W - 16, BOX_Y + 138,
+                            "RELEASE TO ABORT", 2,
+                            C_WHITE, igniting ? C_ARMED_BG : C_BLACK);
+
+    draw_status_band(d, 0, true);
 }
 
 /* ── Screen: fire complete — FSD §10.2.4a ─────────────────────── */
@@ -953,7 +1232,10 @@ static void draw_fire_complete_dynamic(const disp_data_t *d, uint8_t ch,
     if (left < 0) left = 0;
     snprintf(buf, sizeof(buf), "IDLE IN %lld.%llds",
              (long long)(left / 1000), (long long)((left % 1000) / 100));
-    draw_text_centred_bg(BOX_Y + 132, buf, 2, C_GREY, C_BLACK);
+    draw_text_centred_bg_in(BOX_X + 6, BOX_W - 12, BOX_Y + 132, buf, 2,
+                            C_GREY, C_BLACK);
+
+    draw_status_band(d, 0, true);
 }
 
 /* ── Screen: link lost — FSD §10.2.5 ──────────────────────────── */
@@ -965,7 +1247,9 @@ static void draw_link_lost_static(void)
     draw_text_centred(40, "! LINK LOST !", 4, C_AMBER);
     draw_text_centred(110, "No response from base unit", 2, C_WHITE);
     draw_text_centred(148, "All channels disarmed (assumed)", 2, C_WHITE);
-    draw_text_centred(250, "Attempting to reconnect...", 2, C_WHITE);
+    /* "Attempting to reconnect..." lives on the status band and so is drawn
+     * per-frame in the dynamic half — the band is repainted every frame and
+     * would otherwise erase it. */
 }
 
 static void draw_link_lost_dynamic(const disp_data_t *d)
@@ -983,13 +1267,25 @@ static void draw_link_lost_dynamic(const disp_data_t *d)
         snprintf(buf, sizeof(buf), "Last contact: %lu min ago",
                  (unsigned long)(secs / 60));
     }
-    draw_text_centred_bg(185, buf, 2, C_WHITE, C_BLACK);
+    /* Inset to the interior of the amber frame. A full-width clear here was
+     * what notched the frame's left and right edges every second. */
+    draw_text_centred_bg_in(8, DW - 16, 185, buf, 2, C_WHITE, C_BLACK);
+
+    /* The band is inset by the frame thickness so it stops short of the amber
+     * border instead of painting over it. With the link down the base state is
+     * unknown by definition, so this band is always grey here — it can never
+     * claim SAFE for a pad it cannot hear from. */
+    uint32_t bg = draw_status_band(d, 8, false);
+    uint32_t fg = band_fg(bg);
+
+    draw_text_centred_bg_in(8, DW - 16, 252, "Attempting to reconnect...", 2,
+                            fg, bg);
 
     /* Reconnect attempts, not ping misses — linkreq_attempts is the count that
      * actually advances while the remote is retrying LINK_REQUEST. */
     snprintf(buf, sizeof(buf), "Attempts %u   RSSI %d dBm",
              d->link.linkreq_attempts, d->link.rssi_avg_dbm);
-    draw_text_centred_bg(288, buf, 2, C_GREY, C_BLACK);
+    draw_text_centred_bg_in(8, DW - 16, 284, buf, 2, fg, bg);
 }
 
 /* ── Screen: error — FSD §10.2.6 ──────────────────────────────── */
@@ -1005,7 +1301,7 @@ static void draw_error_screen(const char *text)
     const int per_line = 34;
     int len = text ? (int)strlen(text) : 0;
     int y = 140;
-    for (int off = 0; off < len && y < 220; off += per_line) {
+    for (int off = 0; off < len && y < 200; off += per_line) {
         int n = len - off;
         if (n > per_line) n = per_line;
         memcpy(line, text + off, n);
@@ -1014,7 +1310,10 @@ static void draw_error_screen(const char *text)
         y += CHAR_H(2) + 6;
     }
 
-    draw_text_centred(248, "System halted - power cycle", 2, C_WARN);
+    /* Clear of BAND_Y: the status band is repainted every frame and this
+     * screen has no dynamic half to redraw over it. The error description is
+     * at most two lines (64-char buffer, 34 per line), ending by y=178. */
+    draw_text_centred(216, "System halted - power cycle", 2, C_WARN);
 }
 
 /* ── Screen: splash / firmware mismatch — FSD §10.2.1 ─────────── */
@@ -1029,7 +1328,8 @@ static void draw_splash_static(void)
     fill_rect(90, 138, DW - 180, 1, C_DGREY);
     draw_text_centred(152, "VRO - VLAAMSE RAKET ORGANISATIE", 2, C_INFO);
 
-    draw_text_centred(DH - 26, "(C) 2026 David Steeman", 2, C_GREY);
+    /* The credit and the progress bar sit on the status band and are drawn
+     * per-frame in the dynamic half; the band would otherwise erase them. */
 }
 
 static void draw_splash_dynamic(const disp_data_t *d, int attempt,
@@ -1041,8 +1341,18 @@ static void draw_splash_dynamic(const disp_data_t *d, int attempt,
 
     bool linked = (d->link.state == RLC_LINK_STATE_LINKED);
 
-    draw_text_centred_bg(196, linked ? "Connected to base" : "Connecting to base...",
-                         2, linked ? C_GREEN : C_WHITE, C_BLACK);
+    /* A refusal is not the same as silence, and the operator cannot tell them
+     * apart from a retry counter. Say which it is. */
+    const char *headline;
+    uint32_t    headline_fg;
+    if (linked) {
+        headline = "Connected to base";  headline_fg = C_GREEN;
+    } else if (d->link.last_reject == LINK_REJECT_BUSY) {
+        headline = "Base busy - armed or firing"; headline_fg = C_WARN;
+    } else {
+        headline = "Connecting to base..."; headline_fg = C_WHITE;
+    }
+    draw_text_centred_bg(196, headline, 2, headline_fg, C_BLACK);
 
     if (linked) {
         snprintf(buf, sizeof(buf), "RSSI %d dBm", d->link.rssi_avg_dbm);
@@ -1061,7 +1371,14 @@ static void draw_splash_dynamic(const disp_data_t *d, int attempt,
     } else {
         pct = (attempt * 100) / max_attempts;
     }
-    draw_bar(90, 262, 300, 20, pct, linked ? C_GREEN : C_SELECTED, C_BLACK);
+    /* At boot there is no STATUS_UPDATE yet, so this band is grey until the
+     * base reports — it never greets the operator with a green "safe" it has
+     * not confirmed. */
+    uint32_t bg = draw_status_band(d, 0, false);
+    uint32_t fg = band_fg(bg);
+
+    draw_bar(90, 262, 300, 20, pct, linked ? C_GREEN : C_SELECTED, bg);
+    draw_text_centred_bg_in(0, DW, DH - 26, "(C) 2026 David Steeman", 2, fg, bg);
 }
 
 static void draw_fw_mismatch(const uint8_t *base_ver, const uint8_t *remote_ver)
@@ -1079,8 +1396,9 @@ static void draw_fw_mismatch(const uint8_t *base_ver, const uint8_t *remote_ver)
              remote_ver[0], remote_ver[1], remote_ver[2]);
     draw_text(110, 175, buf, 2, C_WHITE);
 
-    draw_text_centred(226, "Reflash both units with", 2, C_GREY);
-    draw_text_centred(250, "matching firmware.", 2, C_GREY);
+    /* Kept clear of BAND_Y — see draw_error_screen. */
+    draw_text_centred(202, "Reflash both units with", 2, C_GREY);
+    draw_text_centred(224, "matching firmware.", 2, C_GREY);
 }
 
 /* ── Overlay: NACK / toast — FSD §10.2.7 ──────────────────────── */
@@ -1213,6 +1531,7 @@ static void display_task(void *arg)
         bool     overlay_nack = s_req.overlay_is_nack;
         char     overlay_txt[40];
         memcpy(overlay_txt, s_req.overlay_text, sizeof(overlay_txt));
+        d.remote_error_latched = s_req.error_latched;
         bool     fire_done    = (s_req.fire_complete_until_ms > now_ms());
         uint8_t  fire_done_ch = s_req.fire_complete_ch;
         int64_t  fire_until   = s_req.fire_complete_until_ms;
@@ -1282,11 +1601,18 @@ static void display_task(void *arg)
             case SCR_LINK_LOST:
                 draw_link_lost_dynamic(&d);
                 break;
+            /* These two have no dynamic half, so the band is driven from here.
+             * It still updates every frame: a welded relay must keep flashing
+             * even on a latched ERROR screen, and the arm state can change
+             * underneath a halted remote. Both draw an 8 px frame, hence the
+             * inset. */
             case SCR_ERROR:
                 if (full) draw_error_screen(err_text);
+                draw_status_band(&d, 8, true);
                 break;
             case SCR_FW_MISMATCH:
                 if (full) draw_fw_mismatch(fw_base, fw_remote);
+                draw_status_band(&d, 8, true);
                 break;
             default:
                 break;

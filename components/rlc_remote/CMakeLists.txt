@@ -9,6 +9,7 @@ if(CONFIG_RLC_UNIT_REMOTE)
         "src/rlc_arm_switch.c"
         "src/rlc_fire_button.c"
         "src/rlc_remote_battery.c"
+        "src/rlc_remote_faultinject.c"
     )
 else()
     set(REMOTE_SRCS "")

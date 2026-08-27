@@ -52,6 +52,10 @@ static int test_struct_offsets(void)
         CHECK_OFFSET(rlc_payload_link_ack_t, base_firmware_version,  4),
         CHECK_OFFSET(rlc_payload_link_ack_t, num_channels,           7),
 
+        /* rlc_payload_link_reject_t */
+        CHECK_OFFSET(rlc_payload_link_reject_t, reason,                 0),
+        CHECK_OFFSET(rlc_payload_link_reject_t, base_firmware_version,  1),
+
         /* rlc_payload_ping_t */
         CHECK_OFFSET(rlc_payload_ping_t, ping_timestamp,            0),
         CHECK_OFFSET(rlc_payload_ping_t, remote_battery_voltage_mv, 4),

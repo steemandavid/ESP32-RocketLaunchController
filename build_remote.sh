@@ -5,6 +5,7 @@
 #   ./build_remote.sh          # build only
 #   ./build_remote.sh flash    # build + flash (default PORT below; override with -p <by-id>)
 #   ./build_remote.sh -p PORT  # build and flash to custom port
+#   ./build_remote.sh --inject # TEST ONLY: remote fault-injection console
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -18,11 +19,13 @@ PORT="/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E043219-if00"   # remote C
 
 # Parse args
 DO_FLASH=false
+DO_INJECT=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         flash)    DO_FLASH=true ;;
+        --inject) DO_INJECT=true ;;
         -p)       shift; PORT="$1" ;;
-        *)        echo "Usage: $0 [flash] [-p PORT]"; exit 1 ;;
+        *)        echo "Usage: $0 [flash] [--inject] [-p PORT]"; exit 1 ;;
     esac
     shift
 done
@@ -56,8 +59,42 @@ cp "$SDKCONFIG_REMOTE" "$SCRIPT_DIR/sdkconfig"
 # was removed in 1.1.11 once the measurements were taken. Recover it from git
 # history (firmware 1.1.10) if the display refresh ever needs re-measuring.
 
+# --inject: TEST-ONLY build with the remote fault-injection console. Appended
+# to the working copy only — sdkconfig.remote is never modified, so the option
+# cannot leak into a later normal build. A build dir configured the other way is
+# wiped, because a Kconfig change does not always force a full reconfigure and a
+# stale one would silently produce the wrong firmware.
+INJECT_MARK="$SCRIPT_DIR/.build_remote_inject"
+if $DO_INJECT; then
+    if [ ! -f "$INJECT_MARK" ] && [ -d "$BUILD_DIR" ]; then
+        echo "Switching to FAULT INJECTION build — cleaning build/"
+        rm -rf "$BUILD_DIR"
+    fi
+    touch "$INJECT_MARK"
+    echo "CONFIG_RLC_REMOTE_FAULT_INJECTION=y" >> "$SCRIPT_DIR/sdkconfig"
+    echo
+    echo "***********************************************************"
+    echo "*  BUILDING WITH FAULT INJECTION - NOT SAFE FOR LIVE USE   *"
+    echo "*  Reflash a normal build (./build_remote.sh flash) after. *"
+    echo "***********************************************************"
+    echo
+elif [ -f "$INJECT_MARK" ]; then
+    echo "Previous build had FAULT INJECTION — cleaning build/"
+    rm -rf "$BUILD_DIR"
+    rm -f "$INJECT_MARK"
+fi
+
 # Configure and build (default build dir)
 idf.py build 2>&1 | grep -E "warning:|error:|Generated|build complete" || true
+
+# Fail loudly rather than flashing a build that silently lacks the option.
+if $DO_INJECT; then
+    if ! grep -q "define CONFIG_RLC_REMOTE_FAULT_INJECTION 1" "$BUILD_DIR/config/sdkconfig.h"; then
+        echo "ERROR: --inject requested but CONFIG_RLC_REMOTE_FAULT_INJECTION is not in the built config!"
+        exit 1
+    fi
+    echo "Verified: CONFIG_RLC_REMOTE_FAULT_INJECTION is ON in the built config"
+fi
 
 # Verify the binary contains remote_app_main
 NM=$(find ~/.espressif/tools/xtensa-esp-elf -name "xtensa-esp32s3-elf-nm" 2>/dev/null | head -1)

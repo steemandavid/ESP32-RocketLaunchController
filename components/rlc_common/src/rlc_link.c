@@ -100,6 +100,7 @@ static uint16_t          s_linkreq_attempts = 0;
 
 /* App-state guard callback (for LINK_REQUEST rejection). */
 static rlc_link_guard_cb_t s_guard_cb = NULL;
+static volatile uint8_t    s_last_reject = 0;
 
 /* m8: base-only hook asking the application to push a real STATUS_UPDATE
  * (see handle_link_request). Must be non-blocking — it runs on link_task
@@ -300,6 +301,33 @@ static void send_link_ack(void)
 }
 
 /**
+ * Tell the remote why a handshake was refused, instead of dropping it.
+ *
+ * Both refusal paths in handle_link_request() used to `return` silently. The
+ * remote cannot distinguish that from a base that is switched off or out of
+ * range, so it retried forever behind a frozen splash and the operator had
+ * nothing to go on — while the base sat there knowing exactly what was wrong.
+ * Sent unconditionally on refusal; the base's own lock-out state is unchanged.
+ */
+static void send_link_reject(uint8_t reason)
+{
+    uint8_t buf[RLC_MSG_MAX_SIZE];
+    rlc_payload_link_reject_t p = {0};
+    p.reason = reason;
+    p.base_firmware_version[0] = RLC_VERSION_MAJOR;
+    p.base_firmware_version[1] = RLC_VERSION_MINOR;
+    p.base_firmware_version[2] = RLC_VERSION_PATCH;
+
+    /* seq 0 / token 0, like LINK_ACK: this is pre-session traffic, and on a
+     * version mismatch there is no session to speak of. */
+    int len = rlc_msg_build(buf, MSG_LINK_REJECT, 0, 0, &p, sizeof(p));
+    if (len > 0) {
+        rlc_espnow_send(s_peer_mac, buf, len);
+        ESP_LOGW(TAG, "LINK_REJECT sent, reason=0x%02X", reason);
+    }
+}
+
+/**
  * CM-02: emit a CMD_NACK for a command the link layer itself refused.
  *
  * App D.3 requires NACK 0x08 on a replayed command and 0x06 on an integrity
@@ -461,6 +489,7 @@ static void handle_link_request(const uint8_t *payload, uint16_t plen)
                  req->remote_firmware_version[1],
                  req->remote_firmware_version[2],
                  RLC_VERSION_MAJOR, RLC_VERSION_MINOR, RLC_VERSION_PATCH);
+        send_link_reject(LINK_REJECT_VERSION_MISMATCH);
         set_state(RLC_LINK_STATE_VERSION_MISMATCH);
         return;
     }
@@ -469,6 +498,7 @@ static void handle_link_request(const uint8_t *payload, uint16_t plen)
      * Guard returns true when busy, so reject when it returns true. */
     if (s_guard_cb && s_guard_cb()) {
         ESP_LOGI(TAG, "LINK_REQUEST rejected by app-state guard (busy)");
+        send_link_reject(LINK_REJECT_BUSY);
         return;
     }
 
@@ -495,6 +525,40 @@ static void handle_link_request(const uint8_t *payload, uint16_t plen)
      * the handshake, without inventing the contents. */
     if (s_status_request_cb) {
         s_status_request_cb();
+    }
+}
+
+/* Remote side: the base told us why it refused. */
+static void handle_link_reject(const uint8_t *payload, uint16_t plen)
+{
+    if (plen < sizeof(rlc_payload_link_reject_t)) return;
+    const rlc_payload_link_reject_t *rej = (const rlc_payload_link_reject_t *)payload;
+
+    s_last_reject = rej->reason;
+    memcpy(s_peer_fw, rej->base_firmware_version, 3);
+    s_peer_fw_known = true;
+
+    switch (rej->reason) {
+    case LINK_REJECT_VERSION_MISMATCH:
+        ESP_LOGE(TAG, "LINK REJECTED: FW MISMATCH base %u.%u.%u / remote %u.%u.%u",
+                 rej->base_firmware_version[0],
+                 rej->base_firmware_version[1],
+                 rej->base_firmware_version[2],
+                 RLC_VERSION_MAJOR, RLC_VERSION_MINOR, RLC_VERSION_PATCH);
+        /* Terminal, same as detecting it from a LINK_ACK: the display latches
+         * the §10.2.1 mismatch screen off this state and both versions are now
+         * known, so it can name them. */
+        set_state(RLC_LINK_STATE_VERSION_MISMATCH);
+        break;
+    case LINK_REJECT_BUSY:
+        /* Not terminal — the base is armed or firing and will accept a
+         * handshake once it is not. Keep retrying, but stop pretending we do
+         * not know why. */
+        ESP_LOGW(TAG, "LINK REJECTED: base busy (armed/firing) — will retry");
+        break;
+    default:
+        ESP_LOGW(TAG, "LINK REJECTED: unknown reason 0x%02X", rej->reason);
+        break;
     }
 }
 
@@ -617,6 +681,12 @@ static void process_frame(const link_rx_item_t *it)
             if (s_role == RLC_LINK_ROLE_REMOTE &&
                 s_state != RLC_LINK_STATE_VERSION_MISMATCH) {
                 handle_link_ack(payload, plen);
+            }
+            break;
+        case MSG_LINK_REJECT:
+            if (s_role == RLC_LINK_ROLE_REMOTE &&
+                s_state != RLC_LINK_STATE_VERSION_MISMATCH) {
+                handle_link_reject(payload, plen);
             }
             break;
         case MSG_PING:
@@ -1053,6 +1123,7 @@ void rlc_link_get_status(rlc_link_status_t *out)
                           ? (uint32_t)(now_ms() - s_last_contact_ms) : 0;
     memcpy(out->peer_fw, s_peer_fw, 3);
     out->peer_fw_known  = s_peer_fw_known;
+    out->last_reject    = s_last_reject;
     unlock();
 }
 

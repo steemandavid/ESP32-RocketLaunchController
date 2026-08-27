@@ -60,6 +60,10 @@ typedef struct {
     uint16_t         linkreq_attempts; /* LINK_REQUEST retry count (remote) */
     uint8_t          peer_fw[3];       /* major, minor, patch reported by peer */
     bool             peer_fw_known;
+    uint8_t          last_reject;      /* rlc_link_reject_reason_t, 0 = none.
+                                        * Why the base last refused a
+                                        * handshake, so the remote can say so
+                                        * instead of retrying in silence. */
 } rlc_link_status_t;
 
 /**

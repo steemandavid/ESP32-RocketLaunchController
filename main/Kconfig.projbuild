@@ -33,6 +33,25 @@ menu "Rocket Launch Controller"
             and is NOT SAFE FOR LIVE USE. The build emits a #warning and the
             running firmware prints a banner at boot. Leave this off.
 
+    config RLC_REMOTE_FAULT_INJECTION
+        bool "Fault injection console (TEST BUILDS ONLY - remote unit)"
+        default n
+        depends on RLC_UNIT_REMOTE
+        help
+            Adds a UART0 console that can drive the remote into a terminal
+            ERROR on a keystroke, exercising the REMOTE FAULT status-band
+            state and the ERROR screen behind it.
+
+            Those are latched by exactly four conditions - remote battery
+            critical, display fault, multi-arm detected, and a boot failure -
+            and none can be produced from the base harness or from the air.
+            Reaching them for real means pulling the display flex on a live
+            remote or flattening the pack.
+
+            A firmware built with this option can FAULT ITSELF ON DEMAND and
+            is NOT SAFE FOR LIVE USE. The build emits a #warning and the
+            running firmware prints a banner at boot. Leave this off.
+
     config RLC_SERIAL_DEBUG_LOGGING
         bool "Enable serial debug logging"
         default y

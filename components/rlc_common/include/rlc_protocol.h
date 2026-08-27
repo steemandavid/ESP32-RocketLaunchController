@@ -19,6 +19,7 @@
 typedef enum {
     MSG_LINK_REQUEST   = 0x01,
     MSG_LINK_ACK       = 0x02,
+    MSG_LINK_REJECT    = 0x03,
     MSG_PING           = 0x10,
     MSG_PONG           = 0x11,
     MSG_CMD_ARM        = 0x20,
@@ -29,6 +30,21 @@ typedef enum {
     MSG_CMD_ACK        = 0x31,
     MSG_CMD_NACK       = 0x32,
 } rlc_msg_type_t;
+
+/* ── Link Reject Reason Codes ─────────────────────────────────────
+ *
+ * The base used to refuse a handshake by simply not answering (a bare
+ * `return` in handle_link_request), for both a firmware mismatch and a
+ * busy app-state guard. The remote cannot tell a refusal from a base that
+ * is switched off or out of range, so it retried forever showing a frozen
+ * "Attempt 5 / 5" splash — which reads as a hung boot, not as a diagnosis.
+ * That contradicted the project's own no-silent-refusals rule (§7.2.9a),
+ * which had been applied to commands but not to the handshake. */
+
+typedef enum {
+    LINK_REJECT_VERSION_MISMATCH = 0x01,  /* firmware versions differ */
+    LINK_REJECT_BUSY             = 0x02,  /* app-state guard: base is armed/firing */
+} rlc_link_reject_reason_t;
 
 /* ── NACK Reason Codes ────────────────────────────────────────── */
 
@@ -126,6 +142,18 @@ typedef struct __attribute__((packed)) {
     uint8_t  num_channels;
 } rlc_payload_link_ack_t;
 _Static_assert(sizeof(rlc_payload_link_ack_t) == 8, "LINK_ACK size mismatch");
+
+/* Carries the base version unconditionally: on a mismatch that is precisely
+ * the information the operator needs, and it is the one case where the remote
+ * cannot have learned it from a LINK_ACK. The reason code alone is what is
+ * actionable for BUSY, so the base's FSM state is deliberately not plumbed
+ * through here — it would need a new callback into rlc_common for a field the
+ * operator cannot act on differently. */
+typedef struct __attribute__((packed)) {
+    uint8_t  reason;                     /* rlc_link_reject_reason_t */
+    uint8_t  base_firmware_version[3];   /* [0]=major, [1]=minor, [2]=patch */
+} rlc_payload_link_reject_t;
+_Static_assert(sizeof(rlc_payload_link_reject_t) == 4, "LINK_REJECT size mismatch");
 
 typedef struct __attribute__((packed)) {
     uint32_t ping_timestamp;

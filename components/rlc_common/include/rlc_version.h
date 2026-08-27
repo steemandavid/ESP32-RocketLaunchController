@@ -7,7 +7,158 @@
 
 #pragma once
 
-/* 1.1.11 (2026-08-27): stock build — the T-D09 display profiling harness
+/* 1.1.17 (2026-08-27): the base says WHY it refused a handshake.
+ *
+ * PROTOCOL CHANGE — new MSG_LINK_REJECT (0x03). Both units must be flashed
+ * together, which the strict version check already enforces.
+ *
+ * handle_link_request() refused a handshake with a bare `return` on two
+ * paths: a firmware mismatch, and the app-state guard when the base is armed
+ * or firing. The remote cannot tell a refusal from a base that is switched
+ * off or out of range, so it retried every 2 s forever behind a splash frozen
+ * at "Attempt 5 / 5" with the progress bar at 100% — which reads as a hung
+ * boot, not a diagnosis. Meanwhile the base knew exactly what was wrong and
+ * said so only on its own LED strip, 200 m away at the pad. Both paths
+ * contradicted the no-silent-refusals rule (§7.2.9a), which had been applied
+ * to commands in 1.1.6 but never to the handshake.
+ *
+ * The base now sends LINK_REJECT with a reason code and its own version:
+ *   LINK_REJECT_VERSION_MISMATCH  terminal; the remote latches
+ *                                 VERSION_MISMATCH and the §10.2.1 mismatch
+ *                                 screen can finally render, naming both
+ *                                 versions
+ *   LINK_REJECT_BUSY              not terminal; the remote keeps retrying but
+ *                                 the splash now says "Base busy - armed or
+ *                                 firing" instead of counting in silence
+ *
+ * Note on the mismatch case specifically: the remote has always had its own
+ * check in handle_link_ack(), but it reads the version out of a LINK_ACK the
+ * base never sent on a mismatch, so that path — and the screen behind it —
+ * was unreachable. The base-side check added in 5.7 to make mismatches
+ * *clearer* is what pre-empted it.
+ *
+ * rlc_link_status_t gains last_reject so the display can surface the reason.
+ *
+ * 1.1.16 (2026-08-27): no more false RELAY WELDED on a normal disarm.
+ *
+ * Measured on target: the status band flashed RELAY WELDED for 180 ms and
+ * 220 ms across two ordinary disarms. On ARMED -> IDLE the base reports
+ * base_state = IDLE before base_arm_sense has fallen (relay release plus
+ * debounce), so rlc_base_arm_state() sees the sense HIGH with the FSM outside
+ * the firing path — exactly its weld condition. Pre-existing: the main
+ * screen's BASE field had been flashing WELD! the same way, but the band turned
+ * it into a full-width colour flash, which is what made it worth fixing. An
+ * indicator that cries wolf twice a session teaches the operator to ignore it.
+ *
+ * A weld must now hold for 500 ms before it is believed. During the window the
+ * state is reported as ARMED, never anything safer: the arm sense IS high, so
+ * on a disarm that is the literal truth (the relay is still releasing) and on
+ * a real weld it is the conservative reading. 500 ms still beats the base's
+ * own weld confirm count, which is what the early check exists to beat.
+ *
+ * The hysteresis is in the display, not in rlc_base_arm_state(): that function
+ * is pure, shared with the base, and compiled into the host tests
+ * (T-M01..T-M07). The same settled state now also feeds the main screen's BASE
+ * field, which additionally fixes it reading SAFE on a dead link.
+ *
+ * Adds the remote fault-injection console (CONFIG_RLC_REMOTE_FAULT_INJECTION,
+ * ./build_remote.sh --inject) — keys d and b latch DISPLAY FAULT and REMOTE
+ * BATTERY CRITICAL. The REMOTE FAULT band state is latched by only four
+ * conditions, none reachable from the base harness or from the air; a
+ * wrong-channel ARM ACK does NOT latch it (the remote toasts and reconciles by
+ * disarming, which is better behaviour but left the path untested).
+ *
+ * Remote-only, but the version check is strict — flash both units.
+ *
+ * 1.1.15 (2026-08-27): status band no longer claims SAFE on a dead link.
+ *
+ * Observed on target: cutting power to the base left the band GREEN while the
+ * LINK LOST screen was up. Link loss is declared at 1500 ms, but a
+ * STATUS_UPDATE is only stale after 4000 ms (2 x STATUS_UPDATE_INTERVAL_MS),
+ * so for 2.5 s the band kept rendering the last state received before the
+ * power was cut. The band now gates on link state as well as staleness: the
+ * link being down is itself proof the base state is unknown, whatever the age
+ * of the last packet says.
+ *
+ * Fault states added, all red, named in the band:
+ *   BASE FAULT    base reports any error_flags, or base_state == STATE_ERROR
+ *   REMOTE FAULT  the remote has latched its own ERROR
+ * Red rather than a softer colour because a base that has faulted cannot be
+ * trusted to have reported its relay state accurately either, so treating it
+ * as possibly live is the honest reading. Priority runs WELD > RELAY LIVE >
+ * REMOTE FAULT > UNKNOWN > BASE FAULT > keys > SAFE.
+ *
+ * The band now logs one line per state transition. It is a safety indicator
+ * whose only check was previously to look at the panel, which is how the
+ * green-on-dead-link case survived; it is now verifiable from a capture.
+ *
+ * ARMED screen: "ARM SENSE OK" -> "BASE ARM SENSE OK", so the line names which
+ * unit the sense belongs to (36 of 40 columns at the scale-2 floor).
+ *
+ * Remote-only, but the version check is strict — flash both units.
+ *
+ * 1.1.14 (2026-08-27): the one-key / both-keys distinction made visible.
+ *
+ * 1.1.13 used C_WARN (0xFFDC00, 87% green) for one key and 0xFF6000 (38%) for
+ * both. Clear separation on paper; on the actual panel both read as orange and
+ * the distinction was invisible. Pushed to the extremes the display can put
+ * between red and green — 0xFFFF00 (100% green) against 0xFF5000 (31%) — with
+ * dedicated band constants so tuning this cannot drag the warning-text colour
+ * with it.
+ *
+ * Hue is no longer the only carrier of the distinction. The main screen's
+ * instruction line tested ONLY the remote arm switch, so with the remote armed
+ * and the base key still in SAFE it read "HOLD ENCODER TO ARM CH n" — an
+ * instruction the base refuses, since arming needs its key too. It now names
+ * the step actually outstanding for each of the four combinations:
+ *   neither      "TURN ARM KEY TO ARM CH n"
+ *   remote only  "TURN BASE KEY TO ARM CH n"
+ *   base only    "FLIP REMOTE ARM SWITCH"
+ *   both         "HOLD ENCODER TO ARM CH n"
+ *
+ * Remote-only, but the version check is strict — flash both units.
+ *
+ * 1.1.13 (2026-08-27): the status band separates one key turned from two.
+ *
+ * A single amber for "either key armed" hid the only transition in the arming
+ * sequence where the risk actually changes. With one key turned the hardware
+ * will not act: the base refuses an ARM without its key, and the remote will
+ * not send one without its arm switch. With both turned, a single long-press
+ * closes the arm relay and puts VBAT on the fire path.
+ *
+ *   YELLOW  one key   — "BASE KEY ARMED" / "REMOTE ARMED", naming the end
+ *                        that is live so the operator knows which remains
+ *   ORANGE  both keys — "READY TO ARM" (not "ready to fire": the next step
+ *                        arms the relay, it does not fire)
+ *
+ * Remote-only, but the version check is strict — flash both units.
+ *
+ * 1.1.12 (2026-08-27): system status band, and a background-fill fix.
+ *
+ * A coloured field across the bottom of every screen reports the state of the
+ * fire path at a glance: GREEN base safe and remote arm switch off, AMBER
+ * either key turned with the path still dead, RED the arm relay engaged,
+ * flashing red/amber on a welded relay, GREY whenever the state is not known.
+ * Grey rather than green for unknown, per the §10.2.2 rule that unknown is
+ * never shown as SAFE — green is a positive claim the pad is safe to approach.
+ * It carries the status in words as well as colour, matching the rule that hue
+ * is never the only carrier of meaning here.
+ *
+ * The band occupies the area that already held the status and instruction
+ * lines, leaving the channel grid untouched: that grid fills the panel width
+ * exactly (_Static_assert in rlc_display.c) and had no room to give, so a
+ * border would have had to shrink the cells.
+ *
+ * Fixed alongside: draw_text_centred_bg() cleared the full panel width before
+ * writing, so every refresh of a live value punched a notch through the left
+ * and right edges of whatever frame the text sat in — visible on the LINK LOST
+ * amber border and on the ARMED / FIRING / FIRE COMPLETE box outlines. The fill
+ * now takes explicit bounds and callers pass the interior of their enclosure.
+ *
+ * base_arm_colour() is removed: the band carries that mapping now.
+ * Remote-only, but the version check is strict — flash both units.
+ *
+ * 1.1.11 (2026-08-27): stock build — the T-D09 display profiling harness
  * (CONFIG_RLC_DISPLAY_PROFILE, ./build_remote.sh --profile) is removed now that
  * the measurements are taken. No functional change: the harness was passive and
  * off by default, so 1.1.11 renders identically to 1.1.10. Recover it from git
@@ -130,5 +281,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  11
-#define RLC_VERSION_STRING "1.1.11"
+#define RLC_VERSION_PATCH  17
+#define RLC_VERSION_STRING "1.1.17"

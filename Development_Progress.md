@@ -1137,6 +1137,148 @@ colours, cursor breathing and the reversed orientation all confirmed correct.
 **Base:** channels 1-3 render correctly once the orientation was fixed;
 channels 4-8 are blocked by bug #19 (dead pixel at channel 4).
 
+### System Status Band — firmware 1.1.12 to 1.1.17 (2026-08-27)
+
+A coloured field across the bottom of **every** screen reporting the state of
+the fire path, so it reads from across a launch site without the operator
+parsing text. Requested as a full-screen border; built as a bottom band instead
+because the channel grid fills the panel width exactly (`_Static_assert` in
+`rlc_display.c`) and a border would have had to shrink the cells. The band
+occupies the area that already held the status and instruction lines, so the
+grid is untouched — and at ~34000 px it is over three times the area a 6 px
+border would have been.
+
+| Band | State | Verified |
+|---|---|---|
+| Green `SAFE` | base safe, remote arm switch off | on target |
+| Yellow `BASE KEY ARMED` / `REMOTE ARMED` | one key turned | on target |
+| Orange `READY TO ARM` | both keys — one long-press from a live relay | on target |
+| Red `ARM RELAY LIVE` | arm relay engaged | on target |
+| Flashing `RELAY WELDED` | contacts closed when they should not be | base `w` injection |
+| Red `BASE FAULT` | base error_flags, or base_state == STATE_ERROR | base `e` injection |
+| Red `REMOTE FAULT` | remote latched its own ERROR | remote `d` injection |
+| Grey `STATUS UNKNOWN` | link down, stale, mismatch, or pre-first-report | on target |
+
+Priority runs **WELD > RELAY LIVE > REMOTE FAULT > UNKNOWN > BASE FAULT > keys
+> SAFE**. All seven non-nominal states verified on target.
+
+**Grey, never green, when the state is not known** (§10.2.2's rule that unknown
+is never displayed as SAFE). Green is a positive claim that the pad is safe to
+approach.
+
+**Faults are red** rather than something softer: a base that has faulted cannot
+be trusted to have reported its *relay* state accurately either, so treating it
+as possibly live is the honest reading, not an over-cautious one. The word
+distinguishes it from `ARM RELAY LIVE`.
+
+**One key and two keys are separate colours.** With one turned the hardware will
+not act — the base refuses an ARM without its key, the remote will not send one
+without its arm switch. With both turned a single long-press closes the arm
+relay. That is the only transition in the sequence where the risk changes, and
+collapsing it into a single amber hid it.
+
+The band **logs one line per state transition**. It is a safety indicator whose
+only check was previously to look at the panel, which is exactly how the
+green-on-a-dead-link bug below survived; it is now verifiable from a capture.
+
+#### Defects found and fixed along the way
+
+- **Full-width background fills punched holes in every border.**
+  `draw_text_centred_bg()` cleared `x=0, w=DW` unconditionally before writing,
+  so every refresh of a live value notched the left and right edges of whatever
+  frame the text sat inside — the LINK LOST amber border (reported by the
+  operator) and the ARMED / FIRING / FIRE COMPLETE box outlines. The fill now
+  takes explicit bounds and callers pass the interior of their enclosure.
+
+- **Band showed green with the base switched off** (fw 1.1.15). Link loss is
+  declared at 1500 ms but a STATUS_UPDATE is only stale after 4000 ms, so for
+  2.5 s the band rendered the last state received before the power was cut —
+  green, on a screen already announcing the link was gone. It now gates on link
+  state as well as staleness: a dead link is itself proof the base state is
+  unknown. Verified grey 10 ms after link loss.
+
+- **False `RELAY WELDED` on every normal disarm** (fw 1.1.16). Measured at
+  180 ms and 220 ms across two ordinary disarms: on ARMED → IDLE the base
+  reports `base_state = IDLE` before `base_arm_sense` has fallen, which is
+  exactly `rlc_base_arm_state()`'s weld condition. **Pre-existing** — the main
+  screen's BASE field had been flashing `WELD!` the same way — but the band made
+  it a full-width colour flash. An indicator that cries wolf twice a session
+  teaches the operator to ignore it. A weld must now hold 500 ms before it is
+  believed; during the window the state reports as ARMED, never anything safer,
+  because the arm sense genuinely is high. The hysteresis is in the display, not
+  in `rlc_base_arm_state()` — that function is pure, shared with the base, and
+  compiled into the host tests (T-M01…T-M07).
+
+- **Instruction line tested only the remote arm switch** (fw 1.1.14). With the
+  remote armed and the base key still SAFE it read "HOLD ENCODER TO ARM CH n" —
+  an instruction the base refuses. It now names the step actually outstanding
+  for each of the four key combinations.
+
+- **Two colours that were clearly separated in the source were identical on the
+  panel** (fw 1.1.14). `C_WARN` (0xFFDC00, 87% green) against 0xFF6000 (38%)
+  both read as orange. Pushed to 0xFFFF00 against 0xFF5000, and the distinction
+  is now carried by wording as well as hue. Worth remembering: separation in
+  the constants is not separation on this glass.
+
+### Handshake Refusals Are No Longer Silent — firmware 1.1.17 (2026-08-27)
+
+**Protocol change: new `MSG_LINK_REJECT` (0x03).** Both units must be flashed
+together; the strict version check enforces it.
+
+`handle_link_request()` refused a handshake with a bare `return` on two paths —
+firmware mismatch, and the app-state guard when the base is armed or firing. The
+remote cannot tell a refusal from a base that is switched off or out of range,
+so it retried every 2 s forever behind a splash frozen at "Attempt 5 / 5" with
+the progress bar at 100%: it reads as a hung boot, not a diagnosis. The base
+knew exactly what was wrong and said so only on its own LED strip, at the pad.
+Both paths contradicted the no-silent-refusals rule (§7.2.9a), applied to
+commands in 1.1.6 but never to the handshake.
+
+The base now answers with a reason code and its own version:
+
+| Reason | Remote behaviour |
+|---|---|
+| `LINK_REJECT_VERSION_MISMATCH` | Terminal — latches `VERSION_MISMATCH`; the §10.2.1 mismatch screen finally renders, naming both versions |
+| `LINK_REJECT_BUSY` | Not terminal — keeps retrying, but the splash says `Base busy - armed or firing` |
+
+**The mismatch screen had been unreachable.** The remote has always had its own
+check in `handle_link_ack()`, but it reads the version out of a LINK_ACK the
+base never sent on a mismatch. The base-side check added in 5.7 to make
+mismatches *clearer* is what pre-empted it. Verified on target: with the base at
+1.1.90 and the remote at 1.1.17, the remote logged the mismatch 10 ms after its
+first LINK_REQUEST and locked out — 0 further requests in 12 s, against 26+
+blind retries before.
+
+`LINK_REJECT_BUSY` deliberately does not latch: the base being armed is
+transient, and locking the remote out until a power cycle would be worse than
+the silence it replaces.
+
+**Known limitation:** this needs *both* units on 1.1.17+. Against an older peer
+a mismatch still presents as a silent retry loop. Having the base send its
+LINK_ACK before the version check would also cover that direction, since the
+remote's own check predates the base-side one — not implemented.
+
+### Remote Fault-Injection Harness (2026-08-27)
+
+`CONFIG_RLC_REMOTE_FAULT_INJECTION` / `./build_remote.sh --inject`, mirroring
+the base harness: `#warning`, boot banner, never written to `sdkconfig.remote`,
+build dir wiped on a mode switch, and a build failure if the option did not
+reach the built config. Keys `d` (display fault) and `b` (battery critical).
+
+Added because the `REMOTE FAULT` band state is latched by only four conditions
+— remote battery critical, display fault, multi-arm detected, boot failure —
+none producible from the base harness or from the air. A wrong-channel ARM ACK
+(base key `a`) does **not** latch it: the remote toasts "CHANNEL MISMATCH ERROR"
+and reconciles by disarming, which is the better behaviour but left the fault
+path untested.
+
+The base harness also gained a `w` key (report `ERR_RELAY_FAULT`), since a weld
+otherwise needs the arm sense jumpered high on a live base.
+
+**Scope note:** this harness covers the REMOTE FAULT paths only. It does *not*
+unblock T-F07 or T-F09, which need injections at specific FSM transitions that
+have not been written.
+
 ### Phase 4 On-Target Tests (pending)
 
 | ID | Test | Status |

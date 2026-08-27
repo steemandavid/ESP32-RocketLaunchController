@@ -35,6 +35,7 @@ static volatile bool    s_suppress_status = false;
  * from its cache when the NACK arrives. */
 static volatile bool    s_lie_state       = false;
 static volatile bool    s_wrong_ch_armed  = false;
+static volatile bool    s_relay_fault     = false;
 static volatile uint8_t s_wrong_ch_last   = 0;
 
 bool fault_inject_suppress_status(void)
@@ -45,6 +46,11 @@ bool fault_inject_suppress_status(void)
 bool fault_inject_lie_state(void)
 {
     return s_lie_state;
+}
+
+bool fault_inject_relay_fault(void)
+{
+    return s_relay_fault;
 }
 
 bool fault_inject_take_wrong_channel(uint8_t *ch)
@@ -74,6 +80,8 @@ static void print_state(void)
              s_suppress_status ? "ON - remote's cached status is ageing out" : "off");
     ESP_LOGW(TAG, "[FI] wrong-channel ARM ACK     : %s  (T-A13)",
              s_wrong_ch_armed  ? "ARMED - fires on the next ARM ACK"         : "off");
+    ESP_LOGW(TAG, "[FI] reported ERR_RELAY_FAULT   : %s",
+             s_relay_fault ? "ON" : "off");
     ESP_LOGW(TAG, "[FI] keys: s = suppression, a = wrong-channel, "
                   "e = force ERROR w/ fresh cache, ? = this");
 }
@@ -128,6 +136,13 @@ static void fi_console_task(void *arg)
             ESP_LOGE(TAG, "INJECT: base forced to ERROR; STATUS_UPDATE keeps "
                           "reporting IDLE so the remote will still send ARM "
                           "-> NACK 0x0E. No time limit.");
+            break;
+        case 'w':
+            s_relay_fault = !s_relay_fault;
+            status_update_trigger();
+            ESP_LOGE(TAG, "INJECT: reported ERR_RELAY_FAULT (welded relay) %s",
+                     s_relay_fault ? "ON" : "off");
+            print_state();
             break;
         case '?':
             print_state();

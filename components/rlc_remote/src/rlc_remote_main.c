@@ -11,6 +11,7 @@
 #include "rlc_remote.h"
 #include "rlc_remote_state.h"
 #include "rlc_remote_fsm.h"
+#include "rlc_remote_faultinject.h"
 #include "rlc_encoder.h"
 #include "rlc_buzzer.h"
 #include "rlc_display.h"
@@ -260,6 +261,11 @@ void remote_app_main(void)
 
     /* (Input callbacks were registered before their tasks started — see 5.7
      * above.) */
+
+    /* Test builds only: the injection console. Started after the FSM task so
+     * remote_fsm_get_queue() is up and a keystroke cannot be dropped. Compiles
+     * to nothing in a normal build. */
+    remote_fault_inject_init();
 
     ESP_LOGI(TAG, "remote ready — Phase 3 FSM active, waiting for link");
 
