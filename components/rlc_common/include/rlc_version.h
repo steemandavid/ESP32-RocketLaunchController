@@ -7,7 +7,33 @@
 
 #pragma once
 
-/* 1.1.20 (2026-08-27): bug #20 — crypto keys rotated and taken out of the repo.
+/* 1.1.21 (2026-08-27): status band only where it carries information.
+ *
+ * Operator report: the band covered the splash progress bar and the LINK LOST
+ * reconnect text. It was drawn on every screen, which was the wrong default.
+ *
+ * Removed from SPLASH, LINK_LOST and FW_MISMATCH. On the latter two the
+ * removal is not a judgement call: system_status() gates on link state, and on
+ * both screens the link is by definition not LINKED, so the band could only
+ * ever return SYS_UNKNOWN. It was grey every single time. A field that can
+ * show exactly one value carries no information, and it was displacing text
+ * that does. On the splash the operator has not begun a sequence, so it
+ * answers a question nobody is asking — and it sat on the progress bar, the
+ * one thing that screen exists to show.
+ *
+ * KEPT on MAIN, ARMED, FIRING, FIRE_COMPLETE and ERROR. ERROR was checked
+ * against the same test and passes it: SYS_WELD and SYS_RELAY_LIVE outrank
+ * SYS_REMOTE_FAULT, so on a latched remote error the band still reports
+ * whether the pad is live — which is the thing most worth knowing when the
+ * remote itself has failed.
+ *
+ * Original layouts restored on the three screens: splash progress bar and
+ * credit back on black, LINK LOST reconnect text back to y=250/288, firmware
+ * mismatch text back to y=226/250.
+ *
+ * Remote-only, but the version check is strict — flash both units.
+ *
+ * 1.1.20 (2026-08-27): bug #20 — crypto keys rotated and taken out of the repo.
  *
  * The ESP-NOW PMK/LMK and the CRC integrity pre-shared key were defined in
  * rlc_config.h as literal ASCII placeholders — "RLC_PMK_DEFAULT!",
@@ -364,5 +390,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  20
-#define RLC_VERSION_STRING "1.1.20"
+#define RLC_VERSION_PATCH  21
+#define RLC_VERSION_STRING "1.1.21"

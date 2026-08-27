@@ -1271,21 +1271,19 @@ static void draw_link_lost_dynamic(const disp_data_t *d)
      * what notched the frame's left and right edges every second. */
     draw_text_centred_bg_in(8, DW - 16, 185, buf, 2, C_WHITE, C_BLACK);
 
-    /* The band is inset by the frame thickness so it stops short of the amber
-     * border instead of painting over it. With the link down the base state is
-     * unknown by definition, so this band is always grey here — it can never
-     * claim SAFE for a pad it cannot hear from. */
-    uint32_t bg = draw_status_band(d, 8, false);
-    uint32_t fg = band_fg(bg);
-
-    draw_text_centred_bg_in(8, DW - 16, 252, "Attempting to reconnect...", 2,
-                            fg, bg);
+    /* NO status band on this screen. system_status() gates on link state, so
+     * with the link down it can only ever return SYS_UNKNOWN — the band would
+     * be grey here every single time. A field that can show exactly one value
+     * carries no information, and this one was covering the reconnect text
+     * that does. Same reasoning as the splash and firmware-mismatch screens. */
+    draw_text_centred_bg_in(8, DW - 16, 250, "Attempting to reconnect...", 2,
+                            C_WHITE, C_BLACK);
 
     /* Reconnect attempts, not ping misses — linkreq_attempts is the count that
      * actually advances while the remote is retrying LINK_REQUEST. */
     snprintf(buf, sizeof(buf), "Attempts %u   RSSI %d dBm",
              d->link.linkreq_attempts, d->link.rssi_avg_dbm);
-    draw_text_centred_bg_in(8, DW - 16, 284, buf, 2, fg, bg);
+    draw_text_centred_bg_in(8, DW - 16, 288, buf, 2, C_GREY, C_BLACK);
 }
 
 /* ── Screen: error — FSD §10.2.6 ──────────────────────────────── */
@@ -1371,14 +1369,12 @@ static void draw_splash_dynamic(const disp_data_t *d, int attempt,
     } else {
         pct = (attempt * 100) / max_attempts;
     }
-    /* At boot there is no STATUS_UPDATE yet, so this band is grey until the
-     * base reports — it never greets the operator with a green "safe" it has
-     * not confirmed. */
-    uint32_t bg = draw_status_band(d, 0, false);
-    uint32_t fg = band_fg(bg);
-
-    draw_bar(90, 262, 300, 20, pct, linked ? C_GREEN : C_SELECTED, bg);
-    draw_text_centred_bg_in(0, DW, DH - 26, "(C) 2026 David Steeman", 2, fg, bg);
+    /* NO status band while booting. The operator has not begun a sequence yet,
+     * so it answers a question nobody is asking — and it sat on top of the
+     * progress bar, which is the one thing this screen exists to show. */
+    draw_bar(90, 262, 300, 20, pct, linked ? C_GREEN : C_SELECTED, C_BLACK);
+    draw_text_centred_bg_in(0, DW, DH - 26, "(C) 2026 David Steeman", 2,
+                            C_GREY, C_BLACK);
 }
 
 static void draw_fw_mismatch(const uint8_t *base_ver, const uint8_t *remote_ver)
@@ -1396,9 +1392,8 @@ static void draw_fw_mismatch(const uint8_t *base_ver, const uint8_t *remote_ver)
              remote_ver[0], remote_ver[1], remote_ver[2]);
     draw_text(110, 175, buf, 2, C_WHITE);
 
-    /* Kept clear of BAND_Y — see draw_error_screen. */
-    draw_text_centred(202, "Reflash both units with", 2, C_GREY);
-    draw_text_centred(224, "matching firmware.", 2, C_GREY);
+    draw_text_centred(226, "Reflash both units with", 2, C_GREY);
+    draw_text_centred(250, "matching firmware.", 2, C_GREY);
 }
 
 /* ── Overlay: NACK / toast — FSD §10.2.7 ──────────────────────── */
@@ -1610,9 +1605,11 @@ static void display_task(void *arg)
                 if (full) draw_error_screen(err_text);
                 draw_status_band(&d, 8, true);
                 break;
+            /* No band on FW_MISMATCH: the link never reaches LINKED, so
+             * system_status() can only return SYS_UNKNOWN — always grey, no
+             * information, and it displaced the "reflash both units" text. */
             case SCR_FW_MISMATCH:
                 if (full) draw_fw_mismatch(fw_base, fw_remote);
-                draw_status_band(&d, 8, true);
                 break;
             default:
                 break;
