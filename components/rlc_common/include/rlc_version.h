@@ -7,7 +7,51 @@
 
 #pragma once
 
-/* 1.1.21 (2026-08-27): status band only where it carries information.
+/* 1.1.23 (2026-08-27): FIRE COMPLETE screen holds for 10 s.
+ *
+ * Operator: 5 s still was not long enough to read the igniter status and act
+ * on it. FIRE_COMPLETE_SCREEN_MS 5000 -> 10000. POST_FIRE_COOLDOWN_MS is
+ * untouched at 2000 — the base still accepts another arm two seconds after a
+ * shot, and the screen is cancelled the instant the FSM re-arms, so the longer
+ * hold costs nothing operationally and never delays the next shot.
+ *
+ * 1.1.22 (2026-08-27): FIRE COMPLETE screen holds for 5 s, decoupled from the
+ * base's post-fire cooldown.
+ *
+ * Operator request: 2 s was too brief to read. The screen duration was
+ * POST_FIRE_COOLDOWN_MS, which is ALSO the fire-path constant governing how
+ * long the base sits in POST_FIRE before accepting another arm — so simply
+ * raising it would have extended the base's cooldown by 3 s as a side effect.
+ * Fire-path constants get changed by explicit decision here, not incidentally.
+ * New display-only FIRE_COMPLETE_SCREEN_MS (5000); POST_FIRE_COOLDOWN_MS stays
+ * at 2000 and the base FSM is untouched.
+ *
+ * Decoupling them opened a hazard that is closed in the same change. The
+ * fire_done branch outranks the FSM-derived screen, which was harmless while
+ * both ended at 2000 ms. With a 5 s screen the operator can re-arm while it is
+ * still up, and the display would have shown FIRE COMPLETE over a live ARMED
+ * state. It is now cancelled the moment the FSM enters ARMED, PRE_FIRE or
+ * FIRING: a summary of the last shot must never cover a live pad.
+ *
+ * The countdown is relabelled "CLEARS IN" from "IDLE IN". After ~2 s the base
+ * really is IDLE, so an "IDLE IN 2.6s" countdown would have been stating
+ * something untrue; the screen can only promise when it will clear itself.
+ * FSD §10.2.4a updated to match: new duration, the early-cancel rule, the
+ * "CLEARS IN" wording, and the igniter status line below.
+ *
+ * The screen also now shows the fired channel's continuity band continuously,
+ * with the same shape-plus-colour coding as the channel grid: OPEN "LIKELY
+ * FIRED" (green), MARGINAL "CHECK" (yellow), CONNECTED "STILL CONNECTED"
+ * (red), or "IGNITER ?" when the status is not fresh. A good igniter burns
+ * through, so OPEN is the expected outcome and the operator's first evidence
+ * the shot took; still CONNECTED usually means it did not fire. The wording
+ * describes the measurement rather than delivering a verdict — OPEN cannot
+ * distinguish a burned igniter from a lead that fell off, which is why it says
+ * LIKELY. This is the operator-facing half of T-S19.
+ *
+ * Remote-only, but the version check is strict — flash both units.
+ *
+ * 1.1.21 (2026-08-27): status band only where it carries information.
  *
  * Operator report: the band covered the splash progress bar and the LINK LOST
  * reconnect text. It was drawn on every screen, which was the wrong default.
@@ -390,5 +434,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  21
-#define RLC_VERSION_STRING "1.1.21"
+#define RLC_VERSION_PATCH  23
+#define RLC_VERSION_STRING "1.1.23"

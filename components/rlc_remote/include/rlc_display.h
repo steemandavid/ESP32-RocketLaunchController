@@ -100,7 +100,8 @@ void display_firing(uint8_t channel, uint32_t countdown_ms);
 void display_link_lost(uint32_t seconds_since_contact, int ping_attempts);
 
 /**
- * Show the fire-complete screen for POST_FIRE_COOLDOWN_MS (FSD §10.2.4a).
+ * Show the fire-complete screen for FIRE_COMPLETE_SCREEN_MS (FSD §10.2.4a).
+ * Cancelled early if the FSM re-enters ARMED/PRE_FIRE/FIRING.
  */
 void display_fire_complete(uint8_t channel);
 

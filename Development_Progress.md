@@ -3588,7 +3588,7 @@ energised.
 | T-S16 | ERR_COMM_DEGRADED blocks firing | TODO |
 | T-S17 | Key switch sense verifies key switch (FSD wording; this row previously said "arm switch") | **PASS** 2026-08-27 — `key=0` in SAFE, `key=1` in ARM, both transitions clean; guard 1 then passed with two successful arms, each verified by arm sense 170 ms after the relay drive (`arm verify started` → `sense HIGH` → `sense verified`). Both auto-disarmed at exactly 10000 ms, re-confirming T-S14 |
 | T-S18 | Arm switch sense fault detection → NACK 0x0B | TODO |
-| T-S19 | Post-fire igniter status via continuity | TODO |
+| T-S19 | Post-fire igniter status via continuity | TODO — still needs a real igniter that burns through. **The operator-facing half is now built (fw 1.1.22):** the FIRE COMPLETE screen shows the fired channel's continuity band live, `○ OPEN - LIKELY FIRED` / `▲ MARGINAL - CHECK` / `● STILL CONNECTED` / `IGNITER ?`. On the bench with a halogen load this correctly reads STILL CONNECTED, since a lamp does not burn through |
 
 ---
 

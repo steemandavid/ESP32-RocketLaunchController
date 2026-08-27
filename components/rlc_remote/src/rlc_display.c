@@ -1224,15 +1224,56 @@ static void draw_fire_complete_dynamic(const disp_data_t *d, uint8_t ch,
     char buf[48];
     draw_top_bar_dynamic(d);
 
-    draw_text_centred(BOX_Y + 32, "FIRE COMPLETE", 3, C_GREEN);
+    draw_text_centred(BOX_Y + 24, "FIRE COMPLETE", 3, C_GREEN);
     snprintf(buf, sizeof(buf), "CHANNEL %u", ch);
-    draw_text_centred(BOX_Y + 80, buf, 3, C_WHITE);
+    draw_text_centred(BOX_Y + 64, buf, 3, C_WHITE);
+
+    /* Live igniter status for the channel just fired (FSD §15.4 T-S19).
+     *
+     * A good igniter burns through, so the continuity going OPEN is the
+     * expected outcome and the operator's first evidence that the shot took.
+     * Still CONNECTED after a pulse means current can still flow through it,
+     * which usually means it did not fire.
+     *
+     * The wording stays a description of the measurement, not a verdict on the
+     * igniter — same reason the band is labelled CONNECTED rather than GOOD.
+     * OPEN says the circuit opened; it cannot distinguish a burned igniter
+     * from a lead that fell off, and saying "FIRED" outright would assert more
+     * than the reading supports. Redrawn every frame so a lead pulled after
+     * the shot shows up immediately. */
+    bool band_known = d->status_fresh && ch >= 1 && ch <= NUM_CHANNELS;
+    uint8_t band = CONT_OPEN;
+    if (band_known) {
+        band = (uint8_t)((d->status.continuity_bands >> (2 * (ch - 1))) & 0x3);
+    }
+
+    const char *verdict;
+    uint32_t    verdict_col;
+    if (!band_known) {
+        verdict = "IGNITER ?";           verdict_col = C_GREY;
+    } else if (band == CONT_OPEN) {
+        verdict = "OPEN - LIKELY FIRED"; verdict_col = C_GREEN;
+    } else if (band == CONT_MARGINAL) {
+        verdict = "MARGINAL - CHECK";    verdict_col = C_WARN;
+    } else {
+        verdict = "STILL CONNECTED";     verdict_col = C_FAULT;
+    }
+
+    draw_text_centred_bg_in(BOX_X + 6, BOX_W - 12, BOX_Y + 106, verdict, 2,
+                            verdict_col, C_BLACK);
+    /* Shape as well as colour, matching the channel grid. */
+    draw_continuity_glyph(BOX_X + 26, BOX_Y + 114, 7,
+                          band_known ? band : CONT_OPEN);
 
     int64_t left = until_ms - now_ms();
     if (left < 0) left = 0;
-    snprintf(buf, sizeof(buf), "IDLE IN %lld.%llds",
+    /* "CLEARS IN", not "IDLE IN". The screen now outlives the base's POST_FIRE
+     * cooldown, so after ~2 s the base is already IDLE and an "IDLE IN 2.6s"
+     * countdown would be stating something untrue. This counts what it can
+     * actually promise: when this screen goes away. */
+    snprintf(buf, sizeof(buf), "CLEARS IN %lld.%llds",
              (long long)(left / 1000), (long long)((left % 1000) / 100));
-    draw_text_centred_bg_in(BOX_X + 6, BOX_W - 12, BOX_Y + 132, buf, 2,
+    draw_text_centred_bg_in(BOX_X + 6, BOX_W - 12, BOX_Y + 140, buf, 2,
                             C_GREY, C_BLACK);
 
     draw_status_band(d, 0, true);
@@ -1552,7 +1593,16 @@ static void display_task(void *arg)
         if (fw_mismatch)                 want = SCR_FW_MISMATCH;
         else if (err_latched)            want = SCR_ERROR;
         else if (now_ms() < splash_until_ms) want = SCR_SPLASH;
-        else if (fire_done)              want = SCR_FIRE_COMPLETE;
+        /* fire_done outranks the FSM-derived screen, which was harmless while
+         * the screen and the base's cooldown both ended at 2000 ms. Now that
+         * the screen outlives the cooldown, the operator can re-arm while it
+         * is still up — and a summary of the last shot must never sit on top
+         * of a live ARMED/PRE_FIRE/FIRING state. Cancel it the moment the FSM
+         * leaves an idle state. */
+        else if (fire_done && d.state != STATE_ARMED &&
+                              d.state != STATE_PRE_FIRE &&
+                              d.state != STATE_FIRING)
+                                         want = SCR_FIRE_COMPLETE;
         else                             want = screen_for_state(&d);
 
         /* A retiring overlay leaves a hole — force a full redraw. */
@@ -1865,7 +1915,7 @@ void display_fire_complete(uint8_t channel)
     if (!s_req_mutex) return;
     xSemaphoreTake(s_req_mutex, portMAX_DELAY);
     s_req.fire_complete_ch       = channel;
-    s_req.fire_complete_until_ms = now_ms() + POST_FIRE_COOLDOWN_MS;
+    s_req.fire_complete_until_ms = now_ms() + FIRE_COMPLETE_SCREEN_MS;
     xSemaphoreGive(s_req_mutex);
 }
 

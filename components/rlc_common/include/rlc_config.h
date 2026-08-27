@@ -51,6 +51,20 @@
 #define FIRE_PULSE_BACKSTOP_MARGIN_MS  250
 #define POST_FIRE_COOLDOWN_MS          2000
 
+/* How long the remote holds the FIRE COMPLETE screen (FSD §10.2.4a).
+ *
+ * Deliberately SEPARATE from POST_FIRE_COOLDOWN_MS above, which is a fire-path
+ * constant: it governs how long the BASE sits in POST_FIRE before returning to
+ * IDLE and accepting another arm. The two were the same value, so lengthening
+ * the screen by reusing it would have silently extended the base's cooldown as
+ * well — a fire-path timing change nobody asked for. Display only.
+ *
+ * 5000 -> 10000 on 2026-08-27 (operator): five seconds still was not long
+ * enough to read the igniter status and act on it. The screen is cancelled the
+ * moment the FSM re-arms, so a longer hold costs nothing operationally — it
+ * never delays the next shot. */
+#define FIRE_COMPLETE_SCREEN_MS        10000
+
 #define ARM_TIMEOUT_MS                 10000
 
 /* FSD §7.2.2: how long the base waits for the arm relay's sense feedback to

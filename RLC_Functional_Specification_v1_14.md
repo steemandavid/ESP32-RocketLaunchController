@@ -2416,19 +2416,58 @@ Full red background or large red indicator. Shows pre-fire countdown (decrementi
 ├──────────────────────────────────────────────────┤
 │                                                  │
 │            ╔══════════════════════╗               │
-│            ║                     ║               │
 │            ║   FIRE COMPLETE     ║               │
 │            ║   CHANNEL 3         ║               │
 │            ║                     ║               │
-│            ║   Returning to      ║               │
-│            ║   IDLE in 1.8s      ║               │
-│            ║                     ║               │
+│            ║ ○ OPEN - LIKELY     ║               │
+│            ║      FIRED          ║               │
+│            ║   CLEARS IN 8.2s    ║               │
 │            ╚══════════════════════╝               │
 │                                                  │
 └──────────────────────────────────────────────────┘
 ```
 
-Green/yellow border. Displayed for `POST_FIRE_COOLDOWN_MS` (2000 ms) after STATUS_UPDATE confirms base in POST_FIRE or IDLE, then auto-transitions to main status screen.
+Green/yellow border. Shown after STATUS_UPDATE confirms the base in POST_FIRE or
+IDLE, then auto-transitions to the main status screen.
+
+**Duration — `FIRE_COMPLETE_SCREEN_MS` (10000 ms), amended 2026-08-27 (fw
+1.1.22, raised again to 10 s in 1.1.23).** This was `POST_FIRE_COOLDOWN_MS`
+(2000 ms), which the operator found too brief to read; 5 s was still not long
+enough to read the igniter status and act on it. The two are now separate constants **deliberately**:
+`POST_FIRE_COOLDOWN_MS` is a fire-path parameter governing how long the *base*
+holds POST_FIRE before accepting another arm, and it remains at 2000 ms.
+Lengthening the screen by reusing it would have extended the base's cooldown as
+a side effect — fire-path constants are changed here by explicit decision, not
+incidentally.
+
+**The screen is cancelled early if the remote FSM enters ARMED, PRE_FIRE or
+FIRING.** Because the screen now outlives the base's cooldown, the operator can
+re-arm while it is still displayed; a summary of the last shot must never be
+shown over a live pad. The `fire_done` branch outranks the FSM-derived screen,
+so without this the display would have shown FIRE COMPLETE during a live ARMED
+state.
+
+**Countdown wording is "CLEARS IN", not "Returning to IDLE in".** After ~2000 ms
+the base genuinely is IDLE while the screen is still up, so an "IDLE IN"
+countdown would state something untrue. The screen can only promise when it
+will clear itself.
+
+**Igniter status line (added 2026-08-27, fw 1.1.22).** The screen continuously
+shows the continuity band of the channel just fired, with the same shape-plus-
+colour coding as the §10.2.2 channel grid, refreshed every frame:
+
+| Band | Shown | Colour | Meaning |
+|---|---|---|---|
+| OPEN | `○ OPEN - LIKELY FIRED` | green | Circuit opened — the expected outcome of a good igniter burning through |
+| MARGINAL | `▲ MARGINAL - CHECK` | yellow | Partial continuity remains |
+| CONNECTED | `● STILL CONNECTED` | red | Current can still flow — usually a misfire |
+| no fresh status | `IGNITER ?` | grey | Not known; never guessed |
+
+The wording describes the **measurement**, not a verdict on the igniter — the
+same reason the band is labelled CONNECTED rather than GOOD (§5.4.2). OPEN says
+the circuit opened; it cannot distinguish a burned igniter from a lead that
+fell off, so "LIKELY FIRED" is as far as the reading supports. This is the
+operator-facing half of T-S19.
 
 #### 10.2.5 Link Lost Screen
 
