@@ -7,7 +7,59 @@
 
 #pragma once
 
-/* 1.1.24 (2026-08-27): a cease-fire tells the operator the channel was live.
+/* 1.1.26 (2026-08-27): remove the slack that let 1.1.25 still miss a base-side
+ * cut.
+ *
+ * 1.1.25 allowed 200 ms of clock-skew slack on the elapsed-time test, so a
+ * pulse cut at 802 ms of 1000 was classified as complete — the operator turned
+ * the pad key two milliseconds inside the margin and got no toast. Retest
+ * caught it.
+ *
+ * The slack is removed. The skew it guarded against was also unfounded in the
+ * wrong direction: a measured completion read 1105 ms on the remote's clock,
+ * over rather than under. And POST_FIRE turns out to be authoritative anyway —
+ * rlc_base_fsm.c calls status_update_trigger() on entering it, so a completed
+ * pulse always pushes a STATUS_UPDATE saying POST_FIRE instead of waiting for
+ * the 2 s poll. The observed completion was detected that way (base_state=6),
+ * never reaching the elapsed-time branch at all.
+ *
+ * Elapsed time is now purely a backstop for that one packet being lost over
+ * the air, at the full FIRE_PULSE_DURATION_MS with no margin — which is also
+ * true on its own terms: a pulse cut at or after 1000 ms had already delivered
+ * its whole duration.
+ *
+ * 1.1.25 (2026-08-27): the remote no longer claims FIRE COMPLETE for a pulse
+ * the base cut short.
+ *
+ * Reported from the bench while testing the 1.1.24 toasts: turning the BASE key
+ * to SAFE during a pulse produced no cease-fire toast. Investigating it found
+ * something worse than the missing toast.
+ *
+ * A COMPLETED pulse runs FIRING -> POST_FIRE -> IDLE. A pulse the BASE cuts
+ * short — pad key to SAFE, arm sense lost, continuity lost — goes FIRING ->
+ * IDLE directly. The remote saw both as base_state == STATE_IDLE and announced
+ * "Fire complete detected" for either, putting the FIRE COMPLETE screen up over
+ * an interrupted shot. Captured: base key off at 550 ms of a 1000 ms pulse,
+ * remote displayed FIRE COMPLETE. Claiming a shot completed when it did not is
+ * worse than saying nothing, and since 1.1.23 that screen also carries an
+ * igniter-status line, so it was pairing a false headline with a real reading.
+ *
+ * The remote now timestamps its own entry to FIRING and compares elapsed time
+ * against FIRE_PULSE_DURATION_MS, with 200 ms of slack for clock skew between
+ * the two units' independent countdowns. POST_FIRE is still accepted as a
+ * positive confirmation when it arrives, but is NOT relied on alone:
+ * STATUS_UPDATE_INTERVAL_MS and POST_FIRE_COOLDOWN_MS are both 2000 ms, so the
+ * remote can miss the POST_FIRE window entirely and see only IDLE. Local
+ * elapsed time needs no packet to land in a particular window.
+ *
+ * A base-side cut now toasts with the attention beep, naming the pad key when
+ * the status reports it off — the common cause, and the operator needs to know
+ * the pad end acted rather than the remote:
+ *
+ *   key reported off   "CH n CUT SHORT - BASE KEY"
+ *   otherwise          "CH n CUT SHORT AT BASE"
+ *
+ * 1.1.24 (2026-08-27): a cease-fire tells the operator the channel was live.
  *
  * Operator report: releasing the fire button during the pulse dropped the
  * remote back to the idle screen with no notification. Both cease-fire paths
@@ -462,5 +514,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  24
-#define RLC_VERSION_STRING "1.1.24"
+#define RLC_VERSION_PATCH  26
+#define RLC_VERSION_STRING "1.1.26"

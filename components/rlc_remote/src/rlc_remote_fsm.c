@@ -52,6 +52,7 @@ static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 
 /* Software timer timestamps */
 static int64_t  s_prefire_start_ms = 0;
+static int64_t  s_firing_start_ms = 0;
 
 /* Pending command tracking — what wait_for_ack() correlates incoming
  * ACK/NACKs against (4.8).
@@ -409,6 +410,7 @@ static void do_enter_idle(void)
     s_armed_channel = 0;
     s_fire_repeat_active = false;
     set_prefire_start(0);
+    s_firing_start_ms = 0;
     /* 4.9: re-sync the tracked selection with the encoder — after
      * LINKING/LINK_LOST the cached s_selected_channel could be stale,
      * making the display highlight a different channel than a long-press
@@ -1108,13 +1110,74 @@ static void process_event(const rlc_fsm_event_t *evt)
         } else if (evt->type == EVT_STATUS_UPDATE) {
             cache_status(&evt->data.status_update.status);
 
-            /* Fire complete detected via STATUS_UPDATE */
+            /* The base has left the firing path. Two very different things
+             * end that way and this used to treat them as one.
+             *
+             * A COMPLETED pulse runs FIRING -> POST_FIRE -> IDLE. A pulse the
+             * BASE cut short — the pad key turned to SAFE, arm sense lost,
+             * continuity lost — goes FIRING -> IDLE directly. Both are seen
+             * here as base_state IDLE, so the old test announced "Fire
+             * complete" for a shot that was interrupted, and put the FIRE
+             * COMPLETE screen up over it. Reported from the bench: turning the
+             * base key off mid-pulse showed FIRE COMPLETE for a pulse cut at
+             * 550 ms of 1000. Claiming a shot completed when it did not is
+             * worse than saying nothing.
+             *
+             * POST_FIRE alone is not a safe discriminator: STATUS_UPDATE_
+             * INTERVAL_MS and POST_FIRE_COOLDOWN_MS are both 2000 ms, so the
+             * remote can miss the POST_FIRE window entirely and see only IDLE.
+             * Local elapsed time is the reliable test and needs no packet to
+             * land in a particular window; POST_FIRE is accepted as a positive
+             * confirmation when it does arrive. */
             if (s_last_status.base_state == STATE_POST_FIRE ||
                 s_last_status.base_state == STATE_IDLE) {
-                ESP_LOGI(TAG, "Fire complete detected (base state=%d)",
-                         s_last_status.base_state);
-                display_fire_complete(s_armed_channel);
+
+                int64_t fired_ms = (s_firing_start_ms > 0)
+                                 ? (now_ms() - s_firing_start_ms) : 0;
+
+                /* POST_FIRE is authoritative, and reliable: the base calls
+                 * status_update_trigger() on entering it (rlc_base_fsm.c),
+                 * so a completed pulse always pushes a STATUS_UPDATE saying so
+                 * rather than waiting for the 2 s poll.
+                 *
+                 * The elapsed-time test is therefore only a backstop for that
+                 * one packet being lost over the air, and it takes NO slack.
+                 * An earlier version allowed 200 ms for clock skew and
+                 * misclassified a real abort: the operator turned the pad key
+                 * at 802 ms of a 1000 ms pulse, two milliseconds inside the
+                 * margin, and the remote called it complete. The skew fear was
+                 * unfounded in the wrong direction anyway — a measured
+                 * completion read 1105 ms from the remote's clock, over rather
+                 * than under.
+                 *
+                 * At the full duration the test is also true on its own terms:
+                 * if the base cut the pulse at or after 1000 ms, the igniter
+                 * had already had its whole pulse, so "completed" is accurate. */
+                bool completed = (s_last_status.base_state == STATE_POST_FIRE) ||
+                                 (fired_ms >= FIRE_PULSE_DURATION_MS);
+
                 s_fire_repeat_active = false;
+
+                if (completed) {
+                    ESP_LOGI(TAG, "Fire complete (base state=%d, %lld ms)",
+                             s_last_status.base_state, (long long)fired_ms);
+                    display_fire_complete(s_armed_channel);
+                } else {
+                    /* Name the pad key when the status says it is off — that
+                     * is the common cause and the operator needs to know the
+                     * pad end acted, not the remote. */
+                    char tbuf[40];
+                    ESP_LOGW(TAG, "Pulse cut short at the base after %lld ms "
+                                  "(key=%u)", (long long)fired_ms,
+                             s_last_status.base_key_switch);
+                    snprintf(tbuf, sizeof(tbuf),
+                             s_last_status.base_key_switch
+                                 ? "CH %u CUT SHORT AT BASE"
+                                 : "CH %u CUT SHORT - BASE KEY",
+                             s_armed_channel);
+                    buzzer_play(BUZZER_BEEP_TRIPLE);
+                    display_toast(tbuf);
+                }
                 do_enter_idle();
             }
         } else if (evt->type == EVT_LINK_LOST) {
@@ -1184,6 +1247,10 @@ static void check_timers(void)
         if ((now_ms() - s_prefire_start_ms) >= PRE_FIRE_DELAY_MS) {
             ESP_LOGI(TAG, "PRE_FIRE -> FIRING (local countdown elapsed)");
             rlc_rgb_led_set_pattern(LED_PATTERN_FIRING);
+            /* Needed to tell a completed pulse from one the base cut short —
+             * both end with base_state == STATE_IDLE. See STATE_FIRING's
+             * STATUS_UPDATE branch. */
+            s_firing_start_ms = now_ms();
             s_state = STATE_FIRING;
         }
     }
