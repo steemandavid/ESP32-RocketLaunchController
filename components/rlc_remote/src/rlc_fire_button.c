@@ -145,6 +145,20 @@ void fire_button_init(void)
 
     /* Init debounce engine (8-bit = 80 ms at 10 ms poll) */
     rlc_debounce_init(&s_db, PIN_FIRE_BUTTON, DEBOUNCE_8BIT);
+    /* Dead-man asymmetry. Press still needs the full 8 samples (80 ms at the
+     * 10 ms poll below) so noise cannot start a fire sequence; release needs
+     * only 2 (20 ms) so letting go actually stops one.
+     *
+     * Symmetric debouncing here was a real defect, found on target 2026-08-27:
+     * mashing the button fired the channel. Releases shorter than 80 ms never
+     * filled the register, so no release was ever reported, the FSM saw a
+     * continuous hold, CMD_FIRE repeats kept flowing, and both dead-man layers
+     * stayed satisfied — they are downstream of this one decision. A worn or
+     * chattering contact produces the identical signal.
+     *
+     * 20 ms sits in a real gap: switch bounce is 1-10 ms (rejected), a human
+     * release is 30-80 ms (caught). One sample would report bounce as release. */
+    rlc_debounce_set_fast_release(&s_db, 2);
 
     if (gpio_get_level(PIN_FIRE_BUTTON) == 0) {   /* LOW = pressed */
         ESP_LOGW(TAG, "Button held at boot — no press event until released");

@@ -7,7 +7,50 @@
 
 #pragma once
 
-/* 1.1.28 (2026-08-27): boot display health check actually checks.
+/* 1.1.29 (2026-08-27): the dead-man can no longer be defeated by mashing.
+ *
+ * SAFETY DEFECT found in edge-case testing (Phase 5 task 5). Rapidly mashing
+ * the fire button FIRED THE CHANNEL.
+ *
+ * The fire button used symmetric 8-bit debouncing at a 10 ms poll, so a release
+ * was only reported after 80 ms of continuous release. Mash faster than that and
+ * the shift register never reaches all-high: no release is ever reported, the
+ * FSM sees a continuous hold, CMD_FIRE repeats keep flowing, and BOTH dead-man
+ * layers stay satisfied — the remote's release detection and the base's
+ * FIRE_AUTHORIZATION_TIMEOUT_MS both sit downstream of that one decision, so
+ * neither can catch it. Captured: PRE_FIRE at 655397, full countdown, FIRING at
+ * 660437, pulse delivered.
+ *
+ * This is not only about deliberate mashing. A worn or chattering switch
+ * contact produces the identical signal, as would a shaking hand — the operator
+ * would believe they were not holding the button while the system fired. The FSD
+ * premise is "releasing the button at any point cuts current — a dead-man
+ * switch, not a latch".
+ *
+ * THE UNDERLYING ERROR was symmetry. For a dead-man the two directions have
+ * opposite consequences: a missed release fires an igniter the operator has let
+ * go of, while a spurious release only aborts, which is the direction that cuts
+ * current. Demanding the same evidence for both makes the system exactly as
+ * reluctant to stop as to start.
+ *
+ * New opt-in rlc_debounce_set_fast_release(). The fire button keeps 8 samples
+ * (80 ms) to register a PRESS, so noise cannot start a sequence, and needs 2
+ * (20 ms) to register a RELEASE. 20 ms sits in a real gap: switch bounce is
+ * 1-10 ms (rejected), a human release is 30-80 ms (caught). One sample would
+ * report bounce as release.
+ *
+ * Faster polling was considered and rejected: it narrows the blind window
+ * without closing it, and an 8-sample window at 1 ms is 8 ms — inside typical
+ * bounce duration — so it would erode the bounce rejection that debouncing
+ * exists for, in both directions.
+ *
+ * Opt-in, so continuity, key sense and arm sense keep symmetric debouncing,
+ * which is correct for a sensor. Pinned by tests/host/test_debounce.c T-D07 and
+ * T-D08, verified to FAIL against the old symmetric behaviour.
+ *
+ * Remote-only, but the version check is strict — flash both units.
+ *
+ * 1.1.28 (2026-08-27): boot display health check actually checks.
  *
  * Found while working out what a fault-injection harness could substitute for
  * FSD T-S10 (disconnect display MOSI at boot), which cannot be run on this
@@ -573,5 +616,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  28
-#define RLC_VERSION_STRING "1.1.28"
+#define RLC_VERSION_PATCH  29
+#define RLC_VERSION_STRING "1.1.29"

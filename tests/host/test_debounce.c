@@ -172,6 +172,67 @@ int main(void)
     }
 
     /* ── T-D06: NULL guards ────────────────────────────────────────── */
+    printf("T-D07 dead-man asymmetry: fast release, slow press (fire button)\n");
+    {
+        /* The defect this pins, found on target 2026-08-27: with symmetric
+         * debouncing, mashing the fire button fired the channel. A release
+         * shorter than the full 8-sample window never filled the register, so
+         * no release was ever reported and every layer above saw a continuous
+         * hold. Two dead-man layers sat downstream of that one decision. */
+        rlc_debounce_t db;
+        rlc_debounce_init(&db, 7, DEBOUNCE_8BIT);
+        rlc_debounce_set_fast_release(&db, 2);
+        reset_cb();
+
+        /* Establish a stable press. */
+        feed(&db, 0, 8);
+        check("press after 8 low samples", rlc_debounce_get_state(&db) == true);
+
+        /* THE REGRESSION: 3 high samples is far short of the 8-sample window,
+         * and used to report nothing at all. It must now report a release. */
+        reset_cb();
+        feed(&db, 1, 3);
+        check("release reported within 3 samples (was invisible before)",
+              rlc_debounce_get_state(&db) == false);
+        check("release fired exactly one callback", cb_count == 1);
+        check("callback reported inactive", cb_last_state == false);
+
+        /* A single-sample glitch must NOT read as a release: that is why the
+         * threshold is 2 rather than 1. Contact bounce is 1-10 ms. */
+        feed(&db, 0, 8);                       /* back to a stable press */
+        check("stable press again", rlc_debounce_get_state(&db) == true);
+        reset_cb();
+        feed(&db, 1, 1);                       /* one high sample only */
+        check("single-sample glitch is not a release",
+              rlc_debounce_get_state(&db) == true);
+        check("glitch fired no callback", cb_count == 0);
+
+        /* Press direction must remain SLOW — noise must not start a sequence. */
+        feed(&db, 1, 8);                       /* settle released */
+        check("settled released", rlc_debounce_get_state(&db) == false);
+        reset_cb();
+        feed(&db, 0, 7);                       /* 7 low samples: not enough */
+        check("7 low samples do not register a press",
+              rlc_debounce_get_state(&db) == false);
+        feed(&db, 0, 1);                       /* the 8th completes it */
+        check("8th low sample registers the press",
+              rlc_debounce_get_state(&db) == true);
+    }
+
+    printf("T-D08 fast release is opt-in — default debouncing stays symmetric\n");
+    {
+        rlc_debounce_t db;
+        rlc_debounce_init(&db, 8, DEBOUNCE_8BIT);   /* no set_fast_release */
+        feed(&db, 0, 8);
+        check("press established", rlc_debounce_get_state(&db) == true);
+        feed(&db, 1, 3);
+        check("3 high samples do NOT release a symmetric input",
+              rlc_debounce_get_state(&db) == true);
+        feed(&db, 1, 5);
+        check("full 8 samples do release it",
+              rlc_debounce_get_state(&db) == false);
+    }
+
     printf("T-D06 NULL-safe API\n");
     {
         rlc_debounce_init(NULL, 0, DEBOUNCE_8BIT);   /* must not crash */

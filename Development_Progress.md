@@ -3418,7 +3418,7 @@ behaviour rather than hardware — worth a low-priority look.
 | 2 | Watchdog stress testing | §15.4 | TODO |
 | 3 | Range testing (10 m, 50 m, 100 m, 200 m) | §15.1 | **200 m DONE** (2026-08-25, −93 dBm holding, base on the ground). 10/50/100 m and the drop-out point still TODO |
 | 4 | Power consumption measurement | §14 | TODO |
-| 5 | Edge case testing (rapid toggling, button mashing, power cycling) | §15 | TODO |
+| 5 | Edge case testing (rapid toggling, button mashing, power cycling) | §15 | **PART-RUN 2026-08-27 — found one safety defect.** E1 rapid arm/disarm cycling PASS, E2 fire-button mashing **FAILED (fired the channel)** → fixed in fw 1.1.29, retest PASS, E3 encoder during countdown PASS, E4 channel change while armed PASS. Still to run: power cycling *under load* (during FIRING), simultaneous-input cases (fire release + arm switch off together), and sustained repetition for drift |
 | 6 | Documentation: build instructions, flash procedure, wiring diagram | §4.3 | TODO |
 | 7 | Final version number setting | §4.3 | TODO |
 | 8 | Rotate ESP-NOW/integrity keys and move them out of the tracked repo (bug #20) | §6.2.1, §6.2.2 | TODO |
@@ -3776,6 +3776,64 @@ checking the SPI status.
 Verified on target: the real panel still reports
 `ILI9488 init: … ID 0x2A403300 (healthy)`, so the tightened check does not
 reject the clone ID this hardware actually uses.
+
+### Edge-Case Testing — E2 defeated the dead-man (2026-08-27)
+
+Phase 5 task 5, aimed at known seams rather than random mashing.
+
+| | Case | Result |
+|---|---|---|
+| E1 | Rapid arm/disarm cycling, faster than the 500 ms weld hysteresis | PASS — no false `RELAY WELDED`, no stuck ARMED |
+| E2 | Fire-button mashing while ARMED | **FAILED — fired the channel.** See below |
+| E3 | Encoder rotation during the countdown | PASS — immediate abort, no pulse |
+| E4 | Channel change while ARMED | PASS — disarmed, did not re-arm on ch 2's MARGINAL surrogate |
+
+#### E2 — mashing the fire button fired the channel
+
+```
+655397  ARMED -> PRE_FIRE (ch 1)
+660437  PRE_FIRE -> FIRING (local countdown elapsed)   <- full 5040 ms, no abort
+660917  Fire button released — CEASE_FIRE
+```
+
+Other attempts in the same run aborted correctly (`Fire button released during
+PRE_FIRE — abort` at 645787, 652757, 675397), so this was not a mis-run: on that
+attempt the FSM never saw a release across five seconds of mashing.
+
+**Mechanism.** The fire button used symmetric `DEBOUNCE_8BIT` at a 10 ms poll,
+so a release was only reported after **80 ms of continuous release**. Mash faster
+and the shift register never reaches all-high: no release is reported, the FSM
+sees a continuous hold, `CMD_FIRE` repeats keep flowing, and **both dead-man
+layers stay satisfied** — the remote's release detection and the base's
+`FIRE_AUTHORIZATION_TIMEOUT_MS` both sit downstream of that one decision, so
+neither can catch it.
+
+**Not only about deliberate mashing.** A worn or chattering contact produces the
+identical signal, as would a shaking hand. The operator would believe they were
+not holding the button while the system fired. §1's premise is *"releasing the
+button at any point cuts current — a dead-man switch, not a latch"*.
+
+**The underlying error was symmetry.** For a dead-man the directions have
+opposite consequences: a missed release fires an igniter the operator has let go
+of; a spurious release only aborts, which is the direction that cuts current.
+Demanding equal evidence for both makes the system exactly as reluctant to stop
+as to start.
+
+**Faster polling was considered and rejected.** It narrows the blind window
+without closing it, and 8 samples at 1 ms is 8 ms — inside typical bounce
+duration (1-10 ms) — so it would erode the bounce rejection debouncing exists
+for, in *both* directions, while costing 10x the polling.
+
+**Fixed in fw 1.1.29** by opt-in `rlc_debounce_set_fast_release()`: press keeps
+8 samples (80 ms), release needs 2 (20 ms), which sits between bounce (1-10 ms,
+rejected) and a human release (30-80 ms, caught). Other consumers keep symmetric
+debouncing, correct for a sensor. Pinned by `test_debounce.c` T-D07/T-D08, and
+**the test was verified to FAIL against the old behaviour** rather than merely
+passing alongside it.
+
+**Retest evidence note:** E1 and E2 were re-run after the fix and the operator
+observed no fire, but the serial captures had been killed to free the ports for
+flashing, so that retest rests on operator observation rather than a log.
 
 ### Phase 5 FSD Safety Tests (§15.4)
 

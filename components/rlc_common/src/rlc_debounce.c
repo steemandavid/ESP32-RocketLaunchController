@@ -4,6 +4,23 @@
 
 #include "rlc_debounce.h"
 
+/* Are the most recent `n` samples all HIGH (inactive)?
+ *
+ * New samples shift in at the LSB (shift_reg = (shift_reg << 1) | raw), so the
+ * most recent n samples are the low n bits, and "all inactive" means all ones. */
+static inline bool release_run_reached(uint16_t shift_reg, uint8_t n)
+{
+    uint16_t m = (uint16_t)((1u << n) - 1u);
+    return (shift_reg & m) == m;
+}
+
+void rlc_debounce_set_fast_release(rlc_debounce_t *db, uint8_t samples)
+{
+    if (!db) return;
+    if (samples > (uint8_t)db->width) samples = (uint8_t)db->width;
+    db->release_samples = samples;
+}
+
 void rlc_debounce_init(rlc_debounce_t *db, int gpio_num, rlc_debounce_width_t width)
 {
     if (!db) return;
@@ -12,6 +29,7 @@ void rlc_debounce_init(rlc_debounce_t *db, int gpio_num, rlc_debounce_width_t wi
     db->gpio_num     = gpio_num;
     db->stable_state = false;   /* Not active */
     db->initialised  = false;
+    db->release_samples = 0;   /* symmetric by default */
 }
 
 bool rlc_debounce_update(rlc_debounce_t *db, int raw_level,
@@ -51,6 +69,14 @@ bool rlc_debounce_update(rlc_debounce_t *db, int raw_level,
             db->stable_state = true;
             changed = true;
         }
+    } else if (db->release_samples > 0 && db->initialised && db->stable_state &&
+               release_run_reached(db->shift_reg, db->release_samples)) {
+        /* Fast-release path (dead-man inputs only). The full-width all_high
+         * test below still applies to every other caller; this one fires as
+         * soon as the most recent N samples agree that the input is inactive,
+         * without waiting for the whole register to fill. */
+        db->stable_state = false;
+        changed = true;
     } else if (masked == all_high) {
         /* Stably HIGH = inactive (released / no continuity / disarmed) */
         if (!db->initialised) {
