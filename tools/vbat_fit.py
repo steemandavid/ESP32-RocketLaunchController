@@ -2,10 +2,24 @@
 """
 Fit an RLC battery divider from a vbat-cal capture.
 
-Reads a serial log produced by tools/vbat-cal (lines beginning "CSV,"),
-finds the stable plateaus where a bench supply was held at a setpoint, pairs
-them in order with the reference voltages measured at the board terminals,
-and fits the divider.
+Reads a serial log produced by tools/vbat-cal, finds the stable plateaus where
+a bench supply was held at a setpoint, pairs them in order with the reference
+voltages measured at the board terminals, and fits the divider.
+
+Log formats understood (TT-02, 2026-08-27):
+
+  MEDIAN <raw> | mean <n> spread <n> (min <n> max <n>) pin <n> mV ...
+      What tools/vbat-cal emits today. The MEDIAN column is the raw count used
+      for the fit and "pin ... mV" is the calibrated pin voltage.
+
+  CSV,<seq>,<raw>,<rmin>,<rmax>,<mv>,<held>
+  PLATEAU,<idx>,<raw>,<mv>,<n>,<held_ms>
+      An older vbat-cal that emitted machine-readable records directly. Still
+      parsed so historic captures keep working; nothing produces these now.
+
+Until this was fixed the parser only knew the CSV/PLATEAU forms and exited
+"No CSV records found" on every real capture, so only the manual --pairs path
+worked.
 
 Two models are reported:
 
@@ -28,6 +42,16 @@ import sys
 
 CSV_RE = re.compile(r'^CSV,(\d+),(-?\d+),(-?\d+),(-?\d+),(-?\d+),(-?\d+)')
 PLATEAU_RE = re.compile(r'^PLATEAU,(\d+),(-?\d+),(-?\d+),(\d+),(-?\d+)')
+# TT-02: the live vbat-cal line. Anchored on the labels rather than on field
+# positions so the trailing "[clipped]" / "** OVER RANGE **" annotations and
+# the two vbat@ratio columns do not have to be described here.
+MEDIAN_RE = re.compile(
+    r'MEDIAN\s+(\d+)\s*\|\s*mean\s+(\d+)\s+spread\s+(\d+)\s*'
+    r'\(min\s+(\d+)\s+max\s+(\d+)\)\s*pin\s+(\d+)\s*mV')
+# A reading pinned at full scale is an over-range indication, not a
+# measurement — vbat-cal says so in the line itself, and it must never reach
+# a least-squares fit.
+ADC_FULL_SCALE = 4095
 
 
 def read_records(path):
@@ -38,8 +62,21 @@ def read_records(path):
     is kept for diagnosis and as a fallback.
     """
     recs, plats = [], []
+    skipped_railed = 0
     with open(path, 'r', errors='replace') as fh:
         for line in fh:
+            m = MEDIAN_RE.search(line)
+            if m:
+                raw = int(m.group(1))
+                if raw >= ADC_FULL_SCALE - 5:
+                    skipped_railed += 1
+                    continue
+                recs.append({
+                    'seq': len(recs), 'raw': raw,
+                    'rmin': int(m.group(4)), 'rmax': int(m.group(5)),
+                    'mv': int(m.group(6)), 'held': 0,
+                })
+                continue
             m = CSV_RE.search(line)
             if m:
                 recs.append({
@@ -55,6 +92,9 @@ def read_records(path):
                     'mv': float(m.group(3)), 'n': int(m.group(4)),
                     'held_ms': int(m.group(5)), 'spread': 0,
                 })
+    if skipped_railed:
+        print(f'note: dropped {skipped_railed} over-range reading(s) at/near '
+              f'ADC full scale ({ADC_FULL_SCALE})')
     return recs, plats
 
 
@@ -160,7 +200,9 @@ def main():
 
     recs, fw_plats = read_records(args.logfile)
     if not recs and not fw_plats:
-        sys.exit('No CSV records found. Is this a vbat-cal capture?')
+        sys.exit('No usable records found. Expected MEDIAN lines (current '
+                 'vbat-cal) or CSV,/PLATEAU, lines (historic captures). '
+                 'Is this a vbat-cal log?')
     print(f'{len(recs)} trace records read from {args.logfile}')
 
     if fw_plats and not args.rederive:

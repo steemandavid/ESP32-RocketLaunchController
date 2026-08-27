@@ -183,6 +183,12 @@ uint32_t rlc_compute_integrity_crc(const void *header,    uint16_t header_len,
     return crc ^ 0xFFFFFFFF;
 }
 
+uint16_t rlc_update_seq_lost(uint16_t prev, uint16_t now)
+{
+    uint16_t delta = (uint16_t)(now - prev);   /* modular: wrap is one step */
+    return delta ? (uint16_t)(delta - 1u) : 0u;
+}
+
 bool rlc_seq_validate(uint32_t received, uint32_t *last)
 {
     if (!last) return false;

@@ -27,6 +27,8 @@ for t in test_*.c; do
             -I "$ROOT/components/rlc_common/src" \
             -I "$ROOT/components/rlc_remote/include" \
             -I "$ROOT/components/rlc_remote/src" \
+            -I "$ROOT/components/rlc_base/include" \
+            -I "$ROOT/components/rlc_base/src" \
             "$t" -o "$bin"
         echo "--- $t  [$unit unit] ---"
         "$bin" || fail=1

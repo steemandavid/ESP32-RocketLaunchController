@@ -16,6 +16,7 @@
 
 #include "rlc_display.h"
 #include "rlc_remote_fsm.h"
+#include "rlc_fsm_events.h"
 #include "rlc_arm_switch.h"
 #include "rlc_battery.h"
 #include "rlc_link.h"
@@ -34,6 +35,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -183,11 +185,22 @@ static inline int64_t now_ms(void)
 static inline void dc_cmd(void)  { gpio_set_level(PIN_DISPLAY_DC, 0); }
 static inline void dc_data(void) { gpio_set_level(PIN_DISPLAY_DC, 1); }
 
+/* DS-01: every SPI return code used to be discarded, so a dead bus looked
+ * exactly like a working one. Counted here and consumed by the runtime health
+ * check in display_task. Not logged per transaction — a failing bus produces
+ * thousands per second and would bury everything else in the log. */
+static uint32_t s_spi_errors = 0;
+
+static inline void spi_xfer(spi_transaction_t *t)
+{
+    if (spi_device_polling_transmit(s_spi, t) != ESP_OK) s_spi_errors++;
+}
+
 static void spi_send_cmd(uint8_t cmd)
 {
     spi_transaction_t t = { .length = 8, .tx_buffer = &cmd };
     dc_cmd();
-    spi_device_polling_transmit(s_spi, &t);
+    spi_xfer(&t);
 }
 
 static void spi_send_data(const uint8_t *data, int len)
@@ -195,7 +208,7 @@ static void spi_send_data(const uint8_t *data, int len)
     if (len <= 0) return;
     spi_transaction_t t = { .length = (size_t)len * 8, .tx_buffer = data };
     dc_data();
-    spi_device_polling_transmit(s_spi, &t);
+    spi_xfer(&t);
 }
 
 static void spi_read_reg(uint8_t cmd, uint8_t *buf, int len)
@@ -213,7 +226,7 @@ static void spi_read_reg(uint8_t cmd, uint8_t *buf, int len)
         .tx_buffer = tx,
         .rx_buffer = rx,
     };
-    spi_device_polling_transmit(s_spi, &t);
+    spi_xfer(&t);
 
     memcpy(buf, rx + 1, len);
     free(tx);
@@ -594,9 +607,16 @@ static void draw_top_bar_dynamic(const disp_data_t *d)
  * length in daylight — nothing on any screen goes below it. The grid is sized
  * so the legend and two status rows all fit at that size. */
 #define GRID_Y      58
-#define CELL_W      118
+/* DS-02: the grid must fit inside DW (480). The last column starts at
+ * GRID_X + 3*(CELL_W+2) and is CELL_W wide, so the constraint is
+ * 2*GRID_X + 4*CELL_W + 3*2 <= DW. At the previous 6/118 that came to 484 and
+ * the right-hand border of channels 4 and 8 was silently clipped away by
+ * fill_rect/draw_frame. 3/117 lands exactly on 480. */
+#define CELL_W      117
 #define CELL_H      80
-#define GRID_X      6
+#define GRID_X      3
+_Static_assert(2 * GRID_X + 4 * CELL_W + 3 * 2 <= DW,
+               "channel grid overflows display width");
 
 static void cell_origin(int ch, int *x, int *y)
 {
@@ -633,7 +653,26 @@ static void draw_main_static(void)
 static void draw_channel_cell(int ch, const disp_data_t *d)
 {
     int x, y;
+    /* Bound the range explicitly rather than relying on the caller's loop
+     * being inlined: without this the compiler cannot prove "CH%d" fits the
+     * label buffers below and -Werror=format-truncation rejects the file. */
+    if (ch < 1 || ch > NUM_CHANNELS) return;
     cell_origin(ch, &x, &y);
+
+    /* RM-02 / FSD §8.2.2: a base that reports fewer than NUM_CHANNELS channels
+     * must not have the missing ones shown as if they were real. Draw them as
+     * an explicitly absent slot rather than an OPEN igniter — "OPEN" would
+     * read as a channel with a disconnected lead. */
+    if (ch > (int)rlc_link_get_peer_num_channels()) {
+        fill_rect(x, y, CELL_W, CELL_H, C_BLACK);
+        draw_frame(x, y, CELL_W, CELL_H, 1, C_DGREY);
+        char lbl[8];
+        snprintf(lbl, sizeof(lbl), "CH%d", ch);
+        draw_text(x + 6, y + 6, lbl, 2, C_DGREY);
+        draw_text(x + (CELL_W - text_width("N/A", 2)) / 2, y + 40,
+                  "N/A", 2, C_DGREY);
+        return;
+    }
 
     bool armed    = (d->armed == ch);
     bool selected = (d->selected == ch);
@@ -743,12 +782,20 @@ static void draw_armed_dynamic(const disp_data_t *d, bool blink_on)
     draw_text_centred(BOX_Y + 24, buf, 4, C_WHITE);
     draw_text_centred(BOX_Y + 66, "ARMED", 4, C_FAULT);
 
+    /* DS-03: with stale data this printed "CONTINUITY OPEN". Fail-safe in
+     * direction, but it asserts a measurement the remote does not have — and
+     * an operator who pulls a lead and sees OPEN reasonably concludes the
+     * reading is live. "?" is the honest answer, and it is what the main
+     * screen already says ("NO DATA"). */
+    bool band_known = d->status_fresh && d->armed >= 1 && d->armed <= 8;
     uint8_t band = CONT_OPEN;
-    if (d->status_fresh && d->armed >= 1 && d->armed <= 8) {
+    if (band_known) {
         band = (uint8_t)((d->status.continuity_bands >> (2 * (d->armed - 1))) & 0x3);
     }
-    snprintf(buf, sizeof(buf), "CONTINUITY %s", continuity_label(band));
-    draw_text_centred_bg(BOX_Y + 112, buf, 2, continuity_colour(band), C_BLACK);
+    snprintf(buf, sizeof(buf), "CONTINUITY %s",
+             band_known ? continuity_label(band) : "?");
+    draw_text_centred_bg(BOX_Y + 112, buf, 2,
+                         band_known ? continuity_colour(band) : C_FAULT, C_BLACK);
 
     draw_text_centred(BOX_Y + 140, "HOLD FIRE TO LAUNCH", 2, C_WHITE);
 
@@ -988,6 +1035,67 @@ static screen_t screen_for_state(const disp_data_t *d)
 
 #define DISPLAY_FRAME_MS  100   /* 10 Hz — FSD §10.3 requires >= 5 Hz */
 
+/* ── DS-01: runtime display health check (FSD §5.5.6) ──────────────
+ *
+ * Until now the panel ID was read exactly once, at boot. A panel, flex or
+ * connector that failed mid-session simply froze the last rendered frame — and
+ * the last frame can say "ARMED / CONTINUITY CONNECTED" while the FSM goes on
+ * accepting fire commands. The TWDT cannot catch this: display_task keeps
+ * flushing happily into a dead bus and feeds the watchdog on time.
+ *
+ * So re-read the ID periodically and compare it with the value latched at
+ * boot. Done inside display_task itself, between frames, so it is serialised
+ * with every other SPI write by construction — no lock, no half-written frame.
+ *
+ * Two consecutive bad reads are required before declaring failure: one read
+ * can be lost to noise on a long flex, and disarming the pad on a single
+ * glitch is its own hazard. Two misses is ~10 s of a genuinely dead panel.
+ */
+#define DISPLAY_HEALTH_INTERVAL_MS   5000
+#define DISPLAY_HEALTH_FAIL_LIMIT    2
+
+/**
+ * Re-read the panel ID and update health state.
+ * Returns true when the panel has just been declared failed (edge).
+ */
+static bool display_health_check(void)
+{
+    static int  fail_streak = 0;
+    static bool failed_reported = false;
+
+    uint32_t before_errors = s_spi_errors;
+    uint8_t id[4] = {0};
+    spi_read_reg(ILI9488_ID, id, 4);
+    uint32_t id_now = ((uint32_t)id[0] << 24) | ((uint32_t)id[1] << 16) |
+                      ((uint32_t)id[2] << 8) | id[3];
+
+    bool ok = (s_spi_errors == before_errors) &&
+              (id_now != 0) && (id_now == s_panel_id);
+
+    if (ok) {
+        if (fail_streak > 0) {
+            ESP_LOGW(TAG, "display ID re-read recovered after %d miss(es)",
+                     fail_streak);
+        }
+        fail_streak = 0;
+        return false;
+    }
+
+    fail_streak++;
+    ESP_LOGE(TAG, "display health check FAILED (%d/%d): ID 0x%08lX, expected "
+                  "0x%08lX, spi_errors=%lu",
+             fail_streak, DISPLAY_HEALTH_FAIL_LIMIT,
+             (unsigned long)id_now, (unsigned long)s_panel_id,
+             (unsigned long)s_spi_errors);
+
+    if (fail_streak >= DISPLAY_HEALTH_FAIL_LIMIT && !failed_reported) {
+        failed_reported = true;
+        s_healthy = false;
+        return true;
+    }
+    return false;
+}
+
 static void display_task(void *arg)
 {
     (void)arg;
@@ -1000,6 +1108,7 @@ static void display_task(void *arg)
     screen_t current = SCR_NONE;
     bool     overlay_drawn = false;
     int      frame = 0;
+    int64_t  last_health_ms = now_ms();   /* DS-01 */
 
     while (1) {
         disp_data_t d;
@@ -1104,6 +1213,32 @@ static void display_task(void *arg)
         }
 
         flush();
+
+        /* DS-01 / FSD §5.5.6: 5 s panel-ID re-read, run here so it is
+         * serialised with the frame writes above. Skipped while an FSM event
+         * is already pending would be pointless — the check is cheap (one
+         * short SPI read) next to a full flush. */
+        if (now_ms() - last_health_ms >= DISPLAY_HEALTH_INTERVAL_MS) {
+            last_health_ms = now_ms();
+            if (display_health_check()) {
+                ESP_LOGE(TAG, "DISPLAY FAILED — notifying FSM");
+                /* Latch the error screen too. It may well not be visible —
+                 * that is the whole point — but if the fault is intermittent
+                 * the operator must not come back to a stale ARMED screen. */
+                display_error("DISPLAY FAULT");
+                QueueHandle_t q = remote_fsm_get_queue();
+                if (q) {
+                    rlc_fsm_event_t ev = {0};
+                    ev.type = EVT_DISPLAY_FAULT;
+                    /* Short blocking send: this is a safety event, and
+                     * display_task (prio 2) can afford to wait. */
+                    if (xQueueSend(q, &ev, pdMS_TO_TICKS(10)) != pdTRUE) {
+                        ESP_LOGE(TAG, "FSM queue full — EVT_DISPLAY_FAULT dropped!");
+                    }
+                }
+            }
+        }
+
         frame++;
         esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(DISPLAY_FRAME_MS));

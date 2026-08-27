@@ -24,6 +24,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_task_wdt.h"
 
 static const char *TAG = "rlc_cont";
@@ -64,6 +65,21 @@ static volatile int32_t s_raw[NUM_CHANNELS] = { 0 };   /* pre-calibration counts
 
 /* Callback on band change */
 static void (*s_on_change_cb)(uint8_t ch, rlc_continuity_band_t band) = NULL;
+
+/* CI-01 / FSD §5.4.6: earliest time (ms since boot) at which a channel may be
+ * sampled again after its relay was de-energised. A channel relay returning
+ * from NO to NC bounces; a reading taken during the bounce is meaningless and,
+ * because the classifier then feeds hysteresis, one bad sample can hold a
+ * wrong band for a further sweep. CONT_RELAY_DROPOUT_MS was defined for
+ * exactly this and had never been used. */
+static volatile int64_t s_settle_until_ms[NUM_CHANNELS] = { 0 };
+
+void continuity_note_relay_released(uint8_t ch)
+{
+    if (ch < 1 || ch > NUM_CHANNELS) return;
+    s_settle_until_ms[ch - 1] =
+        (esp_timer_get_time() / 1000) + CONT_RELAY_DROPOUT_MS;
+}
 
 /* ── Band classification ───────────────────────────────────────── */
 
@@ -138,6 +154,17 @@ static void continuity_task(void *arg)
     ESP_LOGI(TAG, "continuity task started — sampling %d channels", NUM_CHANNELS);
 
     while (1) {
+        /* CI-01: skip a channel whose relay has just released. The band is
+         * left untouched (not forced OPEN) — this is a known-invalid window,
+         * not a fault — and the round-robin moves on, so the channel is
+         * re-read one sweep (800 ms) later at the latest. */
+        if ((esp_timer_get_time() / 1000) < s_settle_until_ms[current_ch]) {
+            current_ch = (current_ch + 1) % NUM_CHANNELS;
+            esp_task_wdt_reset();
+            vTaskDelay(pdMS_TO_TICKS(CONT_SAMPLE_INTERVAL_MS));
+            continue;
+        }
+
         int32_t uv = sample_channel(current_ch);
 
         if (uv == CONT_SAMPLE_FAILED) {

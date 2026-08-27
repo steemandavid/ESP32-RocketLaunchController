@@ -70,6 +70,7 @@ static void base_fsm_task(void *arg);
 static void send_ack(uint8_t msg_type, uint32_t seq_num, uint8_t channel);
 static void send_nack(uint8_t msg_type, uint32_t seq_num, uint8_t reason);
 static void do_disarm(void);
+static void do_disarm_continuity_lost(void);
 static void do_enter_error(uint8_t err_flag);
 static void do_enter_link_lost(void);
 
@@ -107,14 +108,11 @@ bool base_fsm_is_busy(void)
             st == STATE_FIRING || st == STATE_POST_FIRE);
 }
 
-void base_fsm_post_event(uint32_t event_type, bool armed)
-{
-    if (!s_evt_queue) return;
-    rlc_fsm_event_t evt = {0};
-    evt.type = event_type;
-    evt.data.arm_state.armed = armed;
-    (void)xQueueSend(s_evt_queue, &evt, 0);
-}
+/* BF-05: base_fsm_post_event() was removed 2026-08-27. It was the original
+ * zero-timeout event poster; every caller was migrated to a short blocking
+ * send (10 ms) in rlc_base_main.c because dropping a safety event on a
+ * transient queue burst is not acceptable. Keeping an unused zero-timeout
+ * poster in the header was an invitation to reintroduce that. */
 
 int base_fsm_init(void)
 {
@@ -203,6 +201,18 @@ static void do_disarm(void)
     status_update_trigger();
     ESP_LOGI(TAG, "DISARMED -> IDLE");
     s_state = STATE_IDLE;
+}
+
+/* BF-03: disarm caused by the armed channel going OPEN (FSD §7.2.7, §12.2).
+ * Identical to do_disarm() except the siren sounds SIREN_CONTINUITY_LOST
+ * instead of falling silent, so the operator can tell "the igniter left the
+ * circuit" from "someone turned the key off". do_disarm() has already driven
+ * the siren off, so the pattern is started after it — starting it before would
+ * be cancelled by siren_off(). */
+static void do_disarm_continuity_lost(void)
+{
+    do_disarm();
+    siren_start_continuity_lost();
 }
 
 static void do_enter_link_lost(void)
@@ -565,7 +575,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* Igniter disconnected or blown while armed — go safe. */
             ESP_LOGW(TAG, "Continuity OPEN on armed ch %u during ARMED — disarm",
                      s_armed_channel);
-            do_disarm();
+            do_disarm_continuity_lost();
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
             do_enter_error(ERR_VBAT_CRITICAL);
         } else if (evt->type == EVT_LINK_LOST) {
@@ -597,7 +607,7 @@ static void process_event(const rlc_fsm_event_t *evt)
              * will not fire — abort rather than run the countdown out. */
             ESP_LOGW(TAG, "Continuity OPEN on armed ch %u during PRE_FIRE — abort",
                      s_armed_channel);
-            do_disarm();
+            do_disarm_continuity_lost();
         } else if (evt->type == EVT_CMD_DISARM) {
             send_ack(MSG_CMD_DISARM, evt->data.cmd.seq_number,
                      evt->data.cmd.channel);
@@ -615,6 +625,14 @@ static void process_event(const rlc_fsm_event_t *evt)
     case STATE_FIRING:
         if (evt->type == EVT_FIRE_PULSE_DONE) {
             /* Fire pulse completed (signalled by GPTimer ISR) */
+            /* BF-01: this is the ONE exit from FIRING that used to skip
+             * fire_timer_stop(). An expired one-shot alarm disables the alarm
+             * but leaves the GPTimer in RUN state, so the next
+             * fire_timer_start() of the same power cycle hit a running timer.
+             * fire_timer_start() now stops defensively too, but stopping on
+             * the normal path keeps the timer in a known state between pulses
+             * rather than relying on the next start to clean up. */
+            fire_timer_stop();
             relay_all_safe();
             siren_off();
             s_firing_channel = 0;
@@ -819,7 +837,7 @@ static void check_timers(void)
         continuity_get_channel(s_armed_channel) == CONT_OPEN) {
         ESP_LOGW(TAG, "Continuity OPEN on armed ch %u (level backstop) — disarm",
                  s_armed_channel);
-        do_disarm();
+        do_disarm_continuity_lost();
         return;   /* state is now IDLE; the rest of this pass does not apply */
     }
 
@@ -854,7 +872,30 @@ static void check_timers(void)
                 return;
             }
 
-            /* Guard: link health (FSD §7.2.4) */
+            /* Guard 2 (BF-02): heartbeat freshness — the last frame from the
+             * remote must be no older than HEARTBEAT_INTERVAL_MS +
+             * HEARTBEAT_TIMEOUT_MS (FSD §7.2.4 guard 2). This used to be
+             * treated as "implicitly covered by rlc_link_is_healthy()", but
+             * that function measures a *rate* over the last 10 pings: 2 misses
+             * out of 10 is 20%, passes the 30% test, and still means ~1.5 s of
+             * silence — the igniter energised at the exact moment the link
+             * died, which is what this guard exists to prevent.
+             *
+             * The base is the PONG *sender*, so its equivalent of "last PONG
+             * received" is the last well-formed frame received from the remote
+             * (the PING that each PONG answers). Per §7.2.4 this abort routes
+             * to LINK_LOST, not IDLE. */
+            int64_t contact_age = rlc_link_ms_since_contact();
+            if (contact_age < 0 ||
+                contact_age > (HEARTBEAT_INTERVAL_MS + HEARTBEAT_TIMEOUT_MS)) {
+                ESP_LOGW(TAG, "PRE_FIRE heartbeat stale (%lld ms) — abort to LINK_LOST",
+                         contact_age);
+                do_enter_link_lost();
+                return;
+            }
+
+            /* Guard 4: link quality (FSD §7.2.4) — ping failure rate ≤30%.
+             * Spec routes this abort to IDLE, unlike guard 2 above. */
             if (!rlc_link_is_healthy()) {
                 ESP_LOGW(TAG, "PRE_FIRE comm degraded — abort");
                 do_disarm();
@@ -882,7 +923,19 @@ static void check_timers(void)
             s_firing_channel = s_armed_channel;
             s_firing_start_ms = t;   /* 4.5: backstop baseline */
             relay_fire_set(s_armed_channel, true);
-            fire_timer_start(FIRE_PULSE_DURATION_MS, s_armed_channel, s_fsm_task);
+            /* BF-01: the pulse has no timed end if the timer will not start.
+             * The 4.5 max-duration backstop would eventually catch it, but a
+             * timer that refuses to start is a hardware/driver fault, not a
+             * lost notification — cut the pulse now and latch ERROR rather
+             * than let it run out the backstop margin. */
+            if (fire_timer_start(FIRE_PULSE_DURATION_MS, s_armed_channel,
+                                 s_fsm_task) != ESP_OK) {
+                ESP_LOGE(TAG, "fire timer failed to start — aborting pulse");
+                s_firing_channel = 0;
+                s_firing_start_ms = 0;
+                do_enter_error(ERR_INTERNAL);
+                return;
+            }
             rlc_rgb_led_set_pattern(LED_PATTERN_FIRING);
             status_update_trigger();
             ESP_LOGI(TAG, "PRE_FIRE -> FIRING (ch %u)", s_armed_channel);

@@ -50,9 +50,25 @@ void fire_timer_init(void)
     ESP_LOGI(TAG, "Fire pulse GPTimer initialised");
 }
 
-void fire_timer_start(uint32_t duration_ms, uint8_t channel, TaskHandle_t target_task)
+esp_err_t fire_timer_start(uint32_t duration_ms, uint8_t channel, TaskHandle_t target_task)
 {
+    esp_err_t err;
+
     s_target_task = target_task;
+
+    /* BF-01: an expired one-shot alarm auto-disables the *alarm*, not the
+     * timer — the GPTimer driver stays in RUN state after a pulse completes
+     * normally. gptimer_start() on a running timer returns
+     * ESP_ERR_INVALID_STATE on IDF 5.4.x (and is a no-op on 5.5.x, where
+     * gptimer_set_raw_count() on a counting timer is then unsynchronised).
+     * Either way the second launch of a power cycle is broken, so force the
+     * timer back to the ENABLE state before every start. Unconditional, so it
+     * does not depend on which FIRING exit path ran last. */
+    err = gptimer_stop(s_timer);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "gptimer_stop failed: %s", esp_err_to_name(err));
+        return err;
+    }
 
     /* Clear any stale notification */
     xTaskNotifyStateClear(target_task);
@@ -63,16 +79,39 @@ void fire_timer_start(uint32_t duration_ms, uint8_t channel, TaskHandle_t target
         .reload_count = 0,
         .flags.auto_reload_on_alarm = false,
     };
-    ESP_ERROR_CHECK(gptimer_set_alarm_action(s_timer, &alarm));
-    ESP_ERROR_CHECK(gptimer_set_raw_count(s_timer, 0));
-    ESP_ERROR_CHECK(gptimer_start(s_timer));
+
+    /* BF-01: no ESP_ERROR_CHECK on the fire path. An abort() here panics with
+     * the arm relay and the channel relay energised — the igniter would carry
+     * full current for the whole panic-print + reboot interval. Report the
+     * failure instead and let the FSM make the hardware safe and latch ERROR. */
+    err = gptimer_set_alarm_action(s_timer, &alarm);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "gptimer_set_alarm_action failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = gptimer_set_raw_count(s_timer, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "gptimer_set_raw_count failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = gptimer_start(s_timer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "gptimer_start failed: %s", esp_err_to_name(err));
+        return err;
+    }
 
     ESP_LOGI(TAG, "Fire timer started: ch %u, %lu ms", channel, (unsigned long)duration_ms);
+    return ESP_OK;
 }
 
 void fire_timer_stop(void)
 {
-    gptimer_stop(s_timer);
+    /* ESP_ERR_INVALID_STATE just means the timer was not running — expected on
+     * the paths that stop a timer which already expired (BF-01). */
+    esp_err_t err = gptimer_stop(s_timer);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "gptimer_stop failed: %s", esp_err_to_name(err));
+    }
 
     /* m2: Clear any pending FIRE_NOTIFY_BIT that may have been posted by the ISR
      * between gptimer_stop() and this point, to avoid spurious EVT_FIRE_PULSE_DONE. */

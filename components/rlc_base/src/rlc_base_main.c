@@ -51,10 +51,10 @@ static const char *TAG = "rlc_base";
  * channel moved and where to. Every band change is forwarded; the FSM decides
  * what is worth acting on, because only it knows the state and armed channel.
  *
- * The send is a short blocking one (10 ms) rather than base_fsm_post_event's
- * zero-timeout send, matching on_arm_change_cb below — dropping this event on
- * a transient queue burst would silently leave the base armed on an open
- * igniter, which is the exact failure this event exists to prevent.
+ * The send is a short blocking one (10 ms) rather than a zero-timeout send,
+ * matching on_arm_change_cb below — dropping this event on a transient queue
+ * burst would silently leave the base armed on an open igniter, which is the
+ * exact failure this event exists to prevent.
  */
 static void on_io_change(uint8_t ch, rlc_continuity_band_t band)
 {
@@ -73,8 +73,8 @@ static void on_io_change(uint8_t ch, rlc_continuity_band_t band)
 /**
  * Arm sense callback — forward to FSM as EVT_ARM_SENSE_CHANGED.
  * 5.3: J4-style short blocking send (10 ms), matching the key-switch and
- * weld-fault siblings — base_fsm_post_event's zero-timeout send could drop
- * the arm-sense-lost event on a transient queue burst, delaying disarm.
+ * weld-fault siblings — a zero-timeout send could drop the arm-sense-lost
+ * event on a transient queue burst, delaying disarm.
  */
 static void on_arm_change_cb(bool armed)
 {
@@ -123,6 +123,29 @@ static void on_key_change_cb(bool on)
     }
 }
 
+/**
+ * BF-04 / CI-05: terminal boot failure.
+ *
+ * Every init failure below used to `return` out of base_app_main(). That left
+ * the relays safe (step 1 already ran) but the unit silent and dark apart from
+ * the LED: the FSM never started, so there was no ERROR state, no §5.4.8 error
+ * siren, and nothing on the console after the one error line. Worse, returning
+ * from app_main lets the idle task run on as if boot had succeeded.
+ *
+ * Latch instead: safe outputs, error siren, error LED, and block forever so
+ * the state is unambiguous on the bench and at the pad. Deliberately NOT a
+ * reboot — a failed init generally fails again, and a reboot loop hides the
+ * cause.
+ */
+static void boot_fail(const char *what)
+{
+    ESP_LOGE(TAG, "BOOT FAILED: %s — halting (power cycle required)", what);
+    relay_all_safe();
+    rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
+    siren_start_error();
+    vTaskDelay(portMAX_DELAY);
+}
+
 void base_app_main(void)
 {
     ESP_LOGI(TAG, "=== RLC Base Unit v%s ===", RLC_VERSION_STRING);
@@ -143,26 +166,32 @@ void base_app_main(void)
      * actually be signalled on it. Previously the halt below set
      * LED_PATTERN_ERROR on an uninitialised strip, so a failing base halted
      * with no visible indication at all — the remote does it in this order. */
-    rlc_rgb_led_init();
+    /* CI-10: the return was discarded on both units. A failed strip means no
+     * igniter status and no ARMED indication at all — not fatal (the unit is
+     * still safe and the console still reports), but it must not be silent. */
+    if (rlc_rgb_led_init() != 0) {
+        ESP_LOGE(TAG, "RGB LED init FAILED — no strip indication this session");
+    }
     rlc_rgb_led_set_pixel_count(NUM_CHANNELS);  /* 8-pixel igniter strip */
     rlc_rgb_led_set_brightness(RGB_LED_BRIGHTNESS_BASE);
     rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
 
     /* §9.13 Step 2-3: Boot self-tests (CRC32-C, struct offsets) */
     if (rlc_selftest_run() != 0) {
-        ESP_LOGE(TAG, "self-tests FAILED — halting");
-        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-        vTaskDelay(portMAX_DELAY);
+        boot_fail("boot self-tests");
     }
 
-    /* §9.13 Step 4: Initialise ADC calibration + battery */
-    rlc_battery_init(PIN_VBAT_ADC, BASE_VBAT_DIVIDER_RATIO);
+    /* §9.13 Step 4: Initialise ADC calibration + battery.
+     * CI-05: the return value used to be discarded. Without a battery ADC the
+     * arming guard 8 reads 0 mV forever — the unit would NACK every ARM with
+     * LOW_BATTERY and give no clue why. */
+    if (rlc_battery_init(PIN_VBAT_ADC, BASE_VBAT_DIVIDER_RATIO) != 0) {
+        boot_fail("battery ADC init");
+    }
 
     /* §9.13 Step 5: Initialise ESP-NOW */
     if (rlc_espnow_init() != 0) {
-        ESP_LOGE(TAG, "ESP-NOW init failed");
-        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-        return;
+        boot_fail("ESP-NOW init");
     }
 
     uint8_t remote_mac[] = REMOTE_MAC_ADDR;
@@ -172,9 +201,7 @@ void base_app_main(void)
         vTaskDelay(pdMS_TO_TICKS(500));
     }
     if (retries < 0) {
-        ESP_LOGE(TAG, "peer registration failed — ERROR");
-        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-        return;
+        boot_fail("ESP-NOW peer registration");
     }
 
     /* §9.13 Step 7: Configure input GPIOs + start debounce engines */
@@ -189,6 +216,17 @@ void base_app_main(void)
 
     /* (§9.13 Step 8: the TWDT was reconfigured at the top of this function —
      * see the N3 note there. Nothing to do here.) */
+
+    /* BF-07: create the FSM event queue BEFORE any task that posts to it.
+     * arm_sense_start_task() below samples the arm-relay feedback immediately;
+     * a contact weld already present at power-on raised EVT_ARM_SENSE_FAULT
+     * into base_fsm_get_queue() == NULL and the callbacks dropped it silently,
+     * so the base booted to IDLE with a welded arm relay. base_fsm_init() only
+     * allocates the queue — the FSM task is still started at step 10, after
+     * the link manager, so the M8 registration ordering is unchanged. */
+    if (base_fsm_init() != 0) {
+        boot_fail("base FSM init");
+    }
 
     /* §9.13 Step 9: Start FreeRTOS tasks */
     /* Priority 7 — arm switch (highest safety) */
@@ -207,27 +245,15 @@ void base_app_main(void)
 
     /* §9.13 Step 10: Begin link establishment */
     if (rlc_link_init(RLC_LINK_ROLE_BASE, remote_mac) != 0) {
-        ESP_LOGE(TAG, "link manager init failed");
-        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-        return;
+        boot_fail("link manager init");
     }
 
-    /* Phase 3: Initialise the base FSM (creates event queue).
-     * M8: Queue is registered AFTER both init calls to avoid race
-     * where link_task posts events before s_cmd_queue is set. */
-    if (base_fsm_init() != 0) {
-        ESP_LOGE(TAG, "base FSM init failed");
-        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-        return;
-    }
-
-    /* M8: Register FSM queue with link manager now that both are initialised. */
+    /* M8: Register FSM queue with link manager now that both are initialised
+     * (base_fsm_init() ran before the I/O tasks — see BF-07 above). */
     rlc_link_register_cmd_queue(base_fsm_get_queue());
 
     if (base_fsm_start() != 0) {
-        ESP_LOGE(TAG, "base FSM task start failed");
-        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-        return;
+        boot_fail("base FSM task start");
     }
 
     /* Set link guard — reject LINK_REQUEST when FSM is busy */

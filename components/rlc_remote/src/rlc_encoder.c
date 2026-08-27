@@ -42,6 +42,9 @@ static const char *TAG = "rlc_enc";
 #define ENCODER_LONG_PRESS_MS  500
 
 static uint8_t s_channel = 1;
+/* RM-02: highest selectable channel. Narrowed to the base's advertised
+ * num_channels once LINK_ACK arrives (FSD §8.2.2). */
+static volatile uint8_t s_max_channel = NUM_CHANNELS;
 static rlc_encoder_rotate_cb_t s_rotate_cb = NULL;
 static rlc_encoder_press_cb_t s_press_cb = NULL;
 static rlc_encoder_long_press_cb_t s_long_press_cb = NULL;
@@ -123,10 +126,22 @@ static void IRAM_ATTR encoder_isr(void *arg)
     if (step == 0) return;
 
     s_step_count++;
-    if (step > 0) s_channel = (s_channel % NUM_CHANNELS) + 1;
-    else          s_channel = (s_channel == 1) ? NUM_CHANNELS : (s_channel - 1);
+    /* RM-02: wrap at the channel count the base advertised in LINK_ACK, not
+     * at this build's NUM_CHANNELS. Single-byte volatile read, so no lock is
+     * needed in ISR context; the value only ever shrinks the usable range. */
+    uint8_t max_ch = s_max_channel;
+    if (s_channel > max_ch) s_channel = max_ch;
+    if (step > 0) s_channel = (s_channel % max_ch) + 1;
+    else          s_channel = (s_channel == 1) ? max_ch : (s_channel - 1);
 
     if (s_rotate_cb) s_rotate_cb(s_channel);
+}
+
+void encoder_set_max_channel(uint8_t max_channel)
+{
+    if (max_channel < 1 || max_channel > NUM_CHANNELS) return;
+    s_max_channel = max_channel;
+    if (s_channel > max_channel) s_channel = max_channel;
 }
 
 void encoder_get_stats(uint32_t *isr, uint32_t *valid, uint32_t *steps)

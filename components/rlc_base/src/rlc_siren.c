@@ -59,6 +59,23 @@ static void siren_unlock(void)
     if (s_siren_mu) xSemaphoreGive(s_siren_mu);
 }
 
+/* BF-06: s_siren_timer is NULL if esp_timer_create() failed in siren_init().
+ * Passing NULL to the esp_timer API asserts, which would turn a degraded
+ * siren into a panic on the fire path. Guard both directions here. */
+static inline void siren_timer_stop(void)
+{
+    if (s_siren_timer) esp_timer_stop(s_siren_timer);
+}
+
+/* Returns false when no periodic pattern could be started, so callers can
+ * leave s_timer_active clear rather than arming a callback that never runs. */
+static bool siren_timer_run(uint32_t half_period_ms)
+{
+    if (!s_siren_timer) return false;
+    return esp_timer_start_periodic(s_siren_timer,
+                                    (uint64_t)half_period_ms * 1000) == ESP_OK;
+}
+
 static inline void siren_drive(bool on)
 {
     int level = on ? PIN_SIREN_ACTIVE : !PIN_SIREN_ACTIVE;
@@ -78,7 +95,7 @@ static void siren_timer_cb(void *arg)
     if (s_pulse_count == 0) {
         /* Pattern finished its cycle count */
         siren_drive(false);
-        esp_timer_stop(s_siren_timer);
+        siren_timer_stop();
         s_timer_active = false;
         siren_unlock();
         return;
@@ -103,16 +120,35 @@ void siren_init(void)
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type    = GPIO_INTR_DISABLE,
     };
-    gpio_config(&cfg);
+    /* BF-06: these returns were discarded. The siren is the pad's only
+     * audible warning that a channel is armed — a silent failure to configure
+     * it is exactly the kind of fault that must not pass unnoticed. Logged
+     * loudly rather than fatal: a working fire path with no siren is still
+     * safer than a base that refuses to boot at the pad, and the FSM's own
+     * error paths remain intact. */
+    esp_err_t err = gpio_config(&cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "SIREN GPIO %d config failed: %s — NO AUDIBLE PAD WARNING",
+                 PIN_SIREN, esp_err_to_name(err));
+    }
     siren_drive(false);
 
     s_siren_mu = xSemaphoreCreateMutex();
+    if (!s_siren_mu) {
+        ESP_LOGE(TAG, "siren mutex alloc failed — pattern state is unprotected");
+    }
 
     esp_timer_create_args_t timer_args = {
         .callback = siren_timer_cb,
         .name     = "siren_pulse",
     };
-    esp_timer_create(&timer_args, &s_siren_timer);
+    err = esp_timer_create(&timer_args, &s_siren_timer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "siren timer create failed: %s — patterned alerts "
+                      "(link-lost/error/continuity-lost) will not sound",
+                 esp_err_to_name(err));
+        s_siren_timer = NULL;
+    }
 
     ESP_LOGI(TAG, "Siren initialised on GPIO %d", PIN_SIREN);
 }
@@ -135,7 +171,7 @@ void siren_init(void)
 void siren_start_continuous(void)
 {
     siren_lock();
-    esp_timer_stop(s_siren_timer);
+    siren_timer_stop();
     s_timer_active = false;   /* N2: steady ON, no pattern owns the output */
     s_pulse_count = 0;
     siren_drive(true);
@@ -145,18 +181,25 @@ void siren_start_continuous(void)
 void siren_start_link_lost(void)
 {
     siren_lock();
-    esp_timer_stop(s_siren_timer);
+    siren_timer_stop();
     s_pulse_count = SIREN_LINK_LOST_CYCLES;
     siren_drive(true);
-    esp_timer_start_periodic(s_siren_timer, SIREN_LINK_LOST_HALF_MS * 1000);
-    s_timer_active = true;
+    if (siren_timer_run(SIREN_LINK_LOST_HALF_MS)) {
+        s_timer_active = true;
+    } else {
+        /* No timer: nothing would ever turn the siren off again. Silence is
+         * the only safe degradation — the failure is logged at init. */
+        siren_drive(false);
+        s_pulse_count = 0;
+        s_timer_active = false;
+    }
     siren_unlock();
 }
 
 void siren_off(void)
 {
     siren_lock();
-    esp_timer_stop(s_siren_timer);
+    siren_timer_stop();
     s_timer_active = false;
     /* N2: clear the cycle count too. Leaving it at -1 (as the removed
      * infinite ARMED pulse left it) is what let a stale callback toggle the
@@ -169,10 +212,37 @@ void siren_off(void)
 void siren_start_error(void)
 {
     siren_lock();
-    esp_timer_stop(s_siren_timer);
+    siren_timer_stop();
     s_pulse_count = 3;  /* 3 short blasts */
     siren_drive(true);
-    esp_timer_start_periodic(s_siren_timer, SIREN_ERROR_HALF_MS * 1000);
-    s_timer_active = true;
+    if (siren_timer_run(SIREN_ERROR_HALF_MS)) {
+        s_timer_active = true;
+    } else {
+        siren_drive(false);   /* see siren_start_link_lost() */
+        s_pulse_count = 0;
+        s_timer_active = false;
+    }
+    siren_unlock();
+}
+
+/* BF-03: FSD §12.2 SIREN_CONTINUITY_LOST — 200/200 x3, then silence.
+ * Same shape as SIREN_ERROR per the spec table; a separate entry point so the
+ * three continuity-loss disarm sites read as what they are, and so the two can
+ * diverge later without hunting call sites. Before this, a continuity-loss
+ * disarm was audibly indistinguishable from a key-off disarm (both silent) —
+ * the operator got no cue that the igniter had left the circuit. */
+void siren_start_continuity_lost(void)
+{
+    siren_lock();
+    siren_timer_stop();
+    s_pulse_count = 3;
+    siren_drive(true);
+    if (siren_timer_run(SIREN_ERROR_HALF_MS)) {
+        s_timer_active = true;
+    } else {
+        siren_drive(false);   /* see siren_start_link_lost() */
+        s_pulse_count = 0;
+        s_timer_active = false;
+    }
     siren_unlock();
 }

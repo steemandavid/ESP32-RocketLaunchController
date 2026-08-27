@@ -80,6 +80,21 @@ static void send_update(void)
     /* Error flags from the FSM */
     p.error_flags = base_state_get_error_flags();
 
+    /* CI-02 / FSD §13.1 bit 0: ERR_VBAT_LOW. The FSM never raises this — it
+     * only ever latches ERR_VBAT_CRITICAL, which is terminal — so the bit was
+     * dead and the remote could not show a base "VBAT LOW" warning at all.
+     * Arming is still refused from the live reading (guard 8 → NACK 0x09);
+     * this is the advisory that tells the operator *before* they try.
+     *
+     * Derived here rather than latched in the FSM on purpose: it is a live
+     * condition that must clear when the pack recovers (or when a bench supply
+     * is turned up), unlike the latched fault flags around it. 0 mV means the
+     * ADC has not produced a sample yet, not a flat pack. */
+    uint16_t vbat_mv = p.battery_voltage_mv;
+    if (vbat_mv > 0 && vbat_mv < BASE_VBAT_MIN_ARM_MV) {
+        p.error_flags |= ERR_VBAT_LOW;
+    }
+
     /* update_sequence is managed by the link manager */
     rlc_link_send_status_update(&p);
 }

@@ -40,8 +40,11 @@ static void play_steps(const buzzer_step_t *steps, int count, bool repeat)
             rlc_buzzer_pattern_t new_pat;
             if (xQueueReceive(s_pattern_queue, &new_pat, ticks) == pdTRUE) {
                 buzzer_drive(false);
-                /* Put it back so the main loop picks it up */
-                xQueueSendToFront(s_pattern_queue, &new_pat, 0);
+                /* RM-05: put it back for the main loop. The queue is a
+                 * one-deep mailbox, so a failure here means buzzer_play() has
+                 * already overwritten it with something newer — which is
+                 * exactly what should win. Never retry or block. */
+                (void)xQueueSendToFront(s_pattern_queue, &new_pat, 0);
                 return;
             }
         }
@@ -131,16 +134,26 @@ void buzzer_init(void)
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type    = GPIO_INTR_DISABLE,
     };
-    gpio_config(&cfg);
+    esp_err_t err = gpio_config(&cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "buzzer GPIO %d config failed: %s — no audible feedback",
+                 PIN_BUZZER, esp_err_to_name(err));
+    }
     buzzer_drive(false);
 
-    s_pattern_queue = xQueueCreate(4, sizeof(rlc_buzzer_pattern_t));
+    /* RM-05: depth 1 — this is a mailbox, not a backlog. Only the newest
+     * pattern is ever wanted; queueing older ones just delays it. */
+    s_pattern_queue = xQueueCreate(1, sizeof(rlc_buzzer_pattern_t));
     if (!s_pattern_queue) {
         ESP_LOGE(TAG, "pattern queue alloc failed");
         return;
     }
-    if (xTaskCreate(buzzer_task, "buzzer_task", 2048, NULL, 5,
-                    &s_buzzer_task) != pdPASS) {
+    /* RM-04 / CI-03: priority 1 pinned to core 1, per FSD §9.10. At the
+     * previous unpinned priority 5 a UI task outranked the safety FSM
+     * (priority 4) and could preempt it on either core — a SHALL violation of
+     * that section for the sake of beep timing. */
+    if (xTaskCreatePinnedToCore(buzzer_task, "buzzer_task", 2048, NULL, 1,
+                                &s_buzzer_task, 1) != pdPASS) {
         ESP_LOGE(TAG, "buzzer task create failed");
     }
 
@@ -149,8 +162,14 @@ void buzzer_init(void)
 
 void buzzer_play(rlc_buzzer_pattern_t pattern)
 {
-    xQueueReset(s_pattern_queue);
-    xQueueSend(s_pattern_queue, &pattern, 0);
+    if (!s_pattern_queue) return;
+    /* RM-05: atomic replace. The old xQueueReset()+xQueueSend() pair had a
+     * window between the two calls in which the buzzer task's own
+     * xQueueSendToFront() (from play_steps, putting a just-received pattern
+     * back) could land — so the stale pattern played instead of the new one.
+     * xQueueOverwrite on a depth-1 queue is a single atomic operation and
+     * always leaves the newest pattern in place. */
+    (void)xQueueOverwrite(s_pattern_queue, &pattern);
 }
 
 void buzzer_stop(void)

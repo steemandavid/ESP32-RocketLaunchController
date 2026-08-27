@@ -245,8 +245,12 @@
 /* Bench diagnostic: interval in ms for the compact per-channel raw ADC line.
  * 0 disables it. A full round-robin sweep takes NUM_CHANNELS x
  * CONT_SAMPLE_INTERVAL_MS (800 ms), so there is nothing to gain below that.
- * Set to 0 for field use — it is noise in the log. */
-#define CONT_TRACE_INTERVAL_MS         1000
+ *
+ * CI-09: default is now 0 (off). It sat at 1000 while its own comment said
+ * "set to 0 for field use", so every production build emitted one trace line
+ * per second — the log an operator has to read a real fault out of. Set it
+ * back to 1000 while working at the bench, not in a build that goes to a pad. */
+#define CONT_TRACE_INTERVAL_MS         0
 #define CONT_OVERSAMPLE_COUNT          64      /* ADC samples averaged per reading */
 
 /* Thresholds in microvolts (µV) — multiply ADC millivolts by 1000 */

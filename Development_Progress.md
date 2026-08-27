@@ -1,8 +1,8 @@
 # RLC Development Progress
 
 **Project:** ESP32-S3 Wireless Rocket Launch Controller
-**Spec:** RLC-FSPEC-001 v1.43 (2026-08-27)
-**Firmware:** 1.1.8
+**Spec:** RLC-FSPEC-001 v1.44 (2026-08-27)
+**Firmware:** 1.1.9
 **Platform:** ESP32-S3-WROOM-1 N16R8 | ESP-IDF v5.4.1
 
 ## Legend
@@ -33,6 +33,7 @@ on-target defect log in the Phase 3 section.
 
 | # | Title | Class | Status | Blocks |
 |---|-------|-------|--------|--------|
+| 31 | Fire GPTimer never stopped on successful pulse completion — the second launch of a power cycle panicked with the igniter energised | Firmware | **RESOLVED 2026-08-27 (fw 1.1.9)** — `fire_timer_stop()` on the completion path, an unconditional stop at the top of `fire_timer_start()`, and a checked `gptimer_start()` return that makes the fire path safe and latches ERROR instead of `abort()`. Regression-tested by `tests/host/test_base_fsm.c` T-FSM05 (two full fire cycles per power-on). | Was: **NO-GO for a second live launch per power cycle.** Now clear. |
 | 30 | Continuity-loss disarm is edge-triggered only — a band change to OPEN during the 200 ms arm-verify window is dropped and never re-delivered | Firmware | **RESOLVED 2026-08-26 (fw 1.1.8)** — two fixes: a continuity re-check at arm-verify completion (aborts with `NACK_NO_CONTINUITY`), and a periodic **level** check in `check_timers()` for ARMED/PRE_FIRE which also covers an event dropped by a full FSM queue (an entry check alone does not). | Nothing. **Verification is partial:** T-F02 confirmed the entry check does not false-positive (a normal arm completes through the verify path it sits on) and the backstop does not fire spuriously in IDLE. Neither has been *positively* triggered — that needs a disconnection inside a 200 ms window or a full FSM queue, both of which want an injection to reach reliably. |
 | 29 | Base stays ARMED when the armed channel's igniter loses continuity | Firmware + spec | **RESOLVED 2026-08-26 (fw 1.1.2)** — continuity OPEN on the armed channel now disarms from ARMED or PRE_FIRE. Was a *specification* defect as much as a code one: v1.8 removed the disarm on a rationale ("sensing disabled — stale data") that the v1.10 SPDT redesign made obsolete, while the Phase 3 test criteria kept listing it as required. | Nothing now. Retest with T-A16/T-A17/T-A18 before live fire. |
 | 28 | Base ARM RELAY LED lights when the key is turned to **SAFE**, while the relay itself stays de-energised | Hardware | **RESOLVED 2026-08-26** — indicator wiring corrected on the base. The ARM RELAY LED now lights only when the arm relay is actually energised. A second, related indicator fault was found and fixed in the same session: the arm-key red and green LEDs lit *simultaneously* with the key in SAFE; they now read red = ARMED, green = SAFE. | Nothing. **Fire testing is unblocked** — this was the last hardware gate. |
@@ -51,6 +52,35 @@ Non-blocking items tracked elsewhere: the unimplemented FSD §7 remote-battery
 arming guard / NACK `0x0C` (in "Phase 4 Findings — Battery Thresholds"), and the
 FSD §10.2.0 continuity palette deviation.
 
+**Full-codebase review 2026-08-27** (`Code_Review_AllPhases_20260827_0308.md`,
+commit d04d07b): verdict **FAIL**, on one CRITICAL finding. **All findings —
+Critical, Major and Minor — were fixed on 2026-08-27 in firmware 1.1.9 and
+FSD v1.44.** Highlights:
+
+- **BF-01 (CRITICAL, bug #31 below).** The fire GPTimer was never stopped on
+  the *successful* pulse-completion path, so the second launch of any power
+  cycle panicked with the igniter energised. Fixed, and now regression-tested
+  by an automated two-cycle test.
+- **DS-01 (MAJOR).** FSD §5.5.6's runtime display health check did not exist —
+  a panel that died mid-session froze the last frame (possibly an ARMED screen
+  reading "CONTINUITY CONNECTED") while the FSM kept accepting fire commands.
+  Implemented: 5 s panel-ID re-read inside `display_task`, SPI return codes
+  counted, and a display fault while armed disarms and latches ERROR.
+- **CM-01 (MAJOR).** `rlc_link_send_status_update()` mutated link state from
+  `status_update_task` with no lock, against `link_task`. Duplicate sequence
+  numbers were reachable, which the peer rejects as replay.
+- **TT-04 (MAJOR).** Neither safety FSM had a single automated test. There is
+  now a host event-injection harness for the base FSM
+  (`tests/host/test_base_fsm.c`, 111 checks), and `build_base.sh` /
+  `build_remote.sh` run the whole host suite before every build and refuse to
+  build on failure. Suite grew from 12 binaries / 265 checks to 16 / 418.
+- **TT-01/TT-02.** Both broken bench tools repaired: `test_tr04.py`'s ports
+  were stale *and crossed* (it would have halted the remote and talked to the
+  base as if it were the remote); `vbat_fit.py` could not parse any real
+  `vbat-cal` log.
+
+The earlier review below is retained for history.
+
 **Full-codebase review 2026-08-21** (`Code_Review_AllPhases_20260821_1430.md`,
 commit cd4ddf0): verdict MAYBE. All Phase 1–3 review fixes verified present
 except Phase-2 M2 (self-test still runs a copy of the continuity classifier).
@@ -64,7 +94,8 @@ abort exits then misfires as a spurious terminal ERROR at the next POST_FIRE
 (`rlc_base_fsm.c`). A parallel documentation audit found the remote hw-test spec
 flashing the base board's by-id and the base hw-test spec wiring the LED to
 GPIO 47 (arm relay) — both need fixing before those docs are followed on the
-bench.
+bench. (Both hw-test-spec defects were finally fixed in the v1.43 doc sweep;
+all four Major findings were fixed at the time.)
 
 ---
 
@@ -1373,6 +1404,59 @@ each channel as a test, not a routine firing — and see bug #28, which blocks
 fire testing entirely for now.
 
 ---
+
+### Bug #31 — Fire GPTimer left running after a completed pulse (2026-08-27, **RESOLVED same day, fw 1.1.9**)
+
+Found by the full-codebase review (`Code_Review_AllPhases_20260827_0308.md`,
+finding BF-01). Rated CRITICAL — it is the only finding in that review that
+changed the hazard analysis.
+
+**The defect.** In ESP-IDF, an expired one-shot GPTimer alarm auto-disables the
+*alarm*. It does not stop the *timer*: the driver stays in `GPTIMER_FSM_RUN`.
+Every exit path from FIRING called `fire_timer_stop()` — CEASE_FIRE, DISARM,
+key off, arm sense lost, the 4.5 max-duration backstop, `do_enter_error()` —
+**except the successful one**, `EVT_FIRE_PULSE_DONE`.
+
+So after one normal launch the timer was still running. On the next arm/fire
+cycle of the same power cycle, `fire_timer_start()` called
+`gptimer_set_raw_count()` and `gptimer_start()` on a running timer, inside
+`ESP_ERROR_CHECK`. Against the ESP-IDF v5.4.1 this project builds with,
+`gptimer_start()` CAS-expects `GPTIMER_FSM_ENABLE` and returns
+`ESP_ERR_INVALID_STATE` → `abort()` → panic-print and reboot.
+
+**Why it is critical, not merely a crash.** The panic happens *after*
+`relay_fire_set(ch, true)`. The arm relay and the channel relay are both
+energised at that moment, and nothing in a panic path de-energises them: the
+igniter carries full current for the whole panic-print plus reboot interval —
+well over 100 ms, where an e-match fires in single-digit milliseconds. The base
+then reboots mid-FIRING, and the remote sees a link drop rather than FIRE
+COMPLETE, so the operator gets no indication of what happened.
+
+**Toolchain sensitivity.** A second IDF checkout on this machine (v5.5.2)
+returns `ESP_OK` ("already started, do nothing") instead. Under a future 5.5.x
+upgrade the same defect would stop panicking and become a quieter timing
+hazard, because `gptimer_set_raw_count()` on a counting timer is documented as
+unsynchronised with the counting clock. The fix is required either way.
+
+**Why it was never seen.** No test has ever completed a fire pulse and re-armed
+on the same power cycle. T-F02, the only G3 fire test run so far, aborts before
+the pulse.
+
+**Fix (three layers, all in fw 1.1.9):**
+
+1. `fire_timer_stop()` on the `EVT_FIRE_PULSE_DONE` path, so the timer is in a
+   known state between pulses.
+2. An unconditional `gptimer_stop()` at the top of `fire_timer_start()`, so
+   correctness does not depend on which exit path ran last.
+3. `fire_timer_start()` returns `esp_err_t` instead of using `ESP_ERROR_CHECK`.
+   The FSM checks it: on failure it clears the firing channel, calls
+   `do_enter_error(ERR_INTERNAL)` — which runs `relay_all_safe()` — and latches
+   ERROR. **Nothing on the fire path may `abort()`.**
+
+**Regression test:** `tests/host/test_base_fsm.c` T-FSM05 runs two complete
+arm→fire→pulse-done→cooldown cycles against the production FSM and asserts the
+timer is stopped after each, plus a fault-injected start failure that must end
+in ERROR with the igniter de-energised. It runs on every build.
 
 ### Bug #30 — Continuity-loss disarm has no level-triggered backstop (2026-08-26, **RESOLVED same day, fw 1.1.8**)
 
@@ -3059,8 +3143,11 @@ behaviour rather than hardware — worth a low-priority look.
 | 6 | Documentation: build instructions, flash procedure, wiring diagram | §4.3 | TODO |
 | 7 | Final version number setting | §4.3 | TODO |
 | 8 | Rotate ESP-NOW/integrity keys and move them out of the tracked repo (bug #20) | §6.2.1, §6.2.2 | TODO |
-| 9 | Runtime display health check (FSD §5.5.6): 5 s panel-ID re-read; display failure during ARMED/PRE_FIRE/FIRING → CMD_DISARM + ERROR | §5.5.6 | TODO — flagged MISSING by the 2026-08-27 full code review (DS-01) |
-| 10 | G3 test: two complete fire cycles per power-on (BF-01 regression — fire timer stop + checked `gptimer_start`) | §15.3 | TODO |
+| 9 | Runtime display health check (FSD §5.5.6): 5 s panel-ID re-read; display failure during ARMED/PRE_FIRE/FIRING → CMD_DISARM + ERROR | §5.5.6 | **DONE 2026-08-27 (fw 1.1.9)** — `display_health_check()` in `rlc_display.c`, run inside `display_task` so it is serialised with frame writes; SPI return codes counted (they were all discarded before); two consecutive bad reads required; failure posts `EVT_DISPLAY_FAULT`, and the remote FSM then ceases fire / disarms and latches ERROR from any state. Still to do on target: **T-S10b** — pull the display flex mid-session and confirm the disarm. |
+| 10 | G3 test: two complete fire cycles per power-on (BF-01 regression — fire timer stop + checked `gptimer_start`) | §15.3 | **Host regression DONE 2026-08-27** — `tests/host/test_base_fsm.c` T-FSM05, run on every build. **On-target run still TODO** and is the gating item for lifting the one-launch-per-power-cycle restriction in practice. |
+| 11 | FSM host event-injection harness (FSD §4.5) | §4.5, §15.5 | **DONE 2026-08-27** — `tests/host/test_base_fsm.c` (111 checks) drives the production base FSM. Discharges the review-substitute for T-F06/F07/F09 and T-S12/S13, the host half of T-A05, the base half of T-U07, and gives bug #30 positive verification. **Remote FSM harness still TODO** — same technique, `rlc_remote_fsm.c`. |
+| 12 | Host suite wired into the build (`build_base.sh` / `build_remote.sh` run `tests/host/run.sh` and refuse to build on failure) | §15.5 | **DONE 2026-08-27** — the runner existed but nothing invoked it. Still no CI runner; that remains TODO. |
+| 13 | T-C06 replay tool: capture a real frame off the air and re-transmit it | §15.1 | TODO — the *rule* is now host-tested (`test_seqgap.c` T-U04) and the base emits NACK 0x08 rather than dropping silently, but no on-air capture/replay tool exists. |
 
 ### Phase 5 FSD Safety Tests (§15.4)
 
@@ -3103,15 +3190,36 @@ behaviour rather than hardware — worth a low-priority look.
 | Flash size | 16 MB |
 | PSRAM | 8 MB OCT |
 
+## Firmware Version History
+
+Both units must run the same MAJOR.MINOR.PATCH or they refuse to link, so every
+bump means **flash base and remote together**. Full rationale for each entry is
+in `components/rlc_common/include/rlc_version.h`; this table exists because
+entries 1.1.3–1.1.7 were previously recorded only there and nowhere in this
+document.
+
+| Version | Date | Unit(s) | Change |
+|---|---|---|---|
+| 1.1.9 | 2026-08-27 | both | Full-codebase review fix round (`Code_Review_AllPhases_20260827_0308.md`). **BF-01/bug #31 (CRITICAL)** fire-timer fix; BF-02 PRE_FIRE heartbeat-freshness as its own guard; BF-03 `SIREN_CONTINUITY_LOST`; BF-04/CI-05 latched boot-failure halts; BF-07 FSM queue before the arm-sense task; CM-01 link-state lock; CM-02 replay/CRC NACKs; CM-03 data-gap detection; CM-04 truncated ACK/NACK dropped; CM-05 seq 0 rejected; CM-06 unused esp-now dependency removed; **DS-01** runtime display health check; DS-02/03 display corrections; RM-01/02/03/05/06/07/09/11; CI-01 relay-settling delay; CI-02 `ERR_VBAT_LOW`; CI-04 `led_task` on the TWDT; buzzer task back to §9.10's priority 1 / core 1. |
+| 1.1.8 | 2026-08-26 | base | Bug #30 — level-triggered backstop for the continuity-loss disarm, plus a re-check at arm-verify completion. |
+| 1.1.7 | 2026-08-26 | remote | Fire-button ring LED reports *state*, not the button: red only when a press would actually do something (remote ARMED/PRE_FIRE/FIRING **and** a fresh STATUS_UPDATE confirming the same channel armed at the base). It had shown the operator's finger since Phase 2. |
+| 1.1.6 | 2026-08-26 | both | No silent refusals left. New `NACK_BASE_ERROR` (0x0E): the base now answers commands while in ERROR instead of discarding them — a timeout carries no reason, so an operator could not tell a dead link from a base needing a power cycle. Every remaining operator-facing refusal branch now beeps and toasts. New NACK code, hence both units. |
+| 1.1.5 | 2026-08-26 | remote | Remote displays `CHANNEL MISMATCH ERROR` when the base ACKs an ARM for a channel the operator did not select. The disarm and beep were already right; only the message was missing. Found by T-A13 once the fault-injection harness could produce a malformed ACK. |
+| 1.1.4 | 2026-08-26 | remote | Remote no longer fails silently when an ARM cannot be granted: a new local guard refuses (naming the flag) when the cached status shows the base in ERROR, and the ACK-timeout path beeps and toasts. |
+| 1.1.3 | 2026-08-26 | both | `PRE_FIRE_DELAY_MS` 2000 → **5000** by operator decision after T-A17: 2 s was too short to act inside — the operator could not disconnect an igniter within the countdown and one fired. Both units run their own countdown against this constant. |
+| 1.1.2 | 2026-08-26 | base | Siren continuous from ARMED through PRE_FIRE and FIRING (the 500 ms pulse fought the siren's own modulation); continuity loss on the armed channel disarms from ARMED or PRE_FIRE instead of being informational (bug #29). |
+| 1.1.1 | 2026-08-21 | both | Post-review fix round: arm-key state adopted at boot (N1), siren stale-callback race (N2), 11 minors. |
+
 ## Task Priority Reference (FSD §9.10)
 
 ### Base Unit
 
 | Task | Priority | Core | Stack | Phase |
 |------|----------|------|-------|-------|
-| `arm_switch_task` | 7 (highest) | 0 | 4096 | 2 |
+| `espnow_rx` | 8 | any | 4096 | 1 DONE |
+| `arm_switch_task` | 7 (highest safety) | 0 | 4096 | 2 |
+| `rlc_link` (link_task) | 6 | 0 | 4096 | 1 DONE |
 | `continuity_task` | 5 | 0 | 4096 | 2 |
-| `heartbeat_task` (link_task) | 6 | 0 | 4096 | 1 DONE |
 | `state_machine_task` (bfsm_task) | 4 | 0 | 8192 | 3 DONE |
 | `battery_task` | 3 | 0 | 3072 | 2 |
 | `status_update_task` | 3 | 0 | 4096 | 2 |
@@ -3122,15 +3230,16 @@ behaviour rather than hardware — worth a low-priority look.
 
 | Task | Priority | Core | Stack | Phase |
 |------|----------|------|-------|-------|
-| `fire_button_task` | 7 (highest) | 0 | 3072 | 2 |
+| `espnow_rx` | 8 | any | 4096 | 1 DONE |
+| `fire_button_task` | 7 (highest safety) | 0 | 3072 | 2 |
 | `arm_switch_task` | 6 | 0 | 3072 | 2 |
-| `heartbeat_task` (link_task) | 6 | 0 | 4096 | 1 DONE |
+| `rlc_link` (link_task) | 6 | 0 | 4096 | 1 DONE |
 | `state_machine_task` (rfsm_task) | 4 | 0 | 8192 | 3 DONE |
 | `cmd_fire_repeat_task` (fire_rep) | 4 | 0 | 2048 | 3 DONE |
 | `battery_task` | 3 | 0 | 3072 | 2 |
 | `encoder_task` | 3 | 0 | 4096 | 2 |
 | `display_task` | 2 | 1 | 8192 | 4 DONE |
-| `buzzer_task` | 1 | 1 | 2048 | 2 |
+| `buzzer_task` | 1 | 1 | 2048 | 2 (was an unpinned 5 until fw 1.1.9 — a UI task above the safety FSM) |
 | `rgb_led_task` | 1 (lowest) | 1 | 2048 | 1 DONE |
 
 ## Build Commands

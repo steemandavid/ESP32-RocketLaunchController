@@ -82,6 +82,7 @@ static void do_enter_idle(void);
 static void do_disarm_and_idle(void);
 static void do_enter_link_lost(void);
 static void do_enter_error(void);
+static void set_prefire_start(int64_t t);
 
 /* ── Helpers ─────────────────────────────────────────────────── */
 
@@ -90,14 +91,55 @@ static inline int64_t now_ms(void)
     return esp_timer_get_time() / 1000;
 }
 
+/* CM-03 / FSD §6.4.3: update_sequence gap tracking. The base increments this
+ * field on every STATUS_UPDATE it sends; the field was generated correctly but
+ * never consumed, so a run of lost frames was invisible — the display simply
+ * showed slightly older data with no hint that anything had gone missing.
+ * Modular comparison so the uint16 wrap at 65535 is not itself a "gap". */
+static bool     s_update_seq_valid = false;
+static uint16_t s_last_update_seq = 0;
+
 /* Cache the latest STATUS_UPDATE from the base (FSM task only). */
 static void cache_status(const rlc_payload_status_update_t *st)
 {
+    if (s_update_seq_valid) {
+        if (st->update_sequence == s_last_update_seq) {
+            /* Same frame twice — the link layer's replay guard should have
+             * caught it; log rather than counting it as a gap. */
+            ESP_LOGW(TAG, "duplicate STATUS_UPDATE seq %u", st->update_sequence);
+        } else {
+            /* Modular, so the uint16 wrap at 65535 is one step and not a
+             * 65535-frame gap (T-U16). */
+            uint16_t lost = rlc_update_seq_lost(s_last_update_seq,
+                                                st->update_sequence);
+            if (lost > 0) {
+                /* §6.4.3 sets the operator-visible threshold at "more than 2
+                 * consecutive missed" — at a 2 s interval a single lost frame
+                 * is ordinary RF, and toasting it would train the operator to
+                 * ignore the warning. Every gap is still logged. */
+                ESP_LOGW(TAG, "STATUS_UPDATE data gap: %u frame(s) lost "
+                              "(seq %u -> %u)",
+                         lost, s_last_update_seq, st->update_sequence);
+                if (lost > 2) display_toast("DATA GAP");
+            }
+        }
+    }
+    s_last_update_seq = st->update_sequence;
+    s_update_seq_valid = true;
+
     int64_t t = now_ms();
     portENTER_CRITICAL(&s_status_lock);
     memcpy(&s_last_status, st, sizeof(s_last_status));
     s_last_status_rx_ms = t;
     portEXIT_CRITICAL(&s_status_lock);
+}
+
+/* Continuity band for a channel out of the cached STATUS_UPDATE bitfield
+ * (2 bits per channel, channel 1 in bits 0-1). */
+static inline uint8_t status_continuity_band(uint8_t channel)
+{
+    if (channel < 1 || channel > NUM_CHANNELS) return CONT_OPEN;
+    return (uint8_t)((s_last_status.continuity_bands >> ((channel - 1) * 2)) & 0x3);
 }
 
 /**
@@ -176,7 +218,7 @@ static void handle_multi_arm_violation(uint16_t armed_mask)
     s_fire_repeat_active = false;
     send_cmd_disarm(0xFF);  /* 0xFF = all channels (FSD §6 line 1201) */
     s_armed_channel = 0;
-    s_prefire_start_ms = 0;
+    set_prefire_start(0);
     rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
     buzzer_play(BUZZER_ALARM_CRITICAL);
     display_error("MULTI-ARM DETECTED");
@@ -205,10 +247,29 @@ bool remote_fsm_get_status(rlc_payload_status_update_t *out)
 
 uint32_t remote_fsm_get_prefire_remaining_ms(void)
 {
-    if (s_state != STATE_PRE_FIRE || s_prefire_start_ms == 0) return 0;
-    int64_t elapsed = now_ms() - s_prefire_start_ms;
+    /* RM-11: s_prefire_start_ms is a 64-bit value written on the FSM task and
+     * read here from the display task — a plain read can tear across the two
+     * 32-bit halves and produce a wildly wrong countdown on the one screen
+     * that has to be trusted. Snapshot it under the same lock the cached
+     * status uses. */
+    int64_t start;
+    portENTER_CRITICAL(&s_status_lock);
+    start = s_prefire_start_ms;
+    portEXIT_CRITICAL(&s_status_lock);
+
+    if (s_state != STATE_PRE_FIRE || start == 0) return 0;
+    int64_t elapsed = now_ms() - start;
     if (elapsed >= PRE_FIRE_DELAY_MS) return 0;
     return (uint32_t)(PRE_FIRE_DELAY_MS - elapsed);
+}
+
+/* RM-11: all FSM-task writes to s_prefire_start_ms go through this so the
+ * display-task reader above can never observe a half-updated value. */
+static void set_prefire_start(int64_t t)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    s_prefire_start_ms = t;
+    portEXIT_CRITICAL(&s_status_lock);
 }
 
 int remote_fsm_init(void)
@@ -347,7 +408,7 @@ static void do_enter_idle(void)
 {
     s_armed_channel = 0;
     s_fire_repeat_active = false;
-    s_prefire_start_ms = 0;
+    set_prefire_start(0);
     /* 4.9: re-sync the tracked selection with the encoder — after
      * LINKING/LINK_LOST the cached s_selected_channel could be stale,
      * making the display highlight a different channel than a long-press
@@ -365,7 +426,7 @@ static void do_disarm_and_idle(void)
         send_cmd_disarm(s_armed_channel);
     }
     s_armed_channel = 0;
-    s_prefire_start_ms = 0;
+    set_prefire_start(0);
     rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
     buzzer_play(BUZZER_BEEP_LONG);
     ESP_LOGI(TAG, "DISARMED -> IDLE");
@@ -376,7 +437,7 @@ static void do_enter_link_lost(void)
 {
     s_fire_repeat_active = false;
     s_armed_channel = 0;
-    s_prefire_start_ms = 0;
+    set_prefire_start(0);
     buzzer_play(BUZZER_ALARM_LINK_LOST);
     rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
     ESP_LOGI(TAG, "-> LINK_LOST");
@@ -482,6 +543,37 @@ static int wait_for_ack(uint8_t expected_channel, uint32_t timeout_ms,
 
 static void process_event(const rlc_fsm_event_t *evt)
 {
+    /* DS-01 / FSD §5.5.6: display failure is a hard fault from any state.
+     * Handled ahead of the state switch for the same reason the base handles
+     * EVT_ARM_SENSE_FAULT that way — there is no state in which "the operator
+     * is now flying blind" is acceptable, and while ARMED/PRE_FIRE/FIRING the
+     * frozen last frame actively lies about the fire path.
+     *
+     * §5.5.6 requires CMD_DISARM plus ERROR when this happens while armed;
+     * do_disarm_and_idle()'s disarm is not enough here because ERROR must
+     * follow, so the disarm is issued explicitly first. Already-ERROR is a
+     * no-op (unrecoverable by design). */
+    if (evt->type == EVT_DISPLAY_FAULT) {
+        if (s_state != STATE_ERROR) {
+            ESP_LOGE(TAG, "DISPLAY FAULT — disarming and entering ERROR");
+            s_fire_repeat_active = false;
+            if (s_state == STATE_PRE_FIRE || s_state == STATE_FIRING) {
+                send_cmd_cease_fire();
+            }
+            if (s_armed_channel > 0) {
+                send_cmd_disarm(s_armed_channel);
+            } else {
+                /* Belt and braces: the base may be armed on a channel this
+                 * unit has lost track of, and we are about to stop being able
+                 * to show anything at all. */
+                send_cmd_disarm(0xFF);
+            }
+            set_prefire_start(0);
+            do_enter_error_text("DISPLAY FAULT");
+        }
+        return;
+    }
+
     switch (s_state) {
 
     /* ─── BOOT ─────────────────────────────────────────────── */
@@ -493,6 +585,9 @@ static void process_event(const rlc_fsm_event_t *evt)
     case STATE_LINKING:
         if (evt->type == EVT_LINK_ESTABLISHED) {
             ESP_LOGI(TAG, "LINKING -> IDLE (link established)");
+            /* RM-02: adopt the base's advertised channel count now that the
+             * handshake has completed, so the encoder cannot select past it. */
+            encoder_set_max_channel(rlc_link_get_peer_num_channels());
             do_enter_idle();
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
             ESP_LOGW(TAG, "BATTERY_CRITICAL during LINKING -> ERROR");
@@ -511,6 +606,19 @@ static void process_event(const rlc_fsm_event_t *evt)
         if (evt->type == EVT_ENCODER_LONG_PRESS) {
             /* Attempt to ARM (FSD §8.2.3) */
             uint8_t ch = encoder_get_channel();
+
+            /* RM-02 / FSD §8.2.2: refuse a channel the base does not have,
+             * locally. The base NACKs it (INVALID_CHANNEL) so this is not a
+             * safety gap, but a local refusal names the real reason and does
+             * not spend a command round-trip on it. */
+            uint8_t base_channels = rlc_link_get_peer_num_channels();
+            if (ch > base_channels) {
+                ESP_LOGW(TAG, "ARM rejected: ch %u > base num_channels %u",
+                         ch, base_channels);
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("CHANNEL NOT ON BASE");
+                break;
+            }
 
             /* Guard 1: Arm switch must be ON */
             if (!arm_switch_is_armed()) {
@@ -665,6 +773,12 @@ static void process_event(const rlc_fsm_event_t *evt)
                 display_toast("NO RESPONSE FROM BASE");
             }
 
+        } else if (evt->type == EVT_ENCODER_SHORT_PRESS) {
+            /* RM-01 / FSD §8.2.3: a short press in IDLE is the operator
+             * reaching for ARM the wrong way. Answer it — the event used to
+             * be dropped entirely, so the only thing telling anyone how to
+             * arm was a permanent banner. */
+            display_toast("HOLD TO ARM");
         } else if (evt->type == EVT_FIRE_BUTTON_PRESSED) {
             /* Ignored in IDLE (FSD §8.2.3) */
         } else if (evt->type == EVT_LINK_LOST) {
@@ -766,7 +880,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                     do_disarm_and_idle();
                 } else {
                     /* ACK — enter PRE_FIRE */
-                    s_prefire_start_ms = now_ms();
+                    set_prefire_start(now_ms());
                     s_fire_repeat_active = true;
                     xTaskNotifyGive(s_fire_repeat_task);  /* Wake fire-repeat task */
                     rlc_rgb_led_set_pattern(LED_PATTERN_PRE_FIRE);
@@ -779,6 +893,18 @@ static void process_event(const rlc_fsm_event_t *evt)
                          nack_reason, rlc_nack_reason_str(nack_reason));
                 buzzer_play(BUZZER_BEEP_TRIPLE);
                 show_nack(nack_reason);
+                do_disarm_and_idle();
+            } else if (result == WAIT_FOR_ACK_INTERRUPTED) {
+                /* RM-03: the operator ended this attempt themselves — arm key
+                 * off, fire button released, or encoder touched. The behaviour
+                 * (cease fire, stand down) is the same as a timeout, but the
+                 * message must not be: "NO RESPONSE - FIRE ABORTED" blamed the
+                 * base for something the operator did, and sent people looking
+                 * for a link fault that was not there. The ARM path has had
+                 * this branch since 2.4; the FIRE path did not. */
+                ESP_LOGW(TAG, "FIRE attempt interrupted by operator — aborting");
+                send_cmd_cease_fire();
+                display_toast("FIRE CANCELLED");
                 do_disarm_and_idle();
             } else if (result == WAIT_FOR_ACK_STATE_HANDLED) {
                 /* R1: LINK_LOST or BATTERY_CRITICAL was handled inline by
@@ -822,11 +948,22 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* Check if base disarmed us */
             if (s_armed_channel > 0 &&
                 !(armed_mask & (1U << (s_armed_channel - 1)))) {
-                ESP_LOGW(TAG, "STATUS_UPDATE shows base disarmed");
-            display_toast("BASE DISARMED");
+                /* RM-07 / FSD §12.1: when the same frame shows the channel
+                 * OPEN, the disarm was the base's continuity-loss disarm
+                 * (§7.2.7) — the igniter left the circuit. Say so, with the
+                 * distinctive BEEP_CONTINUITY_LOST pattern. Previously every
+                 * base-initiated disarm produced the same BEEP_LONG, so a
+                 * disconnected igniter was indistinguishable from an arm
+                 * timeout, and BEEP_CONTINUITY_LOST was never played at all. */
+                bool cont_lost = (status_continuity_band(s_armed_channel) == CONT_OPEN);
+                ESP_LOGW(TAG, "STATUS_UPDATE shows base disarmed%s",
+                         cont_lost ? " (continuity OPEN)" : "");
+                display_toast(cont_lost ? "CONTINUITY LOST - DISARMED"
+                                        : "BASE DISARMED");
                 s_armed_channel = 0;
                 rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
-                buzzer_play(BUZZER_BEEP_LONG);
+                buzzer_play(cont_lost ? BUZZER_BEEP_CONTINUITY_LOST
+                                      : BUZZER_BEEP_LONG);
                 s_state = STATE_IDLE;
             }
             /* N2: dead-code stale check removed; staleness is handled by
@@ -918,6 +1055,9 @@ static void process_event(const rlc_fsm_event_t *evt)
     case STATE_LINK_LOST:
         if (evt->type == EVT_LINK_RECOVERED) {
             buzzer_stop();
+            /* RM-02: a recovery may be onto a fresh session with a different
+             * base — re-adopt the advertised channel count. */
+            encoder_set_max_channel(rlc_link_get_peer_num_channels());
             /* 4.9: same re-sync as every other IDLE entry — the encoder may
              * have moved while the link was down. */
             do_enter_idle();
@@ -945,6 +1085,23 @@ static void process_event(const rlc_fsm_event_t *evt)
 
 static void check_timers(void)
 {
+    /* RM-07 / FSD §12.1 BEEP_PING_FAIL. Played on the *edge* into a degraded
+     * link, not per missed ping: at a 500 ms heartbeat a per-ping beep would
+     * be a continuous rattle through exactly the condition the operator needs
+     * to hear other alerts during. One 80 ms chirp says "the link just went
+     * bad"; ALARM_LINK_LOST takes over if it goes all the way down. Until now
+     * this pattern was implemented and never played. */
+    {
+        static bool s_link_was_healthy = true;
+        bool healthy = rlc_link_is_healthy();
+        if (s_link_was_healthy && !healthy &&
+            s_state != STATE_LINK_LOST && s_state != STATE_ERROR) {
+            ESP_LOGW(TAG, "link degraded — ping failure rate over threshold");
+            buzzer_play(BUZZER_BEEP_PING_FAIL);
+        }
+        s_link_was_healthy = healthy;
+    }
+
     /* PRE_FIRE -> FIRING: local countdown elapsed (FSD §8.2.5) */
     if (s_state == STATE_PRE_FIRE && s_prefire_start_ms > 0) {
         if ((now_ms() - s_prefire_start_ms) >= PRE_FIRE_DELAY_MS) {
@@ -1012,8 +1169,15 @@ static void cmd_fire_repeat_task_fn(void *arg)
              * 2.4: the arm key is re-checked too — no CMD_FIRE leaves this
              * unit with the key off, even before the FSM consumes the
              * switch-off event. */
+            /* RM-06: the physical button is checked too. Release arrives as
+             * EVT_FIRE_BUTTON_RELEASED, which the FSM task must dequeue before
+             * it clears s_fire_repeat_active — up to one more CMD_FIRE could
+             * leave this unit after the operator had already let go. Benign
+             * (the base's dead-man and the following CEASE_FIRE both cover
+             * it), but "the button is up" is the authoritative fact here. */
             uint8_t ch = s_armed_channel;
-            if (ch > 0 && s_fire_repeat_active && arm_switch_is_armed()) {
+            if (ch > 0 && s_fire_repeat_active && arm_switch_is_armed() &&
+                fire_button_is_pressed()) {
                 send_cmd_fire(ch);  /* Fire-and-forget, no ACK */
             }
             esp_task_wdt_reset();

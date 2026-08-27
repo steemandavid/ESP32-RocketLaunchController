@@ -119,6 +119,23 @@ bool rlc_link_is_linked(void);
 rlc_link_state_t rlc_link_get_state(void);
 
 /**
+ * Milliseconds since the last well-formed frame was received from the peer,
+ * or -1 if the peer has never been heard from.
+ *
+ * Unlike rlc_link_status_t.ms_since_contact this never conflates "never" with
+ * "just now" — required by the base's PRE_FIRE→FIRING heartbeat-freshness
+ * guard (FSD §7.2.4 guard 2).
+ */
+int64_t rlc_link_ms_since_contact(void);
+
+/**
+ * Number of fire channels the base reported in LINK_ACK (FSD §8.2.2).
+ * Remote side only; returns this build's NUM_CHANNELS until a handshake has
+ * completed, and is clamped to NUM_CHANNELS in any case.
+ */
+uint8_t rlc_link_get_peer_num_channels(void);
+
+/**
  * Remote battery voltage (mV) carried in PING messages. Set by the
  * application periodically; 0 means "unknown" until first battery sample.
  */

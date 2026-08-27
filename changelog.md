@@ -1,5 +1,271 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-27 — All review findings fixed: firmware 1.1.9, FSD v1.44, host FSM harness
+
+Fixed every finding of `Code_Review_AllPhases_20260827_0308.md` — the Critical,
+all 8 Majors, and the Minors — plus the Info-level items that were worth acting
+on. Firmware 1.1.8 → **1.1.9** (both units; the version check is strict, so
+flash them together). FSD v1.43 → **v1.44**.
+
+### The Critical — BF-01 / bug #31: fire timer left running after a completed pulse
+
+`fire_timer_stop()` was called on every exit from FIRING **except the
+successful one**. An expired one-shot GPTimer alarm auto-disables the *alarm*,
+not the *timer* — the driver stays in `GPTIMER_FSM_RUN` — so the second
+arm-and-fire cycle of a power cycle called `gptimer_start()` on a running
+timer. Under ESP-IDF v5.4.1 (what this project builds with) that returns
+`ESP_ERR_INVALID_STATE`, and the `ESP_ERROR_CHECK` around it called `abort()`.
+
+The panic happens **after** `relay_fire_set(ch, true)`. Both the arm relay and
+the channel relay are energised at that instant and nothing in a panic path
+de-energises them, so the igniter carried full current for the entire
+panic-print-and-reboot interval — over 100 ms, against an e-match that fires in
+single-digit milliseconds. The base then rebooted mid-FIRING and the remote saw
+a link drop rather than FIRE COMPLETE.
+
+Never observed because no test had ever completed a pulse and re-armed on the
+same power cycle: T-F02, the only G3 fire test run, aborts before the pulse.
+
+Fixed in three layers, because one would have been enough only until the next
+refactor:
+
+1. `fire_timer_stop()` on the `EVT_FIRE_PULSE_DONE` path.
+2. An unconditional `gptimer_stop()` at the top of `fire_timer_start()`, so
+   correctness does not depend on which exit path ran last.
+3. `fire_timer_start()` now returns `esp_err_t` instead of using
+   `ESP_ERROR_CHECK`. On failure the FSM cuts the pulse, runs
+   `relay_all_safe()` and latches `ERR_INTERNAL`. **Nothing on the fire path
+   may `abort()`.**
+
+Regression-tested by `tests/host/test_base_fsm.c` T-FSM05: two complete
+arm→fire→pulse-done→cooldown cycles plus a fault-injected timer-start failure
+that must end in ERROR with the igniter de-energised. It runs on every build.
+
+### The 8 Majors
+
+- **DS-01 — FSD §5.5.6 runtime display health check did not exist.** The panel
+  ID was read once at boot and every SPI return code was discarded, so a panel,
+  flex or connector that failed mid-session simply froze the last rendered
+  frame — potentially an ARMED screen reading "CONTINUITY CONNECTED" — while
+  the FSM went on accepting fire commands. The TWDT cannot catch this: the task
+  keeps flushing happily into a dead bus. Now: SPI errors counted, 5 s panel-ID
+  re-read inside `display_task` (serialised with frame writes by construction),
+  two consecutive bad reads required before declaring failure, and a failure
+  posts `EVT_DISPLAY_FAULT` — on which the remote FSM ceases fire, disarms and
+  latches ERROR from any state. The spec's own "during IDLE state" wording was
+  corrected too: a check that only ran in IDLE could never detect the failure
+  the next sentence required it to react to.
+- **CM-01 — unlocked cross-task race in `rlc_link_send_status_update()`.** It
+  runs on `status_update_task` and mutated `s_tx_seq` (a non-atomic RMW),
+  `s_status_update_seq` and `set_state()` while `link_task` held the mutex over
+  the same state. Duplicate sequence numbers were reachable, and the peer
+  rejects those as replay. Now fully locked, with the frame build and radio
+  send moved outside the lock.
+- **TT-04 — zero automated tests for either safety FSM.** New host
+  event-injection harness: `tests/host/test_base_fsm.c` compiles the production
+  `rlc_base_fsm.c` against recording fakes and asserts outcomes — which relay
+  moved, which siren pattern sounded, which NACK went out — across 111 checks
+  in nine groups (arming guards, arm-verify window, continuity-loss disarm
+  including the bug #30 backstop, PRE_FIRE guards, two fire cycles, every
+  FIRING exit, weld fault, ERROR terminality, timeouts and recovery). This
+  discharges §4.5, the "verify by code review" substitute agreed for
+  T-F06/F07/F09 and T-S12/S13, the host half of T-A05, the base half of T-U07,
+  and positive verification of bug #30.
+- **DOC-01/02/03/04/13** — already closed by the v1.43 doc sweep in the
+  previous session; re-verified.
+- **TT-01 — `tools/test_tr04.py` ports stale and crossed.** `BASE_PORT` pointed
+  at the adapter of dead chip #3 (not present on this machine at all) and
+  `REMOTE_PORT` pointed at the *base* board, so running the script as written
+  would have halted the remote and talked to the base as if it were the remote.
+  Corrected, made overridable with `--base` / `--remote`, and it now refuses to
+  run against a port that does not exist, printing the live by-ids.
+- **TT-02 — `vbat_fit.py` could not parse any real capture.** It expected
+  `CSV,`/`PLATEAU,` records; `vbat-cal` emits `MEDIAN ...` lines. It exited
+  "No CSV records found" on every log, leaving only the manual `--pairs` path
+  usable. Now parses the live format (dropping over-range readings, which are
+  an indication and not a measurement) and still accepts the historic one.
+
+### Minors and selected Info
+
+- **BF-02** — PRE_FIRE→FIRING guard 2 (heartbeat freshness) had been folded
+  into guard 4's failure-*rate* check. 2 misses in 10 is 20 %, which passes the
+  30 % test, and still means ~1.5 s of silence at the moment of ignition. Now
+  an explicit `rlc_link_ms_since_contact()` test that aborts to LINK_LOST, per
+  §7.2.4, while guard 4 continues to abort to IDLE.
+- **BF-03** — `SIREN_CONTINUITY_LOST` (§12.2) implemented and sounded at all
+  three continuity-loss disarm sites; that disarm had been audibly identical to
+  a key-off disarm, i.e. silent.
+- **BF-04 / CI-05 / RM-09** — boot failures used to `return` out of app_main,
+  leaving the relays safe but the FSM in BOOT, no ERROR state, no error siren,
+  and the housekeeping loop gone. Both units now latch a halt with siren/buzzer
+  and LED. `rlc_battery_init()`'s return is checked, and its internal
+  `ESP_ERROR_CHECK`s — which could reboot-loop — are gone.
+- **BF-05/06/07** — dead `base_fsm_post_event()` removed (a zero-timeout poster
+  every caller had already abandoned); siren `gpio_config`/`esp_timer` returns
+  checked with NULL-safe fallbacks; the FSM event queue is created before the
+  arm-sense task starts, so a contact weld present at power-on is no longer
+  dropped into a NULL queue.
+- **CM-02** — App D.3's NACK 0x08 (replay) and 0x06 (integrity) are emitted
+  instead of dropping the frame silently, which contradicted the project's own
+  no-silent-refusals principle. A corrupted frame deliberately does **not**
+  advance the rx sequence counter.
+- **CM-03** — `update_sequence` data-gap detection implemented (the field had
+  been generated correctly and never consumed), with modular comparison so the
+  uint16 wrap is not a 65535-frame gap.
+- **CM-04** — truncated ACK/NACK frames are dropped rather than forwarded with
+  zeroed fields, which decoded as "UNKNOWN ERROR" or as an unmatched ACK the
+  operator waited out.
+- **CM-05** — seq 0 is rejected for every message type. The old
+  `rx <= last && last != 0` form left an unlimited seq-0 replay window at the
+  start of every session; since every sender pre-increments, a plain `<=`
+  admits the real first frame anyway. One shared `seq_is_replay()` now matches
+  `rlc_seq_validate()`'s semantics exactly.
+- **CM-06** — the `espressif/esp-now` managed component was declared but never
+  used (the code is written against native `esp_now_*`). Removed: dead flash
+  and an avoidable supply-chain surface on a safety-critical unit.
+- **CM-07** — every silent queue drop on the receive path now logs; an overrun
+  used to be indistinguishable from RF loss in a post-mortem.
+- **CI-01** — `CONT_RELAY_DROPOUT_MS` had been dead since it was defined. The
+  sampler now skips a channel for 50 ms after its relay de-energises, so no
+  reading is taken while the NO→NC contacts bounce.
+- **CI-02** — `ERR_VBAT_LOW` (§13.1 bit 0) is now set, derived live in
+  `status_update_task` rather than latched, so the remote can show a base
+  "VBAT LOW" warning before an ARM is refused.
+- **CI-04** — `led_task` registered with the TWDT. A hung RMT refresh froze the
+  status strip, ARMED blink included, while the watchdog stayed happy.
+- **CI-06** — the encoder-before-ADC ordering constraint (GPIO 4/5 are
+  ADC1_CH3/CH4) is now documented at the call site. It was correct only by
+  accident of layout; "sort these into §9.13 step order" would have silently
+  re-broken the knob.
+- **CI-09/10** — `CONT_TRACE_INTERVAL_MS` defaulted to 1000 while its own
+  comment said "set to 0 for field use", so production builds wrote a trace
+  line per second into the log an operator has to read a fault out of; now 0.
+  `rlc_rgb_led_init()`'s return is checked on both units.
+- **RM-01/02/03/05/06/07/11 and DS-02/03** — encoder short-press in IDLE now
+  answers ("HOLD TO ARM") instead of being dropped; §8.2.2 `num_channels`
+  adaptation implemented end to end (encoder wrap, local ARM guard, "N/A" cells
+  on the display); the FIRE path gained the `WAIT_FOR_ACK_INTERRUPTED` branch
+  the ARM path already had, so an operator-cancelled fire no longer reads "NO
+  RESPONSE - FIRE ABORTED"; the buzzer queue is a one-deep mailbox written with
+  `xQueueOverwrite`, closing the race that let a stale pattern play; the
+  fire-repeat task checks the physical button; `BEEP_CONTINUITY_LOST` and
+  `BEEP_PING_FAIL` are finally played (the first on a continuity-caused disarm,
+  the second on the rising edge into a degraded link); `s_prefire_start_ms` is
+  read and written under a lock, so the countdown cannot tear; the channel grid
+  no longer overflows 480 px and clips the right border of channels 4 and 8;
+  and the ARMED screen shows "CONTINUITY ?" rather than asserting OPEN on stale
+  data.
+- **RM-04 / CI-03** — `buzzer_task` moved from an unpinned priority 5 back to
+  §9.10's 1 / core 1. A UI task had been running above the safety FSM, in
+  direct violation of that section's SHALL; the spec was not relaxed to match.
+
+### Tests and tooling
+
+- Host suite: **12 binaries / 265 checks → 16 / 418**, 0 failures. New:
+  `test_base_fsm.c` (111) and `test_seqgap.c` (T-U04/T-U09/T-U16, 21 each).
+- `build_base.sh` and `build_remote.sh` now run `tests/host/run.sh` before every
+  firmware build and **refuse to build on failure** (`RLC_SKIP_HOST_TESTS=1`
+  bypasses). The runner existed but nothing had ever invoked it, so a regression
+  could reach a board without anyone running the tests.
+- Unit-specific tests print `SKIPPED` instead of "0 checks, 0 failures", which
+  had read identically to a passing test (TT-07).
+- New stubs: `esp_task_wdt.h`, `esp_err.h`, `freertos/queue.h`, plus task-notify
+  and pinned-create shims.
+
+### Documentation
+
+FSD → **v1.44**: §7.2.4 guard 2 restated as a freshness test that must not be
+folded into guard 4, and its action 2 now requires a stopped-first,
+return-checked fire-timer start that never aborts; §7.2.5 gains the explicit
+"stop the fire timer" step on the successful path; §5.5.6 corrected and
+tightened; §5.4.6/§7.3.1 relay settling specified; §9.10 task tables audited
+against the built firmware (`espnow_rx` was missing entirely, the link manager
+was listed under an old name at the wrong priority); §8.2.2 `num_channels`
+behaviour pinned; §12.1 `BEEP_PING_FAIL` given rising-edge semantics; §15.5
+documents the new FSM harness test-by-test; §14.5 trace default 0.
+Development_Progress gains bug #31, a **Firmware Version History** table
+(1.1.3–1.1.7 had been recorded only in `rlc_version.h`), and Phase 5 items
+9–13. README and Project Summary updated (the "10 guard conditions" list
+actually listed 7).
+
+### Build and verification
+
+Both units rebuilt clean from scratch after every batch of edits; host suite
+green throughout.
+
+```
+./tests/host/run.sh          # 16 binaries, 418 checks, 0 failures
+./build_base.sh              # Verified: base_app_main in binary
+./build_remote.sh            # Verified: remote_app_main in binary
+```
+
+Two things surfaced only at build time and are worth remembering:
+
+- **`-Werror=format-truncation` is load-bearing here.** Adding the early return
+  for the RM-02 "N/A" cell in `draw_channel_cell()` inhibited inlining of the
+  caller's `for (ch = 1; ch <= 8; ...)` loop, so GCC lost the range of `ch` and
+  rejected the pre-existing `snprintf(label, sizeof(label), "CH%d", ch)` into
+  `char[8]` that had compiled for months. Fixed by bounding `ch` explicitly at
+  the top of the function rather than by widening the buffer — the range guard
+  is the honest fix and it also makes the function safe to call directly.
+- **Removing `espressif/esp-now` from `components/rlc_common/idf_component.yml`
+  regenerates `dependencies.lock` and prunes `managed_components/`.** Both are
+  gitignored, so this is invisible in the diff; `espressif__cmake_utilities`
+  disappeared too, since it was only a private dependency of esp-now. Confirmed
+  with `grep -c esp-now dependencies.lock` → 0.
+
+### Files touched
+
+40 modified, 5 added, ~1650 insertions.
+
+| Area | Files |
+|---|---|
+| Fire path (base) | `rlc_fire_timer.{c,h}`, `rlc_base_fsm.{c,h}`, `rlc_relay.c`, `rlc_siren.{c,h}`, `rlc_base_main.c`, `rlc_continuity.{c,h}`, `rlc_status_update.c` |
+| Comms | `rlc_link.{c,h}`, `rlc_message.{c,h}`, `rlc_fsm_events.h` |
+| Remote | `rlc_remote_fsm.c`, `rlc_remote_main.c`, `rlc_display.c`, `rlc_buzzer.c`, `rlc_encoder.{c,h}` |
+| Common | `rlc_battery.c`, `rlc_rgb_led.c`, `rlc_config.h`, `rlc_version.h`, `idf_component.yml` |
+| Tests | **new** `test_base_fsm.c`, `test_seqgap.c`; **new stubs** `esp_err.h`, `esp_task_wdt.h`, `freertos/queue.h`; modified `run.sh`, `test_encoder.c`, `stubs/freertos/task.h`, `stubs/esp_adc/adc_oneshot.h` |
+| Tools | `tools/test_tr04.py`, `tools/vbat_fit.py` |
+| Build | `build_base.sh`, `build_remote.sh` |
+| Docs | FSD, `Development_Progress.md`, `README.md`, `RLC_Project_Summary.md`, `changelog.md` |
+
+### Watch out for
+
+- **The display health check has not been soaked on hardware.** It disarms on
+  two consecutive panel-ID mismatches against the value latched at boot. This
+  panel is a clone reporting a non-standard `0x2A403300`; if that read turns
+  out not to be perfectly repeatable, the check can disarm spuriously. Leave
+  the remote linked and idle for an hour and watch for
+  `display health check FAILED` before trusting it at a pad.
+- **The BF-01 fix is proven in the host harness, not on the bench.** The
+  power-cycle-between-launches practice should stay until Phase 5 item 10 has
+  been run on target.
+- **`CONT_TRACE_INTERVAL_MS` is now 0.** Set it back to 1000 in
+  `rlc_config.h` when doing continuity work at the bench, or the per-sweep raw
+  ADC trace will be missing and it will look like the sampler stopped.
+- **`buzzer_task` dropped from priority 5 to 1.** Beep timing under load may be
+  slightly less crisp than before. That is the intended trade — a UI task must
+  not preempt the safety FSM.
+- The base FSM harness calls `process_event()` / `check_timers()` directly and
+  never runs `base_fsm_task`. If a future change moves logic **into** the task
+  loop rather than into those two functions, the tests will silently stop
+  covering it.
+
+### Not done, and why
+
+- **T-C06 on-air replay tool.** The rule is now host-tested and the base emits
+  NACK 0x08, but capturing a real frame off the air and re-transmitting it
+  needs a third radio. Tracked as Phase 5 item 13.
+- **Remote FSM host harness.** The base FSM was the one on the fire path;
+  the remote's is the obvious next application of the same technique. Phase 5
+  item 11.
+- **On-target two-fire-cycle run (G3).** The BF-01 fix is regression-tested in
+  the host harness; the bench confirmation is Phase 5 item 10 and is what
+  actually lifts the one-launch-per-power-cycle restriction.
+- **CI runner** (TT-12 second half) and **bug #20 key rotation** remain open.
+
+---
+
 ## 2026-08-27 — Full-codebase review vs FSD: verdict FAIL (1 Critical), documentation swept to FSD v1.43
 
 Read-only review of all production code, tests/tooling, and documentation

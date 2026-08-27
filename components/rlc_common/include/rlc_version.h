@@ -7,6 +7,37 @@
 
 #pragma once
 
+/* 1.1.9 (2026-08-27): full-codebase review fix round (RLC-REVIEW-ALL-008).
+ *
+ * CRITICAL — BF-01: the fire GPTimer was never stopped on the *successful*
+ * pulse-completion path. An expired one-shot alarm disables the alarm but
+ * leaves the driver in RUN state, so the second fire_timer_start() of a power
+ * cycle hit ESP_ERROR_CHECK -> abort() -> panic-reboot with the arm relay and
+ * the channel relay still energised. The igniter carried full current for the
+ * whole panic+reboot interval. Fixed three ways: stop on completion, stop
+ * defensively at the top of every start, and a checked return that makes the
+ * hardware safe and latches ERROR instead of aborting.
+ *
+ * Also on the fire path: BF-02 (PRE_FIRE heartbeat-freshness is now its own
+ * guard routing to LINK_LOST, no longer folded into the 30% failure-rate
+ * check), BF-03 (SIREN_CONTINUITY_LOST now sounds on a continuity-loss
+ * disarm), BF-04/CI-05 (boot failures latch a halt with siren and LED instead
+ * of returning from app_main), BF-07 (FSM queue created before the arm-sense
+ * task, so a weld present at power-on is not dropped).
+ *
+ * Comms: CM-01 (rlc_link_send_status_update ran unlocked against link_task —
+ * duplicate sequence numbers), CM-02 (replay/CRC refusals now NACK per App
+ * D.3 instead of dropping silently), CM-03 (STATUS_UPDATE data-gap
+ * detection), CM-04 (truncated ACK/NACK dropped, not forwarded zeroed),
+ * CM-05 (seq 0 rejected for commands), CM-06 (unused espressif/esp-now
+ * dependency removed).
+ *
+ * Remote: DS-01 (FSD §5.5.6 runtime display health check — 5 s panel-ID
+ * re-read; failure while armed disarms and latches ERROR), RM-01/02/03/05/06/
+ * 07/09/11, DS-02/03. Buzzer task moved to priority 1 / core 1 per §9.10.
+ *
+ * Both units are affected and the version check is strict — flash together.
+ */
 /* 1.1.1 (2026-08-21): post-review fix round — arm-key state adopted at boot
  * (N1), siren stale-callback race (N2), and 11 minors. Arm-path behaviour
  * changed on BOTH units, so the bump is deliberate: the strict version check
@@ -64,5 +95,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  8
-#define RLC_VERSION_STRING "1.1.8"
+#define RLC_VERSION_PATCH  9
+#define RLC_VERSION_STRING "1.1.9"

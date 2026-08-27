@@ -7,6 +7,7 @@
  */
 
 #include "rlc_relay.h"
+#include "rlc_continuity.h"
 #include "pin_config.h"
 #include "rlc_config.h"
 
@@ -86,12 +87,16 @@ void relay_fire_set(uint8_t channel, bool state)
         return;
     }
     drive_output(s_channel_pins[channel - 1], state, PIN_RELAY_CH_ACTIVE);
+    /* CI-01 / FSD §5.4.6: the contacts bounce on the way back to NC — hold
+     * the sense reading off for CONT_RELAY_DROPOUT_MS. */
+    if (!state) continuity_note_relay_released(channel);
 }
 
 void relay_fire_all_off(void)
 {
     for (int i = 0; i < NUM_CHANNELS; i++) {
         drive_output(s_channel_pins[i], false, PIN_RELAY_CH_ACTIVE);
+        continuity_note_relay_released((uint8_t)(i + 1));   /* CI-01 */
     }
 }
 

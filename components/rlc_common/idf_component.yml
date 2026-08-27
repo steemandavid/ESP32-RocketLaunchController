@@ -1,5 +1,9 @@
 dependencies:
   idf:
     version: '>=5.0.0'
-  espressif/esp-now: '*'
+  # CM-06: espressif/esp-now was declared but never used — rlc_espnow.c is
+  # written against the native esp_now_* API in ESP-IDF itself. Removed
+  # 2026-08-27: it was dead flash and an avoidable supply-chain surface on a
+  # safety-critical unit. Do not re-add it without migrating the code
+  # deliberately; the two APIs have different session/security models.
   espressif/led_strip: '*'

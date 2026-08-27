@@ -42,10 +42,9 @@ QueueHandle_t base_fsm_get_queue(void);
  */
 TaskHandle_t base_fsm_get_task(void);
 
-/**
- * Post an event to the FSM queue (non-blocking, drops if full).
- */
-void base_fsm_post_event(uint32_t event_type, bool armed);
+/* base_fsm_post_event() was removed 2026-08-27 (BF-05). Post events by
+ * xQueueSend() to base_fsm_get_queue() with a short blocking timeout — see
+ * rlc_base_main.c. A zero-timeout send can drop a safety event. */
 
 /**
  * Get current FSM state (thread-safe read).

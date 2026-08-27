@@ -64,3 +64,16 @@ int32_t continuity_get_uv(uint8_t ch);
 
 /** Last averaged raw ADC count for a channel (1-8), before calibration. */
 int32_t continuity_get_raw(uint8_t ch);
+
+/**
+ * Tell the sampler that a channel relay has just been de-energised
+ * (FSD §5.4.6, CI-01).
+ *
+ * The channel is skipped in the round-robin for CONT_RELAY_DROPOUT_MS so no
+ * reading is taken while the NO→NC contacts are still bouncing. Its band is
+ * left unchanged during the window; the next sweep re-reads it.
+ *
+ * Called from rlc_relay.c on every de-energise. Cheap and ISR-safe-ish (one
+ * timestamp write), safe to call for a channel that was already off.
+ */
+void continuity_note_relay_released(uint8_t ch);

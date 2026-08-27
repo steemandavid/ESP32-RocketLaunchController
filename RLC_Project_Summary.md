@@ -54,13 +54,20 @@ This is the part I'd most like your feedback on. The system was designed so that
 ### Software Interlocks
 
 - **10 guard conditions** must all pass before the arm relay can energize:
-  - Physical key switch in ARM position (verified by a separate GPIO, not just assumed)
-  - Selected channel has continuity (open circuit = blocked)
-  - Only one channel armed at a time
-  - Battery voltage above minimum (10.5 V on base)
-  - Arm sense feedback confirms the arm relay actually closed (contact welding detection)
-  - Communication link quality is acceptable
-  - Message integrity verified (CRC32 + session token + sequence number — see below)
+  1. Physical key switch in ARM position (verified by a separate GPIO, not just assumed)
+  2. Selected channel has continuity (open circuit = blocked)
+  3. Selected channel number is in range (1–8)
+  4. No other channel is already armed
+  5. Message integrity verified (CRC32-C over the frame with a pre-shared key)
+  6. Session token matches the one issued at link-up
+  7. Sequence number is newer than the last one seen (anti-replay)
+  8. Battery voltage above minimum (10.5 V on base)
+  9. The channel has the bug-#18 hardware protection fitted (ADC clamp + snubber)
+  10. Communication link quality is acceptable (≤30 % ping failures in the last 10)
+
+  Followed by a confirmation, not a guard: **arm sense feedback** must report
+  the arm relay actually closed within 200 ms, or the ARM is refused and the
+  relay de-energised. The same signal detects welded contacts.
 - **Continuity is watched for the whole time the pad is armed**, not just at the moment of arming. If the igniter on the armed channel goes open-circuit — someone pulls a lead, a clip falls off — the base disarms itself and silences the siren within about a second. This was added in August 2026 after bench testing showed the pad staying armed with a disconnected igniter.
 - **Dead-man switch**: during firing, the remote sends repeated "fire alive" messages. If the base stops receiving them (operator released the button, or link was lost), power is cut.
 - **Auto-disarm**: if the system is armed but no fire command is received within 10 seconds, it disarms automatically.

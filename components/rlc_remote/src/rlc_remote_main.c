@@ -114,6 +114,24 @@ static void on_encoder_long_press(void)
 
 /* ── Application Entry Point ──────────────────────────────────── */
 
+/**
+ * RM-09 / CI-05: terminal boot failure.
+ *
+ * These paths used to `return` out of remote_app_main(), which left the FSM in
+ * STATE_BOOT — not ERROR — with the housekeeping loop gone and app_main's
+ * watchdog subscription never taken. The handheld looked merely idle. Latch a
+ * visible, audible, unambiguous halt instead; the display message (when the
+ * panel is up) names the failing step.
+ */
+static void boot_fail(const char *what)
+{
+    ESP_LOGE(TAG, "BOOT FAILED: %s — halting (power cycle required)", what);
+    rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
+    display_error(what);
+    buzzer_play(BUZZER_ALARM_CRITICAL);
+    vTaskDelay(portMAX_DELAY);
+}
+
 void remote_app_main(void)
 {
     ESP_LOGI(TAG, "=== RLC Remote Unit v%s ===", RLC_VERSION_STRING);
@@ -129,13 +147,19 @@ void remote_app_main(void)
     rlc_watchdog_init();
 
     /* Visual feedback first (remote has no relays/safety GPIOs). */
-    rlc_rgb_led_init();
+    /* CI-10: the return was discarded on both units. A failed strip means no
+     * igniter status and no ARMED indication at all — not fatal (the unit is
+     * still safe and the console still reports), but it must not be silent. */
+    if (rlc_rgb_led_init() != 0) {
+        ESP_LOGE(TAG, "RGB LED init FAILED — no strip indication this session");
+    }
     rlc_rgb_led_set_pixel_count(NUM_CHANNELS);  /* 8-pixel igniter strip */
     rlc_rgb_led_set_brightness(RGB_LED_BRIGHTNESS_REMOTE);
     rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
 
     /* §9.13: Boot self-tests (CRC32-C, struct offsets) */
     if (rlc_selftest_run() != 0) {
+        /* Display is not up yet — LED + log only, so no display_error(). */
         ESP_LOGE(TAG, "self-tests FAILED — halting");
         rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
         vTaskDelay(portMAX_DELAY);
@@ -151,18 +175,26 @@ void remote_app_main(void)
     }
     display_start_task();
 
+    /* CI-06: encoder_init() MUST run before rlc_battery_init().
+     *
+     * The encoder sits on GPIO 4/5, which are ADC1_CH3/ADC1_CH4. Bringing up
+     * the ADC1 oneshot unit first reconfigures those pads and kills the
+     * quadrature inputs — the knob then does nothing at all. The ordering has
+     * been correct since the bug was found, but only by accident of layout:
+     * nothing said so, and "sort these calls into FSD §9.13 step order" would
+     * silently reintroduce it. Do not move rlc_battery_init() above this line.
+     */
     encoder_init();
     buzzer_init();
 
-    /* §9.13 Step 4: Initialise ADC calibration + battery */
-    rlc_battery_init(PIN_VBAT_ADC, REMOTE_VBAT_DIVIDER_RATIO);
+    /* §9.13 Step 4: Initialise ADC calibration + battery (see CI-06 above) */
+    if (rlc_battery_init(PIN_VBAT_ADC, REMOTE_VBAT_DIVIDER_RATIO) != 0) {
+        boot_fail("BATTERY ADC INIT FAILED");
+    }
 
     /* §9.13 Step 5: Initialise ESP-NOW */
     if (rlc_espnow_init() != 0) {
-        ESP_LOGE(TAG, "ESP-NOW init failed");
-        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-        display_error("ESP-NOW INIT FAILED");
-        return;
+        boot_fail("ESP-NOW INIT FAILED");
     }
 
     uint8_t base_mac[] = BASE_MAC_ADDR;
@@ -172,10 +204,7 @@ void remote_app_main(void)
         vTaskDelay(pdMS_TO_TICKS(500));
     }
     if (retries < 0) {
-        ESP_LOGE(TAG, "peer registration failed — ERROR");
-        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-        display_error("PEER REGISTRATION FAILED");
-        return;
+        boot_fail("PEER REGISTRATION FAILED");
     }
 
     /* §9.13 Step 7: Configure input GPIOs */
@@ -207,35 +236,26 @@ void remote_app_main(void)
     /* m4: Dedicated encoder task (FSD §9.10 — priority 3, core 0, 4096 stack) */
     if (xTaskCreatePinnedToCore(encoder_task_fn, "encoder_task", 4096, NULL, 3,
                                 NULL, 0) != pdPASS) {
-        ESP_LOGE(TAG, "encoder task create failed");
-        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-        display_error("ENCODER TASK FAILED");
-        return;
+        boot_fail("ENCODER TASK FAILED");
     }
     ESP_LOGI(TAG, "encoder task started (prio 3, core 0)");
 
     /* §9.13 Step 10: Begin link establishment */
     if (rlc_link_init(RLC_LINK_ROLE_REMOTE, base_mac) != 0) {
-        ESP_LOGE(TAG, "link manager init failed");
-        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-        return;
+        boot_fail("LINK MANAGER INIT FAILED");
     }
 
     /* Phase 3: Initialise the remote FSM (creates event queue).
      * M8: Queue is registered AFTER both init calls to avoid race. */
     if (remote_fsm_init() != 0) {
-        ESP_LOGE(TAG, "remote FSM init failed");
-        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-        return;
+        boot_fail("FSM INIT FAILED");
     }
 
     /* M8: Register FSM queue with link manager now that both are initialised. */
     rlc_link_register_cmd_queue(remote_fsm_get_queue());
 
     if (remote_fsm_start() != 0) {
-        ESP_LOGE(TAG, "remote FSM task start failed");
-        rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
-        return;
+        boot_fail("FSM TASK START FAILED");
     }
 
     /* (Input callbacks were registered before their tasks started — see 5.7

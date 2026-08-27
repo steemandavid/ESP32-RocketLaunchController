@@ -7,14 +7,30 @@ Strategy:
 3. Remote enters wait_for_ack, link loss fires during that window
 4. Remote must transition to LINK_LOST (not stay in IDLE)
 5. Resume base, verify recovery
-"""
-import serial, subprocess, time, sys
 
-REMOTE_PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00"
-BASE_PORT   = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E044219-if00"
+Ports:
+  Defaults are the stable /dev/serial/by-id board-serial paths for this pair.
+  Override on the command line when the hardware changes:
+
+      ./test_tr04.py --base <by-id> --remote <by-id>
+
+  Find yours with `ls /dev/serial/by-id/`. Never use /dev/ttyACMx — those
+  numbers reorder on every replug.
+"""
+import argparse, serial, subprocess, time, sys, os
+
+# TT-01 (2026-08-27): these two were stale and, worse, crossed. BASE_PORT
+# pointed at the adapter of dead chip #3 (no longer present on the machine at
+# all) and REMOTE_PORT pointed at ...042156, which is the BASE board. Running
+# the script as written halted the remote and talked to the base as if it were
+# the remote. Corrected against the live by-ids.
+BASE_PORT   = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E042156-if00"
+REMOTE_PORT = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E043219-if00"
 BAUD        = 115200
 
-ESPTOOL = "/home/john/.espressif/python_env/idf5.4_py3.12_env/bin/esptool.py"
+ESPTOOL = os.environ.get(
+    "ESPTOOL",
+    "/home/john/.espressif/python_env/idf5.4_py3.12_env/bin/esptool.py")
 
 def halt_base():
     """Halt base by entering flasher stub."""
@@ -137,4 +153,25 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
+    # TT-01: ports are overridable so a board swap does not need a code edit
+    # (and so the next stale-by-id bug is a wrong argument, not wrong firmware
+    # talking to the wrong board).
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--base", default=BASE_PORT,
+                    help="base unit /dev/serial/by-id path")
+    ap.add_argument("--remote", default=REMOTE_PORT,
+                    help="remote unit /dev/serial/by-id path")
+    args = ap.parse_args()
+    BASE_PORT, REMOTE_PORT = args.base, args.remote
+
+    for name, port in (("base", BASE_PORT), ("remote", REMOTE_PORT)):
+        if not os.path.exists(port):
+            print(f"ERROR: {name} port does not exist: {port}")
+            print("Current ports:")
+            bydir = "/dev/serial/by-id"
+            for p in sorted(os.listdir(bydir)) if os.path.isdir(bydir) else []:
+                print(f"  {bydir}/{p}")
+            sys.exit(2)
+
     main()

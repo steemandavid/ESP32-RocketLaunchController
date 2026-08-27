@@ -90,6 +90,9 @@ static int64_t           s_last_ping_rx_ms = 0;     /* base: when last PING rece
  * Kept separate from the ping counters because those stop advancing once the
  * link drops, which is exactly when "how long since contact" matters. */
 static int64_t           s_last_contact_ms = 0;
+/* RM-02: channel count reported by the base in LINK_ACK (remote side).
+ * Defaults to this build's NUM_CHANNELS until a handshake completes. */
+static uint8_t           s_peer_num_channels = NUM_CHANNELS;
 static uint16_t          s_missed_pings = 0;
 
 /* LINK_REQUEST retry counter (remote). */
@@ -123,6 +126,26 @@ static inline int64_t now_ms(void)
 
 static void lock(void)   { if (s_state_mutex) xSemaphoreTake(s_state_mutex, portMAX_DELAY); }
 static void unlock(void) { if (s_state_mutex) xSemaphoreGive(s_state_mutex); }
+
+/* CM-05: one place for the anti-replay rule, matching rlc_seq_validate()'s
+ * semantics exactly (strictly greater than the last accepted seq).
+ *
+ * The per-message-type checks used to read
+ *     (rx <= s_rx_last_seq && s_rx_last_seq != 0)
+ * which accepted seq 0 for as long as the counter was still 0 — an unlimited
+ * replay window for seq-0 frames at the start of every session. The `!= 0`
+ * clause was there to let the first frame through, but every sender
+ * pre-increments (seq_next), so the first frame carries 1 and a plain `<=`
+ * admits it anyway. seq 0 is never legitimate on the wire.
+ *
+ * Deliberately does NOT update s_rx_last_seq: the command path must not
+ * advance the counter until the integrity CRC has also passed, or a corrupted
+ * frame would burn the sequence number the real command still needs.
+ */
+static inline bool seq_is_replay(uint32_t rx)
+{
+    return rx <= s_rx_last_seq;
+}
 
 static void update_rssi(int rssi)
 {
@@ -276,11 +299,70 @@ static void send_link_ack(void)
     }
 }
 
+/**
+ * CM-02: emit a CMD_NACK for a command the link layer itself refused.
+ *
+ * App D.3 requires NACK 0x08 on a replayed command and 0x06 on an integrity
+ * CRC failure. Both used to be silent drops, which contradicts the project's
+ * own no-silent-refusals principle (§7.2.9a): the operator saw a long-press do
+ * nothing and could not tell a refused command from a lost one.
+ *
+ * MUST be called from process_frame() — i.e. on link_task with s_state_mutex
+ * already held. It therefore talks to seq_next()/s_session_token directly
+ * instead of going through rlc_link_send_cmd(), which takes the same
+ * non-recursive mutex and would deadlock.
+ */
+static void send_refusal_nack_locked(uint8_t nacked_type, uint32_t nacked_seq,
+                                     uint8_t reason)
+{
+    if (s_state != RLC_LINK_STATE_LINKED) return;
+
+    uint32_t seq;
+    if (!seq_next(&seq)) {
+        ESP_LOGW(TAG, "seq overflow sending refusal NACK — dropping link");
+        set_state(RLC_LINK_STATE_LOST);
+        return;
+    }
+
+    rlc_payload_cmd_nack_t p = {0};
+    p.nacked_msg_type = nacked_type;
+    p.nacked_sequence_number = nacked_seq;
+    p.reason_code = reason;
+
+    uint8_t buf[RLC_MSG_MAX_SIZE];
+    int len = rlc_msg_build(buf, MSG_CMD_NACK, seq, s_session_token,
+                            &p, sizeof(p));
+    if (len > 0) {
+        rlc_espnow_send(s_peer_mac, buf, len);
+        ESP_LOGW(TAG, "link-layer NACK: type=0x%02x reason=0x%02x (%s)",
+                 nacked_type, reason, rlc_nack_reason_str(reason));
+    }
+}
+
 static uint16_t s_status_update_seq = 0;
 
+/**
+ * CM-01: this runs on the base's status_update_task, not on link_task, so
+ * every piece of link state it touches is shared. It used to touch all of it
+ * unlocked: s_tx_seq (a non-atomic read-modify-write inside seq_next()),
+ * s_status_update_seq, s_state/s_session_token, and set_state() — which
+ * mutates state and posts FSM events. Interleaving with link_task could hand
+ * two frames the same sequence number; the remote then rejects the second as a
+ * replay, so a dropped PONG becomes a counted miss (spurious COMM_DEGRADED /
+ * link flap) or a STATUS_UPDATE is discarded and the remote's data goes stale.
+ *
+ * The same class of bug was fixed in rlc_link_send_cmd() (5.9) but not here.
+ * Everything that reads or writes link state is now under s_state_mutex; the
+ * frame build and the radio send happen after the unlock, so the lock is not
+ * held across esp_now_send() on this path.
+ */
 void rlc_link_send_status_update(const rlc_payload_status_update_t *payload)
 {
+    if (!payload) return;
+
+    lock();
     if (s_state != RLC_LINK_STATE_LINKED || s_role != RLC_LINK_ROLE_BASE) {
+        unlock();
         return;
     }
 
@@ -289,17 +371,21 @@ void rlc_link_send_status_update(const rlc_payload_status_update_t *payload)
         /* 5.6: overflow — re-link rather than wrap (see send_status_update) */
         ESP_LOGW(TAG, "seq overflow in status update — dropping link");
         set_state(RLC_LINK_STATE_LOST);
+        unlock();
         return;
     }
 
-    uint8_t buf[RLC_MSG_MAX_SIZE];
     rlc_payload_status_update_t p = *payload;
     p.update_sequence = s_status_update_seq++;
+    uint32_t token = s_session_token;
+    uint8_t  peer[6];
+    memcpy(peer, s_peer_mac, sizeof(peer));
+    unlock();
 
-    int len = rlc_msg_build(buf, MSG_STATUS_UPDATE,
-                            seq, s_session_token, &p, sizeof(p));
+    uint8_t buf[RLC_MSG_MAX_SIZE];
+    int len = rlc_msg_build(buf, MSG_STATUS_UPDATE, seq, token, &p, sizeof(p));
     if (len > 0) {
-        rlc_espnow_send(s_peer_mac, buf, len);
+        rlc_espnow_send(peer, buf, len);
     }
 }
 
@@ -430,6 +516,18 @@ static void handle_link_ack(const uint8_t *payload, uint16_t plen)
         return;
     }
 
+    /* RM-02 / FSD §8.2.2: the base advertises how many channels it actually
+     * has. Store it so the remote's channel selection and ARM guard can adapt
+     * instead of discovering a nonexistent channel via a base NACK. Clamped:
+     * a peer claiming more channels than this build knows about must not widen
+     * the selectable range. */
+    s_peer_num_channels = ack->num_channels;
+    if (s_peer_num_channels == 0 || s_peer_num_channels > NUM_CHANNELS) {
+        ESP_LOGW(TAG, "LINK_ACK num_channels=%u out of range — clamping to %d",
+                 ack->num_channels, NUM_CHANNELS);
+        s_peer_num_channels = NUM_CHANNELS;
+    }
+
     reset_session(ack->session_token);
     s_linkreq_attempts = 0;  /* Reset retry counter on successful link */
     ESP_LOGI(TAG, "LINK_ACK accepted, token=0x%08lx", (unsigned long)ack->session_token);
@@ -528,7 +626,7 @@ static void process_frame(const link_rx_item_t *it)
                     return;
                 }
                 /* Sequence check — allow 0 seq after reset. */
-                if (hdr.sequence_number <= s_rx_last_seq && s_rx_last_seq != 0) {
+                if (seq_is_replay(hdr.sequence_number)) {   /* CM-05 */
                     ESP_LOGW(TAG, "PING replay seq %lu", (unsigned long)hdr.sequence_number);
                     return;
                 }
@@ -543,7 +641,7 @@ static void process_frame(const link_rx_item_t *it)
         case MSG_PONG:
             if (s_role == RLC_LINK_ROLE_REMOTE) {
                 if (hdr.session_token != s_session_token) return;
-                if (hdr.sequence_number <= s_rx_last_seq && s_rx_last_seq != 0) return;
+                if (seq_is_replay(hdr.sequence_number)) return;   /* CM-05 */
                 s_rx_last_seq = hdr.sequence_number;
                 if (s_state == RLC_LINK_STATE_LOST) {
                     ESP_LOGI(TAG, "link recovery — PONG received");
@@ -556,15 +654,16 @@ static void process_frame(const link_rx_item_t *it)
             /* Remote receives STATUS_UPDATE from base — forward to FSM. */
             if (s_role == RLC_LINK_ROLE_REMOTE) {
                 if (hdr.session_token != s_session_token) return;
-                if (hdr.sequence_number <= s_rx_last_seq && s_rx_last_seq != 0) return;
+                if (seq_is_replay(hdr.sequence_number)) return;   /* CM-05 */
                 s_rx_last_seq = hdr.sequence_number;
                 if (plen >= sizeof(rlc_payload_status_update_t)) {
                     rlc_fsm_event_t evt = {0};
                     evt.type = EVT_STATUS_UPDATE;
                     memcpy(&evt.data.status_update.status, payload,
                            sizeof(rlc_payload_status_update_t));
-                    if (s_cmd_queue) {
-                        (void)xQueueSend(s_cmd_queue, &evt, 0);
+                    if (s_cmd_queue &&
+                        xQueueSend(s_cmd_queue, &evt, 0) != pdTRUE) {
+                        ESP_LOGW(TAG, "FSM queue full — STATUS_UPDATE dropped");
                     }
                 }
             }
@@ -578,13 +677,40 @@ static void process_frame(const link_rx_item_t *it)
         case MSG_CMD_DISARM:
         case MSG_CMD_CEASE_FIRE:
             if (s_role == RLC_LINK_ROLE_BASE) {
-                if (hdr.session_token != s_session_token) return;
-                if (hdr.sequence_number <= s_rx_last_seq && s_rx_last_seq != 0) return;
+                if (hdr.session_token != s_session_token) {
+                    /* No NACK: without a valid session token this frame is not
+                     * from our peer (or is from a dead session), so answering
+                     * it would only give an attacker an oracle. App D.3's 0x07
+                     * is reserved for the mismatch the FSM can attribute. */
+                    ESP_LOGW(TAG, "CMD 0x%02x invalid session, dropped", hdr.msg_type);
+                    return;
+                }
+                /* CM-05: seq 0 is never a legitimate command sequence — every
+                 * session starts its tx counter at 0 and pre-increments, so
+                 * the first real command carries 1. Accepting 0 while
+                 * s_rx_last_seq is still 0 left an unlimited-replay window for
+                 * seq-0 frames (bug #20: the integrity key is public, so the
+                 * keyed CRC is not the backstop it looks like). */
+                if (seq_is_replay(hdr.sequence_number)) {
+                    ESP_LOGW(TAG, "CMD 0x%02x replay seq %lu (last %lu)",
+                             hdr.msg_type, (unsigned long)hdr.sequence_number,
+                             (unsigned long)s_rx_last_seq);
+                    /* CM-02 / App D.3: reason 0x08. */
+                    send_refusal_nack_locked(hdr.msg_type, hdr.sequence_number,
+                                             NACK_REPLAY_DETECTED);
+                    return;
+                }
 
                 /* Integrity CRC verification (FSD §6.2.2).
                  * CRC is first 4 bytes of payload, computed over
                  * header + payload_after_crc + CMD_INTEGRITY_KEY. */
-                if (plen < 4) return;
+                if (plen < 4) {
+                    ESP_LOGW(TAG, "CMD 0x%02x truncated (%u bytes, no CRC)",
+                             hdr.msg_type, (unsigned)plen);
+                    send_refusal_nack_locked(hdr.msg_type, hdr.sequence_number,
+                                             NACK_INTEGRITY_ERROR);
+                    return;
+                }
                 uint32_t received_crc;
                 memcpy(&received_crc, payload, 4);
                 uint16_t payload_after_crc_len = plen - 4;
@@ -593,6 +719,12 @@ static void process_frame(const link_rx_item_t *it)
                     payload + 4, payload_after_crc_len);
                 if (received_crc != computed_crc) {
                     ESP_LOGW(TAG, "CMD integrity CRC mismatch (type 0x%02x)", hdr.msg_type);
+                    /* CM-02 / App D.3: reason 0x06. Note s_rx_last_seq is
+                     * deliberately NOT advanced — a corrupted frame must not
+                     * be able to burn a sequence number the real command still
+                     * needs. */
+                    send_refusal_nack_locked(hdr.msg_type, hdr.sequence_number,
+                                             NACK_INTEGRITY_ERROR);
                     return;
                 }
 
@@ -617,7 +749,14 @@ static void process_frame(const link_rx_item_t *it)
                     evt.data.cmd.seq_number = hdr.sequence_number;
                     evt.data.cmd.integrity_crc = received_crc;
                     evt.data.cmd.received_ms = it->received_ms;
-                    (void)xQueueSend(s_cmd_queue, &evt, 0);
+                    /* CM-07: a dropped command is a refused command. Say so —
+                     * post-mortem this used to be indistinguishable from RF
+                     * loss. Zero timeout is deliberate: process_frame() runs
+                     * with the state mutex held. */
+                    if (xQueueSend(s_cmd_queue, &evt, 0) != pdTRUE) {
+                        ESP_LOGE(TAG, "FSM queue full — CMD 0x%02x seq %lu dropped!",
+                                 hdr.msg_type, (unsigned long)hdr.sequence_number);
+                    }
                 }
             }
             break;
@@ -626,31 +765,49 @@ static void process_frame(const link_rx_item_t *it)
         case MSG_CMD_NACK:
             if (s_role == RLC_LINK_ROLE_REMOTE) {
                 if (hdr.session_token != s_session_token) return;
-                if (hdr.sequence_number <= s_rx_last_seq && s_rx_last_seq != 0) return;
+                if (seq_is_replay(hdr.sequence_number)) return;   /* CM-05 */
                 s_rx_last_seq = hdr.sequence_number;
 
+                /* CM-04: a truncated ACK/NACK used to be forwarded anyway with
+                 * every field left at zero. On the remote that decodes as an
+                 * ACK for msg_type 0x00 / seq 0 (silently ignored by the
+                 * wait_for_ack matcher, so the operator waits out the full
+                 * timeout) or as a NACK with reason 0x00, which prints
+                 * "UNKNOWN ERROR". Neither is better than treating the frame
+                 * as the corruption it is. */
                 if (s_cmd_queue) {
                     rlc_fsm_event_t evt = {0};
                     if (hdr.msg_type == MSG_CMD_ACK) {
+                        if (plen < sizeof(rlc_payload_cmd_ack_t)) {
+                            ESP_LOGW(TAG, "CMD_ACK truncated (%u < %u) — dropped",
+                                     (unsigned)plen,
+                                     (unsigned)sizeof(rlc_payload_cmd_ack_t));
+                            return;
+                        }
+                        const rlc_payload_cmd_ack_t *a =
+                            (const rlc_payload_cmd_ack_t *)payload;
                         evt.type = EVT_CMD_ACK;
-                        if (plen >= sizeof(rlc_payload_cmd_ack_t)) {
-                            const rlc_payload_cmd_ack_t *a =
-                                (const rlc_payload_cmd_ack_t *)payload;
-                            evt.data.ack.acked_msg_type = a->acked_msg_type;
-                            evt.data.ack.acked_seq_number = a->acked_sequence_number;
-                            evt.data.ack.channel = a->channel;
-                        }
+                        evt.data.ack.acked_msg_type = a->acked_msg_type;
+                        evt.data.ack.acked_seq_number = a->acked_sequence_number;
+                        evt.data.ack.channel = a->channel;
                     } else {
-                        evt.type = EVT_CMD_NACK;
-                        if (plen >= sizeof(rlc_payload_cmd_nack_t)) {
-                            const rlc_payload_cmd_nack_t *n =
-                                (const rlc_payload_cmd_nack_t *)payload;
-                            evt.data.nack.nacked_msg_type = n->nacked_msg_type;
-                            evt.data.nack.nacked_seq_number = n->nacked_sequence_number;
-                            evt.data.nack.reason_code = n->reason_code;
+                        if (plen < sizeof(rlc_payload_cmd_nack_t)) {
+                            ESP_LOGW(TAG, "CMD_NACK truncated (%u < %u) — dropped",
+                                     (unsigned)plen,
+                                     (unsigned)sizeof(rlc_payload_cmd_nack_t));
+                            return;
                         }
+                        const rlc_payload_cmd_nack_t *n =
+                            (const rlc_payload_cmd_nack_t *)payload;
+                        evt.type = EVT_CMD_NACK;
+                        evt.data.nack.nacked_msg_type = n->nacked_msg_type;
+                        evt.data.nack.nacked_seq_number = n->nacked_sequence_number;
+                        evt.data.nack.reason_code = n->reason_code;
                     }
-                    (void)xQueueSend(s_cmd_queue, &evt, 0);
+                    if (xQueueSend(s_cmd_queue, &evt, 0) != pdTRUE) {
+                        ESP_LOGE(TAG, "FSM queue full — CMD_%s dropped!",
+                                 hdr.msg_type == MSG_CMD_ACK ? "ACK" : "NACK");
+                    }
                 }
             }
             break;
@@ -872,7 +1029,13 @@ void rlc_link_on_rx(const uint8_t *src_mac,
      * would be counted as airtime by the dead-man logic. */
     it.received_ms = received_ms;
     memcpy(it.data, data, len);
-    (void)xQueueSend(s_rx_queue, &it, 0);
+    /* CM-07: log the drop. The espnow layer logs its own losses, so a silent
+     * drop here was the one hole in the receive path's post-mortem trail — an
+     * overrun looked exactly like RF loss. Runs on the espnow rx worker, so
+     * the send stays non-blocking. */
+    if (xQueueSend(s_rx_queue, &it, 0) != pdTRUE) {
+        ESP_LOGE(TAG, "link rx queue full — %d-byte frame dropped", len);
+    }
 }
 
 void rlc_link_get_status(rlc_link_status_t *out)
@@ -891,6 +1054,28 @@ void rlc_link_get_status(rlc_link_status_t *out)
     memcpy(out->peer_fw, s_peer_fw, 3);
     out->peer_fw_known  = s_peer_fw_known;
     unlock();
+}
+
+uint8_t rlc_link_get_peer_num_channels(void)
+{
+    uint8_t n;
+    lock();
+    n = s_peer_num_channels;
+    unlock();
+    return n;
+}
+
+int64_t rlc_link_ms_since_contact(void)
+{
+    int64_t last;
+    lock();
+    last = s_last_contact_ms;
+    unlock();
+    /* BF-02: rlc_link_get_status()'s ms_since_contact folds "never" and
+     * "0 ms ago" into the same 0. A fire-path freshness guard cannot use an
+     * ambiguous value, so report "never" out of band. */
+    if (last == 0) return -1;
+    return now_ms() - last;
 }
 
 bool rlc_link_is_linked(void)

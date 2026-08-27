@@ -34,6 +34,9 @@ typedef enum {
     EVT_ENCODER_ROTATE      = 0x17,
     EVT_KEY_SWITCH_CHANGED  = 0x18,
     EVT_CONTINUITY_CHANGED  = 0x19,
+    /* DS-01 / FSD §5.5.6: the remote's display_task has decided the panel is
+     * no longer answering (repeated ID re-read failures). Remote only. */
+    EVT_DISPLAY_FAULT       = 0x1A,
 
     /* Timer / internal events */
     EVT_FIRE_PULSE_DONE   = 0x20,

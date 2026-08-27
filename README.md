@@ -116,12 +116,24 @@ a later normal build. Reflash with plain `./build_base.sh flash` afterwards.
 ```
 
 The host tests compile the **real firmware sources** against mock ESP-IDF
-headers and assert their behaviour directly — currently the LED strip renderer,
-battery ADC sampling, error-flag naming, the base arm-state derivation, the
-rotary encoder's quadrature decoder, and the shift-register debounce engine.
-They run once per unit, because the two units are not configured identically;
-a test whose hardware exists on only one unit compiles to a skip on the other.
-Currently 12 binaries, 265 checks.
+headers and assert their behaviour directly — currently the **base safety state
+machine**, the LED strip renderer, battery ADC sampling, error-flag naming,
+protocol sequence rules, the base arm-state derivation, the rotary encoder's
+quadrature decoder, and the shift-register debounce engine. They run once per
+unit, because the two units are not configured identically; a test whose
+hardware exists on only one unit declares itself SKIPPED on the other.
+Currently 16 binaries, 418 checks.
+
+`build_base.sh` and `build_remote.sh` run the suite before every firmware build
+and refuse to build if it fails (`RLC_SKIP_HOST_TESTS=1` bypasses).
+
+`tests/host/test_base_fsm.c` is the notable one: it compiles `rlc_base_fsm.c`
+against recording fakes for the relays, siren, fire timer, sense inputs and
+link, then injects `rlc_fsm_event_t` sequences and asserts what the FSM
+actually did — which relay moved, which siren pattern sounded, which NACK
+reason went out. That is how the arming guards, the dead-man, the
+continuity-loss disarm and the bug #31 two-fire-cycle regression are covered
+without a launch pad.
 
 Including the production source rather than mirroring it is the point: a
 duplicated copy of the continuity classifier passed its own boot self-test for
@@ -238,8 +250,19 @@ Known open items before any field use:
   edge-triggered only, so an igniter going open inside the 200 ms arm-verify
   window had its event dropped with no edge left to report it. Now backed by a
   re-check at arm-verify completion *and* a periodic level check every ~50 ms.
-  Verification is partial: the fix is confirmed not to false-positive, but has
-  not been positively triggered — that needs an injection.
+  Positively verified since 2026-08-27 by `tests/host/test_base_fsm.c` T-FSM03,
+  which drives both the event path and the level backstop.
+- ~~Bug #31 — the fire timer was never stopped after a completed pulse~~ **Fixed
+  2026-08-27 (fw 1.1.9).** The most serious defect found so far, and it had
+  never been hit because no test had ever completed a fire pulse and re-armed on
+  the same power cycle. An expired one-shot GPTimer alarm disables the alarm but
+  leaves the driver running, so the *second* launch of a power cycle hit
+  `ESP_ERROR_CHECK` on `gptimer_start()` and panicked — **with the arm relay and
+  the channel relay still energised**, so the igniter carried full current for
+  the whole panic-and-reboot interval. Fixed three ways (stop on completion,
+  stop-first on every start, and a checked return that latches ERROR instead of
+  aborting) and regression-tested by an automated two-cycle test that runs on
+  every build.
 - **Neither battery has a hardware undervoltage cut-off** (bug #25), and none was
   ever specified. Protection is firmware-only, and the ERROR state halts
   operation without disconnecting the load — so a unit left switched on, or one
@@ -275,14 +298,14 @@ Known open items before any field use:
 
 | Document | Contents |
 |---|---|
-| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.43 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
+| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.44 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
 | `Development_Progress.md` | Per-phase task and test tracking, hardware reference, bug history |
 | `RLC_Project_Summary.md` | Plain-language overview written for club members |
 | `changelog.md` | Session-by-session development log |
 | `Phase{1,2,3}_Code_Review*.md` | Code reviews against the specification |
 | `Code_Review_AllPhases_20260821_1430.md` | Full-codebase review: 7 Major findings, 4 gating live-fire, plus a documentation-consistency audit. All seven fixed in 28293b6. |
 | `Code_Review_AllPhases_20260821_1523.md` | Post-fix re-review: all 7 prior Majors verified fixed; 2 new Majors found (arm key at boot, siren stale-callback race) and 13 minors. Fixed in firmware 1.1.1. |
-| `Code_Review_AllPhases_20260827_0308.md` | Full-codebase review vs FSD v1.42: verdict FAIL — 1 Critical (BF-01 fire timer not stopped after pulse → second launch per power cycle panics with relay energized), 8 Major, 44 Minor. Bug #30 fix verified sound; host suite re-run 265/265. Doc-consistency sweep applied same session (FSD → v1.43). |
+| `Code_Review_AllPhases_20260827_0308.md` | Full-codebase review vs FSD v1.42: verdict FAIL — 1 Critical (BF-01 fire timer not stopped after pulse → second launch per power cycle panics with relay energized), 8 Major, 44 Minor. **All findings fixed 2026-08-27 in firmware 1.1.9 / FSD v1.44**, including a host FSM harness that regression-tests the Critical one. |
 
 ## Hardware
 

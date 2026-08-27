@@ -36,6 +36,23 @@ done
 # Source ESP-IDF
 source ~/esp/esp-idf/export.sh 2>/dev/null
 
+# TT-12: run the host unit tests before every firmware build. They cost a few
+# seconds, need no hardware, and cover the safety FSM (tests/host/test_base_fsm.c),
+# the debouncer, the continuity classifier, the battery maths and the LED
+# renderer. Until now run.sh existed but nothing ever invoked it, so a
+# regression could reach a board without anyone running them.
+# Set RLC_SKIP_HOST_TESTS=1 to bypass (e.g. on a machine without gcc).
+if [ "${RLC_SKIP_HOST_TESTS:-0}" != "1" ]; then
+    echo "=== Host unit tests ==="
+    if ! "$SCRIPT_DIR/tests/host/run.sh" > /tmp/rlc_host_tests.log 2>&1; then
+        echo "HOST TESTS FAILED — refusing to build firmware."
+        cat /tmp/rlc_host_tests.log
+        exit 1
+    fi
+    grep -hE "checks, [0-9]+ failures" /tmp/rlc_host_tests.log \
+        | awk -F'[ ,]+' '{c+=$1; f+=$3} END {printf "  %d checks, %d failures\n", c, f}'
+fi
+
 echo "=== Building BASE unit ==="
 
 # Install base sdkconfig as the active one

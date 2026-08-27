@@ -79,3 +79,19 @@ uint32_t rlc_crc32c(const uint8_t *buf, uint32_t len);
  * @return             true if valid
  */
 bool rlc_seq_validate(uint32_t received, uint32_t *last);
+
+/**
+ * STATUS_UPDATE data-gap detection (FSD §6.4.3).
+ *
+ * `update_sequence` is a free-running uint16 the base increments on every
+ * STATUS_UPDATE. Returns how many frames were lost between `prev` and `now`.
+ *
+ * Modular arithmetic, so the wrap from 65535 to 0 is a normal step and not a
+ * 65535-frame gap (T-U16). A duplicate (`now == prev`) returns 0 — the link
+ * layer's replay guard should already have dropped it, and it is not a gap.
+ *
+ * @param prev  last update_sequence accepted
+ * @param now   update_sequence just received
+ * @return      number of frames missed (0 when consecutive or duplicate)
+ */
+uint16_t rlc_update_seq_lost(uint16_t prev, uint16_t now);

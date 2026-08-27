@@ -15,6 +15,7 @@
 #include "led_strip.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_task_wdt.h"
 
 static const char *TAG = "rlc_led";
 
@@ -220,6 +221,15 @@ static void led_task(void *arg)
 {
     (void)arg;
 
+    /* CI-04: TWDT-registered. FSD §4.7 says every task subscribes; §9.6
+     * narrows that to the safety-critical ones, and this task was excluded on
+     * the grounds that it only drives an LED. It drives the igniter status
+     * strip — including the ARMED blink, which is the pad's local warning. A
+     * hung RMT refresh freezes that strip on whatever it last showed while the
+     * watchdog stays perfectly happy. The loop wakes every RLC_STRIP_FRAME_MS
+     * (50 ms), so feeding is never in doubt for a healthy task. */
+    esp_task_wdt_add(NULL);
+
     while (1) {
         int64_t now_ms = esp_timer_get_time() / 1000;
 
@@ -272,6 +282,7 @@ static void led_task(void *arg)
                 break;
         }
 
+        esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(RLC_STRIP_FRAME_MS));
     }
 }

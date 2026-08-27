@@ -43,13 +43,26 @@ int rlc_battery_init(int gpio_num, float divider_ratio)
     adc_oneshot_unit_init_cfg_t init_cfg = {
         .unit_id = ADC_UNIT_1,
     };
-    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_cfg, &s_adc_handle));
+    /* CI-05: no ESP_ERROR_CHECK here. This runs during boot on both units;
+     * an abort() reboots, re-runs the same failing init and reboots again — a
+     * loop with no error indication at all. Report the failure so the caller
+     * can latch a visible/audible halt instead. */
+    ret = adc_oneshot_new_unit(&init_cfg, &s_adc_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "adc_oneshot_new_unit failed: %s", esp_err_to_name(ret));
+        s_adc_handle = NULL;
+        return -1;
+    }
 
     adc_oneshot_chan_cfg_t chan_cfg = {
         .atten    = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_12,
     };
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc_handle, s_channel, &chan_cfg));
+    ret = adc_oneshot_config_channel(s_adc_handle, s_channel, &chan_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "adc_oneshot_config_channel failed: %s", esp_err_to_name(ret));
+        return -1;
+    }
 
     /* Calibration — use curve fitting or line fitting depending on availability */
 #if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED

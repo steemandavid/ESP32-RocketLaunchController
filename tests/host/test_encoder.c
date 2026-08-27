@@ -141,10 +141,14 @@ int main(void)
 
 #else   /* base build — encoder hardware does not exist on this unit */
 
+/* TT-07: this used to print "0 checks, 0 failures", which reads exactly like
+ * a passing test in the runner's output — a test that had silently stopped
+ * asserting anything would have looked identical. Say SKIPPED instead, in a
+ * form that does not match the checks/failures summary line. */
 int main(void)
 {
-    printf("RLC encoder decoder — skipped (remote-only hardware)\n");
-    printf("\n0 checks, 0 failures\n");
+    printf("RLC encoder decoder — SKIPPED (remote-only hardware; "
+           "run under the REMOTE unit build for real coverage)\n");
     return 0;
 }
 

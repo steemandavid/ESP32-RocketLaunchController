@@ -39,3 +39,13 @@ void siren_off(void);
  * Used on entry to ERROR state.
  */
 void siren_start_error(void);
+
+/**
+ * Set siren to the continuity-loss pattern (FSD §12.2 SIREN_CONTINUITY_LOST:
+ * 200 ms on / 200 ms off, 3 cycles, then silence).
+ *
+ * Sounded when the armed channel goes OPEN during ARMED or PRE_FIRE and the
+ * base auto-disarms, so that disarm is audibly distinct from a key-off disarm
+ * (which is silent).
+ */
+void siren_start_continuity_lost(void);
