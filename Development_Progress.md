@@ -848,12 +848,12 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 |----|------|--------|
 | T-F01 | Full fire sequence (arm→fire→complete) | TODO |
 | T-F02 | Release fire button during pre-fire delay | **PASS** 2026-08-26 (no pulse; also regression-tested the bug #30 fix and the v1.41 ring LED) |
-| T-F03 | Release fire button during active fire → cease fire | TODO |
+| T-F03 | Release fire button during active fire → cease fire | **PASS** 2026-08-27 (fw 1.1.19, 12 V 50 W halogen on ch 1) — pulse cut at **540 ms** of 1000 ms, `FIRING -> IDLE (CEASE_FIRE)`, arm sense DISARMED 150 ms later. Note the exit is to **IDLE, not POST_FIRE**: the FSM distinguishes ceased from completed, so a cease-fire gets no cooldown and no fire-complete screen |
 | T-F04 | Fire command on non-armed channel → NACK 0x05 | TODO |
 | T-F05 | Continuity readable during ARMED (relay in NC) | TODO |
 | T-F06 | Link lost during firing → complete pulse then disarm | TODO |
 | T-F07 | Pre-fire timer expires without fire button → abort | TODO |
-| T-F08 | Fire pulse timing accuracy (oscilloscope) | TODO |
+| T-F08 | Fire pulse timing accuracy (oscilloscope) | **PASS by log timing** 2026-08-27 — `Fire timer started` → `Fire timer stopped` = **1050 ms** against a 1000 ms `FIRE_PULSE_DURATION_MS`, consistent across all pulses measured. **Method stated deliberately:** the stop line is written *after* the callback runs, so this bounds the pulse at roughly 1000–1050 ms and cannot resolve better. No oscilloscope was used; the FSD asks for one, so this is corroboration at log resolution, not the scope-grade figure |
 | T-F09 | Link-health guard at PRE_FIRE→FIRING | TODO |
 
 ### Phase 3 Key Commits
@@ -3500,6 +3500,38 @@ completion handler has left the timer in a stoppable state. Harmless, but it
 prints at **ERROR** level on every first shot, which will send someone hunting a
 fault that is not there. Worth guarding with a "has ever been started" flag or
 demoting the log.
+
+### Fire Tests T-F03 / T-F08, and a Third Bug #31 Exit Path (2026-08-27)
+
+Run on fw 1.1.19 into the 12 V 50 W halogen on channel 1. T-F03 was produced by
+accident — the operator released the fire button early on the first attempt —
+which is a better test than a planned one, because the release landed mid-pulse
+rather than at a rehearsed moment.
+
+```
+T-F03   843847  Fire timer started: ch 1, 1000 ms
+        843847  PRE_FIRE -> FIRING (ch 1)
+        844387  Fire timer stopped               <- 540 ms of 1000 ms
+        844407  FIRING -> IDLE (CEASE_FIRE)      <- IDLE, not POST_FIRE
+        844557  arm sense changed: DISARMED
+
+T-F08   854907  Fire timer started: ch 1, 1000 ms
+        855957  Fire timer stopped               <- 1050 ms
+        855977  FIRING -> POST_FIRE
+        858017  POST_FIRE -> IDLE                <- 2040 ms cooldown
+```
+
+**Bug #31 coverage extended.** `Fire timer stopped` appears on the **cease-fire**
+path as well as on completion. The two-cycle regression proved the completion
+path releases the timer; this shows the ceased path does too, so a cease-fire
+followed by another arm+fire cannot hit BF-01 either. That is a second exit path
+covered, and it came free.
+
+**Three pulses on one power cycle** across this capture (two completed, one
+ceased), 0 reboots, 0 panics, 0 watchdog events, finishing `state=1 IDLE
+err=0x00` at uptime 912707. That exceeds the two-cycle requirement of Phase 5
+task 10 — under bug #31 the second start would have panicked with the relays
+energised.
 
 ### Phase 5 FSD Safety Tests (§15.4)
 

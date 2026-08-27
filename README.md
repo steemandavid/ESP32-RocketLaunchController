@@ -276,9 +276,11 @@ Known open items before any field use:
   August). Four — T-A11, T-A13, T-A19 and T-A20 — needed the `--inject`
   fault-injection build described above. Full write-up in
   `Test_Report_Phase3_G2.md`.
-- **G3 fire testing is part-run.** The non-firing tests are done — T-F02 PASS,
-  T-F04 and T-F05 covered by earlier evidence. **T-F01, T-F03 and T-F08 remain
-  and all involve real ignition**; channels 2–8 have never been fired. Three
+- **G3 fire testing is part-run.** T-F02, T-F03 and T-F08 all PASS, T-F04 and
+  T-F05 covered by earlier evidence. **T-F03 and T-F08 turned out not to need
+  ignition** — a 12 V 50 W halogen on the channel exercises the fire path
+  identically and, unlike an igniter, survives to be fired repeatedly. **T-F01
+  remains** and does need a real igniter; channels 2–8 have never been fired. Three
   tests are **not reachable as written**: T-F06 because the 1000 ms pulse
   completes before link loss can be detected at 1500 ms (which also makes
   `COMPLETE_PULSE_ON_LINK_LOSS` unreachable config), and T-F07/T-F09 because
