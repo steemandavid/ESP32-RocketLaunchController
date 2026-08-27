@@ -232,9 +232,9 @@ so the "pad is live" signal is never diluted into a data display.
 | 0 | Hardware validation | Complete |
 | 1 | Foundation and communication | Complete |
 | 2 | Input/output and debouncing | Complete |
-| 3 | State machines and command processing | Code complete |
+| 3 | State machines and command processing | Complete — G2 arming suite 18/18, G3 fire tests all pass or discharged |
 | 4 | Display | Verified on target 2026-08-27 — 9/9 pass; status band added and its 7 states verified |
-| 5 | Hardening and final testing | Not started |
+| 5 | Hardening and final testing | In progress — §15.4 safety tests 13/19; bug #20 closed; remaining three need an oscilloscope, a disconnected display, and a pulled sense wire |
 
 Known open items before any field use:
 

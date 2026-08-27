@@ -346,6 +346,77 @@ siren continuous across both transitions, relay energised for the pulse
 duration, auto-disarm to NC. The halogen run discharged the latter two ×8. The
 outstanding piece is the **siren no-gap check**, which is audible.
 
+### §15.3 complete, §15.4 to 13/19 — and T-F01 needed no igniter
+
+**T-F01 PASS.** Its FSD criteria turned out to be *sequence mechanics*, not
+pyrotechnics: siren continuous across both transitions, relay energised for
+`FIRE_PULSE_DURATION_MS`, auto-disarm to NC. The halogen run had already
+discharged the latter two on all 8 channels; the operator confirmed the siren
+unbroken through `PRE_FIRE → FIRING`, the one transition never measured.
+
+**Bug #27's row was stale and I quoted it repeatedly.** It said the siren
+retests were owed and N2 was code-inspection-only. They ran on 2026-08-26 — six
+checks, all PASS — and both the README and this changelog recorded that
+correctly. Only the `Development_Progress.md` bug row was never updated. It also
+meant `ARMED → PRE_FIRE` was *already* measured gapless, narrowing T-F01 to a
+single transition. Fixed.
+
+**Five fault-injection keys added** for tests unreachable from outside the
+firmware. All Kconfig-guarded, so the stock binaries are unchanged.
+
+| Key | Console | Test |
+|---|---|---|
+| `g` | base | T-S15 / T-S16 — force `rlc_link_is_healthy()` false |
+| `x` | base | T-S07 — hang the FSM task without feeding the TWDT |
+| `c` | remote | T-S05 — corrupt the next outgoing command |
+| `l` | remote | T-S09 — LINK_REQUEST while linked |
+
+**`c` was first wired to the wrong unit.** The commit message said it corrupts a
+*command* "because the command path is the one with a guard worth testing" —
+then put the key on the base, which only ever sends ACK/NACK. Caught by checking
+the callers before running the test rather than after.
+
+**T-S15 PASS** — `NACK 0x0D (COMM DEGRADED)`, arm refused by guard 10.
+
+**T-S16 PASS** — the important one: the only guard that can stop a pulse
+*already in progress*, never previously exercised on hardware. The injection was
+fired **automatically** on the base logging `ARMED -> PRE_FIRE`, landing 40 ms
+into the countdown:
+
+```
+327358  ARMED -> PRE_FIRE (ch 8)
+332348  PRE_FIRE comm degraded — abort        <- guard 4
+332378  DISARMED -> IDLE
+```
+
+Zero `Fire timer started`. **The first T-S16 run gave the right outcome but not
+the proof** — its capture dropped most of its lines including the guard's
+message, leaving the aborting guard identified only by elimination. Re-run to
+capture it, because that is thin evidence for a fire-path interlock.
+
+**T-S05 PASS** — `CMD integrity CRC mismatch (type 0x20)`, rejected in the link
+layer with the sequence number deliberately not advanced. The operator saw
+`COMM DEGRADED` because the remote's automatic retry (uncorrupted — the
+injection is one-shot) landed on a `g` flag I had left set from T-S16. Setup
+error, not a test failure.
+
+**T-S09 PASS**, proven by absence: `LINK_REQUEST rejected by app-state guard
+(busy)` → `LINK_REJECT sent, reason=0x02`, then no LINK_ACK, no new session
+token, no dropped arm — the base stayed ARMED through its full 10 s timeout. A
+handshake attempt cannot reset the session out from under a live pad. Its FSD
+row's "silently ignores" wording predated 1.1.17 and our own change made it
+false; corrected.
+
+**T-S07 PASS** — 4250 ms from hang to `rst:0xc (RTC_SW_CPU_RST)`, post-boot
+`arm=0` with continuity reading on all channels (which requires the channel
+relays in NC).
+
+**The watchdog output names the wrong task.** It blamed `battery_task` — the
+*victim*, starved of CPU 0 by the spinning `bfsm_task`, which appears only on
+the "Tasks currently running" line. A real trip in the field will look identical
+and anyone chasing `battery_task` would debug the wrong thing. Inherent to the
+TWDT's reporting, not a defect.
+
 ### New tooling
 
 | Path | Purpose |
@@ -357,12 +428,13 @@ outstanding piece is the **siren no-gap check**, which is audible.
 
 ### Notes and follow-ups
 
-- **T-F01** is PARTIAL: relay and auto-disarm criteria discharged on all 8
-  channels; the siren no-gap criterion is outstanding and needs no igniter.
-  Bug #27's siren retest is separately still owed.
+- **§15.3 is complete.** T-F01/F02/F03/F08 PASS, T-F04/F05 by earlier evidence,
+  T-F06/F07/F09 discharged by the host FSM harness. None needed live ignition.
 - ~~T-S19 needs burn-through~~ **PASS** (attested, earlier igniter testing). The green OPEN path has not been seen on the display, which postdates it.
-- **T-S09, T-S05, T-S07, T-S15, T-S16, T-S18** need small harness keys.
-- **T-S06, T-S10** need a scope and a disconnected display.
+- **§15.4 is 13/19.** Only three genuinely open, and all three are physical:
+  T-S06 (oscilloscope on boot GPIO), T-S10 (display disconnected before boot),
+  T-S18 (pull the GPIO 42 sense wire, which also tests the wiring). T-S12/S13
+  are physically unreachable and discharged by host test T-FSM06.
 - The remote harness does **not** unblock T-F07/T-F09 — they need injections at
   specific FSM transitions that have not been written.
 - `gptimer_stop(): timer is not running` is logged at **ERROR** level on the
