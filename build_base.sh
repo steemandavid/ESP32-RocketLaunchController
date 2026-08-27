@@ -134,10 +134,25 @@ if $DO_FLASH; then
         echo "!! Flashing a FAULT INJECTION build — reflash a normal build afterwards !!"
     fi
     echo "=== Flashing BASE to $PORT ==="
-    python3 -m esptool --chip esp32s3 -p "$PORT" -b 460800 \
+    # Do NOT pipe esptool into tail without checking its status: the pipe's
+    # exit code is tail's, so a failed flash exited 0 and printed nothing
+    # alarming. That happened for real on 2026-08-27 — a serial contention
+    # error left BOTH units on the previous firmware while the script reported
+    # success, and the stale build was only caught by reading version banners
+    # off the devices. In a project whose safety rule is "flash both units
+    # together", a silently-failed flash is the wrong thing to be quiet about.
+    FLASH_LOG=$(mktemp)
+    if ! python3 -m esptool --chip esp32s3 -p "$PORT" -b 460800 \
         --before default_reset --after hard_reset \
         write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
-        0x10000 "$BUILD_DIR/rlc.bin" 2>&1 | tail -3
+        0x10000 "$BUILD_DIR/rlc.bin" > "$FLASH_LOG" 2>&1; then
+        echo "*** FLASH FAILED — BASE IS STILL RUNNING ITS PREVIOUS FIRMWARE ***"
+        tail -15 "$FLASH_LOG"
+        rm -f "$FLASH_LOG"
+        exit 1
+    fi
+    tail -3 "$FLASH_LOG"
+    rm -f "$FLASH_LOG"
     echo "Done."
 else
     echo "Binary at: $BUILD_DIR/rlc.bin"

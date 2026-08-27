@@ -3266,7 +3266,40 @@ remote inherits the base's ~0.7 % compression error at full charge.
 
 ---
 
-### Bug #20 — Shipped crypto keys are public; two of three comms layers are ineffective (2026-08-19, OPEN)
+### Bug #20 — Shipped crypto keys are public; two of three comms layers are ineffective (2026-08-19, **RESOLVED 2026-08-27, fw 1.1.20**)
+
+**Resolved 2026-08-27 (fw 1.1.20).** Keys rotated to random values and moved to
+`components/rlc_common/include/rlc_secrets.h` — gitignored, mode 600, generated
+by `./tools/gen-secrets.sh` from `/dev/urandom`. `rlc_config.h` has **no
+fallback**: a build without real keys fails with an instructive `#error`,
+because a silent fallback is precisely how ASCII placeholders survived to ship.
+
+Leak prevention is **enforced, not intended**. `.gitignore` alone is bypassed by
+`git add -f`, so a tracked pre-commit hook (`tools/git-hooks/pre-commit`,
+enabled with `git config core.hooksPath tools/git-hooks`) refuses any commit
+that stages the secrets file under any path, or that defines a key macro with
+non-zero bytes in any file. Both leak routes were attempted and both refused.
+
+Verified on target by the **integrity CRC self-test value**, which is derived
+from the key: it changed `0xE74979F0` → `0x45222AE8`, and reads identically on
+both units. That is the evidence, not the fact that they linked.
+
+**The old keys remain permanently public** — in git history across many commits
+on a public repo, very likely already cloned and cached. Rewriting history would
+not reliably retract them. Rotation does not un-publish them; it makes them
+irrelevant. Never reuse those values.
+
+**Caught during this work: `build_base.sh` / `build_remote.sh` silently
+swallowed flash failures.** esptool was piped into `tail -3`, so the pipeline's
+exit status was tail's and a failed flash exited 0 with nothing alarming
+printed. A serial-contention error left BOTH units on the previous firmware
+while the scripts reported success — the stale build was only caught by reading
+version banners off the devices. Now the flash output is captured, the exit
+status checked, and a failure prints
+`*** FLASH FAILED — <UNIT> IS STILL RUNNING ITS PREVIOUS FIRMWARE ***` and
+exits 1. In a project whose safety rule is "flash both units together", a
+silently-failed flash is the wrong thing to be quiet about.
+
 
 **Problem.** `ESPNOW_PMK`, `ESPNOW_LMK` and `CMD_INTEGRITY_KEY` are compile-time
 constants committed to `rlc_config.h`, and the repository is **public on

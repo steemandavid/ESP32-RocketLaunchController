@@ -191,22 +191,25 @@
 #define NUM_CHANNELS                   8
 #define WIFI_CHANNEL                   11
 
-/* ESP-NOW encryption keys (16 bytes each) — CHANGE BEFORE DEPLOYMENT */
-#define ESPNOW_PMK  { \
-    0x52, 0x4C, 0x43, 0x5F, 0x50, 0x4D, 0x4B, 0x5F, \
-    0x44, 0x45, 0x46, 0x41, 0x55, 0x4C, 0x54, 0x21  \
-}
-
-#define ESPNOW_LMK  { \
-    0x52, 0x4C, 0x43, 0x5F, 0x4C, 0x4D, 0x4B, 0x5F, \
-    0x44, 0x45, 0x46, 0x41, 0x55, 0x4C, 0x54, 0x21  \
-}
-
-/* Pre-shared key for CRC32 integrity check (16 bytes) */
-#define CMD_INTEGRITY_KEY  { \
-    0x52, 0x4C, 0x43, 0x5F, 0x43, 0x52, 0x43, 0x5F, \
-    0x49, 0x4E, 0x54, 0x45, 0x47, 0x52, 0x49, 0x54  \
-}
+/* ESP-NOW encryption keys and the integrity-check pre-shared key.
+ *
+ * Bug #20: these were defined here as literal ASCII placeholders
+ * ("RLC_PMK_DEFAULT!") and committed to a public repository, so two of the
+ * three link-security layers offered no protection against anyone who had read
+ * the source. They now live in rlc_secrets.h, which is gitignored and
+ * generated locally by ./tools/gen-secrets.sh.
+ *
+ * There is deliberately NO fallback. A build without real keys must fail, not
+ * quietly link against a default — a silent fallback is how the placeholders
+ * survived to ship in the first place. */
+#if defined(__has_include)
+#  if !__has_include("rlc_secrets.h")
+#    error "rlc_secrets.h is missing. Run ./tools/gen-secrets.sh to create it. \
+It is gitignored and must never be committed (bug #20). Both units must be \
+flashed from the same tree or they cannot communicate at all."
+#  endif
+#endif
+#include "rlc_secrets.h"
 
 /* Peer MAC addresses — actual hardware MACs */
 #define BASE_MAC_ADDR    { 0x44, 0x1B, 0xF6, 0x81, 0xF1, 0x70 }  /* chip #4 (2026-08-20, ex-remote #1 board); #3 44:1B:F6:D4:0D:68 (3.68 V rail), #2 44:1B:F6:81:FA:F8 & #1 94:A9:90:31:18:38 destroyed */

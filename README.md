@@ -74,7 +74,7 @@ link is refused.
 | `components/rlc_remote/` | Remote FSM, encoder, fire button, arm switch, buzzer, ILI9488 display |
 | `rlc-hw-test-base/`, `rlc-hw-test-remote/` | Standalone hardware bring-up firmware with a serial CLI |
 | `tests/host/` | Host-compiled unit tests — `./tests/host/run.sh`, no hardware needed |
-| `tools/` | Bench utilities — GPIO blink, LED finder, WS2812 strip diagnostic, battery-divider calibration, **`armgate-test`** (proves the §5.4.4 arm-relay AND gate at the ARM SENSE node), test scripts |
+| `tools/` | Bench utilities — GPIO blink, LED finder, WS2812 strip diagnostic, battery-divider calibration, **`armgate-test`** (proves the §5.4.4 arm-relay AND gate at the ARM SENSE node), **`gen-secrets.sh`** (generates the gitignored crypto keys), **`git-hooks/`** (pre-commit key-leak guard), test scripts |
 | `archive/` | Superseded specification revisions |
 
 Both units build from **one codebase**; the unit is selected by sdkconfig
@@ -336,11 +336,23 @@ Known open items before any field use:
 - The continuity palette (`RLC_COLOR_CONT_*`) deviates from FSD §10.2.0, which
   specifies blue for GOOD to avoid a red-green pair; the specification needs
   updating to match, or the palette reverting.
-- The ESP-NOW encryption keys and the integrity-check key are committed to this
-  public repository (bug #20), so two of the three communication-security layers
-  offer no protection against anyone who has read the source. Only the replay
-  protection, whose session token is random per link-up, still holds. The keys
-  need rotating **and** moving out of tracked files before field use.
+- ~~The ESP-NOW encryption keys and the integrity-check key are committed to
+  this public repository (bug #20)~~ **Rotated and removed from the repo
+  2026-08-27 (fw 1.1.20).** They were literal ASCII placeholders
+  (`RLC_PMK_DEFAULT!`) that had never been changed — guessable without even
+  reading the source. Keys now live in `components/rlc_common/include/rlc_secrets.h`,
+  which is gitignored and generated locally by `./tools/gen-secrets.sh`.
+  `rlc_config.h` has **no fallback**: a build without real keys fails with an
+  instructive `#error` rather than quietly linking a default, since a silent
+  fallback is how the placeholders survived to ship. A tracked pre-commit hook
+  (`tools/git-hooks/pre-commit`, enabled with
+  `git config core.hooksPath tools/git-hooks`) refuses any commit that stages
+  the secrets file under any path, or that defines a key macro with non-zero
+  bytes anywhere — verified by attempting both leaks.
+  **The old keys remain permanently public.** They are in git history across
+  many commits on a public repo, very likely already cloned and cached;
+  rewriting history would not reliably retract them. Rotation does not
+  un-publish them, it makes them irrelevant. Never reuse those values.
 - ~~The base's NeoPixel strip has a dead pixel (bug #19)~~ **Fixed 2026-08-26**
   by replacing the strip; all eight pixels respond. The real fault was the
   **third** LED's output stage: it rendered its own colour correctly but stopped

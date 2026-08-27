@@ -1,0 +1,48 @@
+#!/bin/bash
+# Refuse to commit key material (bug #20).
+#
+# .gitignore alone is not enough: `git add -f` bypasses it, and a stray copy
+# under another name would not be covered at all. This checks what is actually
+# staged, by name AND by content.
+#
+# Install:  git config core.hooksPath tools/git-hooks
+
+set -uo pipefail
+
+fail() {
+    echo "pre-commit: REFUSED — $1" >&2
+    echo >&2
+    echo "  Key material must never be committed (bug #20). The old keys are" >&2
+    echo "  permanently public; the whole point of rlc_secrets.h is that the" >&2
+    echo "  new ones are not." >&2
+    echo >&2
+    echo "  If you are certain this is a false positive:  git commit --no-verify" >&2
+    exit 1
+}
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+# 1. The secrets file itself, under any path.
+echo "$staged" | grep -qE '(^|/)rlc_secrets\.h$' \
+    && fail "rlc_secrets.h is staged"
+
+# 2. Key macros defined with real hex, in any staged file. The .example
+#    template defines them as all-zero, which is why the zero case is allowed.
+for f in $staged; do
+    case "$f" in
+        *rlc_secrets.h.example) continue ;;
+        */git-hooks/*)          continue ;;
+    esac
+    blob=$(git show ":$f" 2>/dev/null) || continue
+
+    if printf '%s' "$blob" | grep -qE '#define +(ESPNOW_PMK|ESPNOW_LMK|CMD_INTEGRITY_KEY)'; then
+        # Allowed only if every hex byte that follows is 0x00 (the template).
+        if printf '%s' "$blob" | grep -A4 -E '#define +(ESPNOW_PMK|ESPNOW_LMK|CMD_INTEGRITY_KEY)' \
+             | grep -qE '0x(0[1-9A-Fa-f]|[1-9A-Fa-f][0-9A-Fa-f])'; then
+            fail "$f defines a key macro with non-zero bytes"
+        fi
+    fi
+done
+
+exit 0

@@ -7,7 +7,39 @@
 
 #pragma once
 
-/* 1.1.19 (2026-08-27): the arming sequence must be walked in order, and says
+/* 1.1.20 (2026-08-27): bug #20 — crypto keys rotated and taken out of the repo.
+ *
+ * The ESP-NOW PMK/LMK and the CRC integrity pre-shared key were defined in
+ * rlc_config.h as literal ASCII placeholders — "RLC_PMK_DEFAULT!",
+ * "RLC_LMK_DEFAULT!", "RLC_CRC_INTEGRIT" — and committed to a PUBLIC
+ * repository. Two of the three link-security layers therefore offered no
+ * protection against anyone who had read the source, and the values were
+ * guessable even without reading it. Only the replay protection, whose session
+ * token is random per link-up, ever held.
+ *
+ * Keys now live in rlc_secrets.h: gitignored, mode 600, generated locally by
+ * ./tools/gen-secrets.sh from /dev/urandom. rlc_config.h has NO fallback — a
+ * build without real keys fails with an instructive #error rather than quietly
+ * linking a default, because a silent fallback is exactly how the placeholders
+ * survived to ship.
+ *
+ * Leak prevention is enforced, not merely intended: tools/git-hooks/pre-commit
+ * refuses any commit that stages rlc_secrets.h under any path, or that defines
+ * a key macro with non-zero bytes in any file. Install with
+ * `git config core.hooksPath tools/git-hooks`. Verified by attempting both
+ * leaks — a `git add -f` of the real file, and a key macro pasted into an
+ * unrelated tracked file — and confirming both were refused.
+ *
+ * THE OLD KEYS REMAIN PERMANENTLY PUBLIC. They are in git history across many
+ * commits on a public repo, very likely already cloned, forked and cached.
+ * Rewriting history would not reliably retract them. Rotation does not
+ * un-publish the old values; it makes them irrelevant. Never reuse them.
+ *
+ * Both units must be flashed from the SAME tree. With mismatched keys ESP-NOW
+ * decryption fails before the firmware version check runs, so a half-flashed
+ * pair does not refuse to link with a diagnostic — it simply goes silent.
+ *
+ * 1.1.19 (2026-08-27): the arming sequence must be walked in order, and says
  * so when it is not.
  *
  * Raised by the operator during T-S04/T-S08. Both tests PASSED — a fire button
@@ -332,5 +364,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  19
-#define RLC_VERSION_STRING "1.1.19"
+#define RLC_VERSION_PATCH  20
+#define RLC_VERSION_STRING "1.1.20"
