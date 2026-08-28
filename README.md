@@ -117,6 +117,18 @@ Requires **ESP-IDF v5.4.1** and an ESP32-S3 (16 MB flash, 8 MB OCT PSRAM).
 ./build_base.sh flash --inject  # TEST ONLY — see below
 ```
 
+**After flashing both units, reset the one you flashed first.** Both units run a
+strict version check, and `VERSION_MISMATCH` is latched — `tick_remote()`
+returns early in that state ("stuck until power cycle"), so the unit stops
+sending `LINK_REQUEST` entirely. Flashing back-to-back always trips it: the
+first unit reboots on the new firmware, handshakes with its still-stale peer,
+latches the mismatch, and never asks again once the second unit catches up. The
+symptom is a remote sitting on the FIRMWARE MISMATCH screen (or, if you flashed
+the base first, a base that silently never links) with `attempts` frozen and
+`contact` climbing. Changing the order does not help — it just moves the latch
+to the other unit. A reset on the first-flashed unit clears it; a DTR/RTS pulse
+over its serial adapter is enough, no physical access needed.
+
 **`--inject`** builds the base with `CONFIG_RLC_FAULT_INJECTION`, a UART0
 console used to run FSD tests T-A11 and T-A13. Neither is reachable otherwise:
 link loss trips at 1.5 s, well before the staleness timeout, so interfering with
@@ -251,7 +263,7 @@ so the "pad is live" signal is never diluted into a data display.
 | 2 | Input/output and debouncing | Complete |
 | 3 | State machines and command processing | Complete — G2 arming suite 18/18, G3 fire tests all pass or discharged |
 | 4 | Display | Verified on target 2026-08-27 — 9/9 pass; status band added and its 7 states verified |
-| 5 | Hardening and final testing | In progress — §15.4 safety tests 14/19 (incl. T-S06 partial); bug #20 closed. Only T-S10 and T-S18 genuinely open, both blocked on physical access: a soldered display and a soldered key-sense wire. Phase 5 code review closed out 2026-08-28 in fw 1.1.30 (1 Critical, 6 Major, 13 Minor); its audible-feedback fixes still need an on-target ear check |
+| 5 | Hardening and final testing | In progress — §15.4 safety tests 14/19 (incl. T-S06 partial); bug #20 closed. Only T-S10 and T-S18 genuinely open, both blocked on physical access: a soldered display and a soldered key-sense wire. Phase 5 code review closed out 2026-08-28 in fw 1.1.30 (1 Critical, 6 Major, 13 Minor) and **verified on target the same day — 11 tests, 11 PASS** (`Test_Report_Phase5_Review_Fixes.md`), taking firmware to 1.1.32. MAJ-01 is the one review finding still without on-target evidence |
 
 Known open items before any field use:
 

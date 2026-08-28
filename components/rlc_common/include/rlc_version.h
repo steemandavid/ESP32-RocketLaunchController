@@ -7,7 +7,53 @@
 
 #pragma once
 
-/* 1.1.30 (2026-08-28): Phase 5 review fixes (RLC-REVIEW-ALL-009) — the
+/* 1.1.32 (2026-08-28): a failed ARM now undoes itself.
+ *
+ * Operator-reported during on-target testing: a fire press answered with
+ * "NOT ARMED - ARM FIRST" while the base was in fact armed, followed a moment
+ * later by "BASE STATE MISMATCH - DISARMED". Both messages are diagnostic —
+ * the first comes only from the remote's IDLE fire-press handler, the second
+ * only from a STATUS_UPDATE carrying an armed bitmask while the remote is in
+ * IDLE — so the base really was armed, relay closed and siren running, with
+ * this unit unaware and its status band reading READY TO ARM.
+ *
+ * Reviewing the ARM failure branches found the asymmetry: the ACK-timeout
+ * branch was the ONLY one that did not send CMD_DISARM. ACK-after-key-off,
+ * operator interruption, channel mismatch and the key-off retry abort all undo
+ * the arm; the timeout — which is exactly what a lost ACK looks like, and so
+ * the case most likely to have left the base armed — did not. The §8.2.3
+ * reconciliation still caught it within one status interval, which is why the
+ * operator saw the mismatch toast, but that is up to 2 s of live pad described
+ * to the operator as safe, and a fire press inside that window is refused with
+ * the opposite of the truth.
+ *
+ * The timeout branch now sends CMD_DISARM like its siblings. Harmless when the
+ * base never armed: §7.2.7 makes DISARM idempotent, answered with an ACK. The
+ * reconciliation remains the backstop for the two mechanisms this cannot cover
+ * (a remote restart while the base is armed, and a lost DISARM).
+ *
+ * Remote-only change; flash both units for the version check.
+ *
+ * 1.1.31 (2026-08-28): the unconfirmed-outcome toast says what to do about it.
+ *
+ * On-target testing of 1.1.30 (Test_Report_Phase5_Review_Fixes.md) showed how
+ * often MAJ-02's evidence gate lands on the unknown case: the base pushes its
+ * FIRING STATUS_UPDATE on entering the state, so a fire-button release within
+ * roughly one link latency of ignition — measured at >190 ms — reaches the
+ * classifier before that frame does. The channel had genuinely carried current
+ * for ~200 ms and the remote said "CH 1 ENDED - NOT CONFIRMED".
+ *
+ * That is accurate about the remote's knowledge and wrong about the operator's
+ * next move: at the pad "NOT CONFIRMED" reads as "nothing happened", when the
+ * honest instruction is that the igniter may have had current. Now
+ * "CH n OUTCOME UNKNOWN - TREAT AS LIVE", at all three sites that report an
+ * unprovable outcome. Wording only — no logic change, and the evidence gate
+ * itself is untouched.
+ *
+ * Remote-only change, but the strict version check covers both units, so flash
+ * them together.
+ *
+ * 1.1.30 (2026-08-28): Phase 5 review fixes (RLC-REVIEW-ALL-009) — the
  * operator-information layer on the fire path.
  *
  * CRIT-01: buzzer_set_background() ended with a buzzer_play(BUZZER_OFF)
@@ -672,5 +718,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  30
-#define RLC_VERSION_STRING "1.1.30"
+#define RLC_VERSION_PATCH  32
+#define RLC_VERSION_STRING "1.1.32"

@@ -3998,9 +3998,75 @@ comments they asked for.
   so a link that dies during the countdown gives a full 5 s count that then
   aborts at the base.
 
-**Still to do on target:** reflash both units at 1.1.30 and re-check by ear from
-ARMED — link kill, battery critical, display fault, and each FIRE-guard refusal
-must now beep — plus the MAJ-01/02 paths under fault injection.
+**Verified on target 2026-08-28 (fw 1.1.30, commit c7b7547)** — full detail in
+`Test_Report_Phase5_Review_Fixes.md`. Eight on-target tests, 8 PASS, seven
+corroborated by dual-console captures:
+
+| ID | Test | Fix | Result |
+|---|---|---|---|
+| T-30-01 | Base power cut while ARMED | **CRIT-01** | PASS — continuous alarm through the 16 s outage, silent on recovery |
+| T-30-02 | Long-press with arm switch OFF | MAJ-06 | PASS — triple beep + `TURN ARM KEY FIRST` |
+| T-30-03 | Arm then disarm by encoder | CRIT-01 | PASS — heartbeat, then the long disarm beep survives the background change |
+| T-30-04 | State tone tempo | 1.1.27 regression | PASS — ARMED heartbeat vs ~4 Hz firing tone unaffected by the player rewrite |
+| T-30-05 | Arm inside the 10 s splash hold | MAJ-04 | PASS (operator-observed; capture lost to a logger bug) |
+| T-30-06 | Base key to SAFE mid-pulse | MAJ-02/03 | PASS — `CH 1 CUT SHORT - BASE KEY` **150 ms** after the key turn |
+| T-30-07 | Clean full pulse | MAJ-02 regression | PASS — `Fire complete (base state=6, 1107 ms)` → FIRE COMPLETE |
+| T-30-08 | Link lost inside the FIRE COMPLETE hold | MAJ-05 | PASS — green screen cancelled 4.2 s into the hold |
+
+The CRIT-01 acceptance test is the one that matters: with ch1 armed, cutting
+base power now produces a continuous audible alarm that stops on recovery. That
+condition was completely silent in 1.1.29.
+
+Incidental confirmation during setup: pulling the 3S pack while ARMED drove the
+base through `Arm sense LOW during ARMED` → `-> ERROR (flags=0x02: VBAT
+CRITICAL)`, terminal and surviving the pack's return, while the remote showed
+`BASE DISARMED`, then a `BASE FAULT` status band, then refused a re-arm with
+`BASE ERROR: VBAT CRITICAL` — the MIN-07 one-line brief rendering as designed.
+
+**Still to do on target — all need fault-injection builds:**
+
+- **MAJ-01** — the existing base `e` key deliberately falsifies `base_state` to
+  IDLE, so it cannot present a truthful ERROR to a remote in FIRING. Needs a new
+  test-only key before this path can be exercised.
+- ~~**MAJ-02 false-completion**~~ — **effectively closed by MAJ-03.** With the
+  status frame suppressed, the NACK ends the sequence within one repeat interval,
+  so the remote never reaches the elapsed-time backstop that produced the false
+  FIRE COMPLETE. The gate itself was observed refusing to over-claim in
+  T-30-10B (`base state=4`, 793 ms, no FIRING status ever seen).
+
+**New finding (MINOR) — the gate under-claims on a fast release.** Observed
+live: the base entered FIRING and pushed its triggered status; the operator
+released the fire button 190 ms later, before that frame arrived, so
+`s_base_reached_firing` was still false and the remote reported
+`CH 1 ENDED - NOT CONFIRMED` for a channel that had genuinely carried current
+for ~200 ms. Under-claiming is the safe direction relative to the defect MAJ-02
+fixed. **Operator decision 2026-08-28: reworded in fw 1.1.31** to
+`CH n OUTCOME UNKNOWN - TREAT AS LIVE` — the remote's knowledge is unchanged, but
+the operator is told what it means for them at the pad instead of having to
+interpret "not confirmed", which reads too easily as "nothing happened". The
+evidence gate itself is untouched, and deferring classification to let the
+status land was rejected as timing complexity on a safety path. Recorded in
+`Test_Report_Phase5_Review_Fixes.md` §4 finding 4 / §5 and FSD §8.2.6.
+- **CRIT-01 critical-error half** — remote `b` / `d` from ARMED must sound
+  `ALARM_CRITICAL`.
+- ~~**MAJ-03 attribution**~~ — **DONE 2026-08-28.** Isolated with the base's `s`
+  injection key: the abort's triggered status frame was suppressed, leaving the
+  NACK as the only signal. Ended the sequence in **160 ms from PRE_FIRE**
+  (`FIRE repeat NACKed (0x05) during PRE_FIRE`) and **200 ms from FIRING**
+  (`FIRE repeat NACKed (0x05) — base left the firing path`, toast
+  `CH 1 ENDED - NOT CONFIRMED`). Established in the process that MAJ-03 is a
+  **backstop, not the primary detector** — `firing_exit()` calls
+  `status_update_trigger()` on every FIRING exit, so in normal operation the
+  status frame always wins (150 ms, measured). Base reflashed with a normal
+  build and verified free of injection symbols afterwards.
+- **MIN-10** — `LINK WEAK` needs ≥30 % ping loss; distance or shielding rather
+  than injection.
+
+**Tooling note:** the serial logger used for this session held stale file
+handles across USB re-enumeration, silently capturing nothing after a unit
+reset. It cost one test capture and produced one incorrect "this did not happen"
+conclusion that had to be retracted. Fixed by reopening a port after 20 s
+without data — worth carrying into any future bench session.
 
 ### Phase 5 FSD Safety Tests (§15.4)
 
@@ -4054,6 +4120,8 @@ left at 1.1.9 — review finding INF-12).
 
 | Version | Date | Unit(s) | Change |
 |---|---|---|---|
+| 1.1.32 | 2026-08-28 | remote | Finding 6: the ARM ACK-timeout branch now sends `CMD_DISARM` like every sibling failure path. A timeout is what a lost ACK looks like, so it was the branch most likely to have left the base armed while the remote sat in IDLE showing READY TO ARM — up to 2 s of live pad before the §8.2.3 reconciliation caught it. |
+| 1.1.31 | 2026-08-28 | remote | Unconfirmed-outcome toast reworded to `CH n OUTCOME UNKNOWN - TREAT AS LIVE`. On-target testing showed the MAJ-02 evidence gate lands on the unknown case for any fire-button release within ~200 ms of ignition (the FIRING status has not arrived yet), where "NOT CONFIRMED" reads as "nothing happened". Wording only; gate untouched. |
 | 1.1.30 | 2026-08-28 | both | Phase 5 review fix round (`Code_Review_Phase5_20260828_0641.md`, RLC-REVIEW-ALL-009). **CRIT-01** the buzzer background nudge no longer destroys a just-queued alarm — the link-lost and critical alarms were silent whenever the transition started in ARMED/PRE_FIRE/FIRING; **MAJ-01** remote FIRING syncs on any base state off the firing path (a base in terminal ERROR left it showing IGNITION ACTIVE); **MAJ-02** FIRE COMPLETE / cut-short need positive evidence the base reached FIRING; **MAJ-03** NACKs for repeated CMD_FIRE are heeded; **MAJ-04/05** splash and FIRE COMPLETE never cover a live or alarmed state; **MAJ-06** three refusal paths gained their missing beep; MIN-01/03/05/07/08/09/10/11 and INF-05. |
 | 1.1.29 | 2026-08-27 | remote | **SAFETY DEFECT (E2).** Asymmetric dead-man debounce — 80 ms to press, 20 ms to release. Mashing the fire button used to fire the channel: symmetric 8-bit debouncing never reported a release, so both dead-man layers stayed satisfied. |
 | 1.1.28 | 2026-08-27 | remote | Boot display health check rejects both undriven signatures (0x00000000/0xFFFFFFFF) and checks the SPI return status, as the periodic check has since 1.1.9. |

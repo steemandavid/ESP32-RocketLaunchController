@@ -1,5 +1,101 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-28 — On-target test campaign for the review fixes; fw 1.1.30 → 1.1.32
+
+Guided bench testing of everything fixed in 1.1.30, written up in
+`Test_Report_Phase5_Review_Fixes.md`. **11 on-target tests, 11 PASS**, host suite
+467 checks / 0 failures throughout. Five live pulses into the halogen on ch1.
+
+### The Critical fix, confirmed on hardware
+
+T-30-01: with ch1 armed, cutting base power produced a **continuous audible
+alarm** that stopped on recovery — the condition that was completely silent in
+1.1.29. `IDLE -> ARMED` at 404.08, `-> LINK_LOST` at 407.09 (originating in
+ARMED, which is what made it silent before), `LINK_ACK -> IDLE` at 423.11.
+
+### Group A — no injection needed
+
+| Test | Fix | Result |
+|---|---|---|
+| Base power cut while ARMED | CRIT-01 | alarm sounds, stops on recovery |
+| Long-press with arm switch OFF | MAJ-06 | triple beep + `TURN ARM KEY FIRST` |
+| Arm then disarm by encoder | CRIT-01 | long disarm beep survives the state-tone change |
+| State tone tempo | 1.1.27 regression | ARMED heartbeat vs ~4 Hz firing tone intact |
+| Arm inside the 10 s splash | MAJ-04 | splash gives way to the ARMED screen |
+| Base key to SAFE mid-pulse | MAJ-02/03 | `CH 1 CUT SHORT - BASE KEY` **150 ms** after the key turn |
+| Clean full pulse | MAJ-02 regression | `Fire complete (base state=6, 1107 ms)` → FIRE COMPLETE |
+| Link lost inside FIRE COMPLETE hold | MAJ-05 | green screen cancelled 4.2 s into the hold |
+
+### Group B — MAJ-03 isolated with fault injection
+
+`firing_exit()` calls `status_update_trigger()` on **every** FIRING exit, so the
+triggered status frame always beats the NACK in normal operation (150 ms,
+measured, with no NACK even sent). **MAJ-03 is a backstop for a lost frame, not
+the primary detector** — a narrower claim than the review made for it.
+
+Isolated by suppressing the frame with the base's `s` injection key, driven by a
+director script that watched for `ARMED -> PRE_FIRE` and sent the key at a set
+offset into the countdown:
+
+- **PRE_FIRE half:** key to SAFE mid-countdown → `FIRE repeat NACKed (0x05)
+  during PRE_FIRE` → `[NACK] WRONG STATE`, **160 ms**.
+- **FIRING half:** key to SAFE 600 ms into the pulse → `FIRE repeat NACKed
+  (0x05) — base left the firing path`, **200 ms** (one repeat interval), with
+  `base state=4` proving no FIRING status was ever received.
+
+Base reflashed with a normal build afterwards and verified: injection config
+absent, zero injection symbols in `rlc.elf`.
+
+### fw 1.1.31 — unconfirmed-outcome wording
+
+Testing exposed how often MAJ-02's evidence gate lands on the unknown case: the
+base pushes its FIRING status on entering the state, so a fire-button release
+within ~200 ms of ignition (measured >190 ms) reaches the classifier first. The
+channel had carried current for ~200 ms and the remote said "ENDED - NOT
+CONFIRMED". Accurate about the remote's knowledge, wrong about the operator's
+next move. Now **`CH n OUTCOME UNKNOWN - TREAT AS LIVE`** at all three sites,
+with a `_Static_assert` pinning the 36-character overlay limit. Wording only —
+the gate is untouched.
+
+### fw 1.1.32 — a failed ARM undoes itself
+
+Operator hit `NOT ARMED - ARM FIRST` on a fire press while the base was armed,
+followed by `BASE STATE MISMATCH - DISARMED`. Both messages are diagnostic, so
+the base really was armed with the remote unaware. Reviewing the ARM failure
+branches found the asymmetry: **the ACK-timeout branch was the only one that did
+not send `CMD_DISARM`** — and a timeout is exactly what a lost ACK looks like,
+so it was the branch most likely to have left the base armed. It now disarms
+like its siblings. A deliberate re-run did not reproduce the original event (59
+status samples per unit, no desync window), so it is recorded as finding 6 with
+the three candidate mechanisms, all bounded by the §8.2.3 reconciliation.
+
+### Flashing trap worth knowing
+
+Two no-link episodes after back-to-back flashing turned out to be the version
+check working as designed: the first-flashed unit reboots on the new firmware,
+handshakes with its still-stale peer, and **latches `VERSION_MISMATCH`**, which
+stops `LINK_REQUEST` entirely ("stuck until power cycle"). The remote showed the
+FIRMWARE MISMATCH screen the whole time. Changing flash order only moves the
+latch to the other unit. **Reset the first-flashed unit after the second
+finishes** — a DTR/RTS pulse over the serial adapter is enough. Documented in
+the README. Whether a latched mismatch should retry and self-clear once the peer
+matches is left as an open spec question.
+
+### Tooling note
+
+The session's serial logger held stale file handles across USB re-enumeration,
+silently recording nothing after a unit reset. It cost one test capture (T-30-05)
+and produced one incorrect "this did not happen" conclusion that had to be
+retracted. Fixed to reopen a port after 20 s without data.
+
+### Still open
+
+- **MAJ-01** — the remote in FIRING over a base in terminal ERROR. Needs a new
+  test-only injection key: the existing `e` deliberately falsifies `base_state`
+  to IDLE, so it cannot present a truthful ERROR.
+- **CRIT-01's critical-error half** (remote `b`/`d` from ARMED) and **MIN-10**
+  (`LINK WEAK`, needs ≥30 % ping loss).
+
 ## 2026-08-28 — Review RLC-REVIEW-ALL-009 fixed: fw 1.1.29 → 1.1.30
 
 All seven Critical/Major findings of `Code_Review_Phase5_20260828_0641.md`

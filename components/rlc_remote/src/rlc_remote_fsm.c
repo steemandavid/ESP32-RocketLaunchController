@@ -54,6 +54,27 @@ static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static int64_t  s_prefire_start_ms = 0;
 static int64_t  s_firing_start_ms = 0;
 
+/**
+ * What the operator is told when the sequence ended and this unit cannot prove
+ * whether the channel carried current (FSD §8.2.6).
+ *
+ * "TREAT AS LIVE" rather than a bare "not confirmed" by operator decision
+ * 2026-08-28, after on-target testing showed how often this fires: the base
+ * pushes its FIRING STATUS_UPDATE on entering the state, so a fire-button
+ * release within roughly one link latency of ignition (>190 ms measured) lands
+ * here even though the channel really did fire for as long as the pulse
+ * lasted. "NOT CONFIRMED" reads too easily as "nothing happened"; the safe
+ * reading is that the igniter may have current in it, and the message now says
+ * so outright.
+ *
+ * Width is load-bearing. The overlay box is DW-40 = 440 px and the text is
+ * drawn at scale 2 (12 px/char), so 36 characters is the hard limit —
+ * "CH 8 OUTCOME UNKNOWN - TREAT AS LIVE" is exactly 36. Anything longer is
+ * silently clipped by the frame. */
+#define UNCONFIRMED_TOAST_FMT  "CH %u OUTCOME UNKNOWN - TREAT AS LIVE"
+_Static_assert(sizeof("CH 8 OUTCOME UNKNOWN - TREAT AS LIVE") - 1 <= 36,
+               "unconfirmed-outcome toast overruns the 440 px overlay box");
+
 /* MAJ-02: positive evidence that the BASE reached FIRING — that current was
  * actually put on the igniter. The remote's own FIRING entry proves nothing
  * about the pad: the base can abort anywhere in the 5 s countdown while the
@@ -545,8 +566,7 @@ static void report_firing_outcome(void)
         ESP_LOGW(TAG, "Sequence ended without a FIRING status (base state=%d, "
                       "%lld ms) — outcome unconfirmed",
                  s_last_status.base_state, (long long)fired_ms);
-        snprintf(tbuf, sizeof(tbuf), "CH %u ENDED - NOT CONFIRMED",
-                 s_armed_channel);
+        snprintf(tbuf, sizeof(tbuf), UNCONFIRMED_TOAST_FMT, s_armed_channel);
         buzzer_play(BUZZER_BEEP_TRIPLE);
         display_toast(tbuf);
     } else {
@@ -929,8 +949,23 @@ static void process_event(const rlc_fsm_event_t *evt)
                 /* Timeout. Every other outcome above tells the operator
                  * something; until 2026-08-26 this one only wrote a log line,
                  * so a base that never answered looked identical to a
-                 * long-press that had not registered. */
-                ESP_LOGW(TAG, "ARM failed — no response from base");
+                 * long-press that had not registered.
+                 *
+                 * Finding 6 (2026-08-28): and until now it was also the only
+                 * failure branch that did not UNDO the arm. That is backwards —
+                 * a timeout is precisely what a lost ACK looks like, so this is
+                 * the branch most likely to have left the base armed, with the
+                 * relay closed and the siren running while this unit sits in
+                 * IDLE showing READY TO ARM. The §8.2.3 reconciliation catches
+                 * it on the next STATUS_UPDATE, but that is up to 2 s of a live
+                 * pad the operator has been told is safe, and a fire press
+                 * inside it is refused with "NOT ARMED" — the opposite of the
+                 * truth. Disarm explicitly, like every sibling branch does.
+                 * Harmless if the base never armed: §7.2.7 makes DISARM
+                 * idempotent, answered with an ACK. */
+                ESP_LOGW(TAG, "ARM failed — no response from base; "
+                              "disarming in case it armed without us");
+                send_cmd_disarm(ch);
                 buzzer_play(BUZZER_BEEP_TRIPLE);
                 display_toast("NO RESPONSE FROM BASE");
             }
@@ -1274,7 +1309,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                  * nothing about the pad. */
                 snprintf(tbuf, sizeof(tbuf),
                          s_base_reached_firing ? "CH %u PULSE CUT SHORT"
-                                               : "CH %u ENDED - NOT CONFIRMED",
+                                               : UNCONFIRMED_TOAST_FMT,
                          s_armed_channel);
                 buzzer_play(BUZZER_BEEP_TRIPLE);
                 display_toast(tbuf);
@@ -1290,7 +1325,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 char tbuf[40];
                 snprintf(tbuf, sizeof(tbuf),
                          s_base_reached_firing ? "CH %u CUT SHORT - ARM OFF"
-                                               : "CH %u ENDED - NOT CONFIRMED",
+                                               : UNCONFIRMED_TOAST_FMT,
                          s_armed_channel);
                 buzzer_play(BUZZER_BEEP_TRIPLE);
                 display_toast(tbuf);

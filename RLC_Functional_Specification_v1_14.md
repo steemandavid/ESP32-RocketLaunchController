@@ -2157,13 +2157,30 @@ MAJ-01/02/03).**
    |---|---|
    | `POST_FIRE` seen, or FIRING seen and local elapsed ≥ `FIRE_PULSE_DURATION_MS` | FIRE COMPLETE screen (§10.2.4a) |
    | FIRING seen, local elapsed < pulse | `CH n CUT SHORT ...` |
-   | FIRING never seen | `CH n ENDED - NOT CONFIRMED` |
+   | FIRING never seen | `CH n OUTCOME UNKNOWN - TREAT AS LIVE` |
 
    The remote's own FIRING entry is only its local countdown expiring; the base
    can abort anywhere in the 5 s countdown while that countdown runs on. With
    the elapsed-time test alone, one lost STATUS_UPDATE was enough to certify a
    never-energised channel as FIRE COMPLETE, and a fresh abort was announced as
    `CUT SHORT AT BASE` — current that never flowed.
+
+   **Known consequence — the fast-release window (verified on target
+   2026-08-28; wording settled in fw 1.1.31).** The base pushes its FIRING
+   STATUS_UPDATE on entering the state, so there is a window of roughly one
+   link latency plus status-task scheduling — measured at >190 ms — in which the
+   remote is in local FIRING but has not yet received that frame. A fire-button
+   release inside that window therefore reaches the classifier with no evidence,
+   even though the channel did carry current for as long as the pulse lasted.
+
+   The window is **not** closed in firmware: doing so would mean either
+   deferring the classification of a release in FIRING (timing complexity on a
+   safety path, for a message) or accepting weaker evidence, which is the defect
+   this rule exists to prevent. Instead the **message SHALL tell the operator
+   what to do about it** — `CH n OUTCOME UNKNOWN - TREAT AS LIVE`, not a bare "not
+   confirmed". At the pad, "not confirmed" reads as "nothing happened"; the
+   safe reading is that the igniter may have had current in it. The §10.2.2
+   continuity grid answers the question properly as soon as the toast clears.
 
 #### 8.2.7 ARMED / PRE_FIRE → IDLE (Disarm without firing)
 
