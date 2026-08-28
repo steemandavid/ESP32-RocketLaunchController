@@ -263,7 +263,7 @@ so the "pad is live" signal is never diluted into a data display.
 | 2 | Input/output and debouncing | Complete |
 | 3 | State machines and command processing | Complete — G2 arming suite 18/18, G3 fire tests all pass or discharged |
 | 4 | Display | Verified on target 2026-08-27 — 9/9 pass; status band added and its 7 states verified |
-| 5 | Hardening and final testing | In progress — §15.4 safety tests 14/19 (incl. T-S06 partial); bug #20 closed. Only T-S10 and T-S18 genuinely open, both blocked on physical access: a soldered display and a soldered key-sense wire. Phase 5 code review closed out 2026-08-28 in fw 1.1.30 (1 Critical, 6 Major, 13 Minor) and **verified on target the same day — 11 tests, 11 PASS** (`Test_Report_Phase5_Review_Fixes.md`), taking firmware to 1.1.32. MAJ-01 is the one review finding still without on-target evidence |
+| 5 | Hardening and final testing | In progress — §15.4 safety tests 14/19 (incl. T-S06 partial); bug #20 closed. Only T-S10 and T-S18 genuinely open, both blocked on physical access: a soldered display and a soldered key-sense wire. Phase 5 code review closed out 2026-08-28 in fw 1.1.30 (1 Critical, 6 Major, 13 Minor) and **verified on target the same day — 11 tests, 11 PASS** (`Test_Report_Phase5_Review_Fixes.md`), taking firmware to 1.1.32. **MAJ-01 and CRIT-01 closed on target later the same day** (fw 1.1.35, `Test_Report_Phase5_OnTarget_20260828.md`) — two more live defects found and fixed on the way (raw-NACK toast, battery-critical disarm); bug #29 regression suite T-A16/T-A17/T-A18 all PASS, cleared for live fire |
 
 Known open items before any field use:
 

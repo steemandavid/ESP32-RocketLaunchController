@@ -7,7 +7,90 @@
 
 #pragma once
 
-/* 1.1.32 (2026-08-28): a failed ARM now undoes itself.
+/* 1.1.35 (2026-08-28): a critical pack no longer leaves the base armed.
+
+ * Found live during the CRIT-01 on-target retest (fw 1.1.34, injection key
+ * 'b'): battery-critical injected from ARMED sounded the alarm and latched
+ * the remote's ERROR exactly as 1.1.30 intended — but the ARMED
+ * EVT_BATTERY_CRITICAL handler entered ERROR without telling the base, and
+ * the operator watched the base arm relay stay engaged for the full 10 s
+ * ARM TIMEOUT. The remote was already in terminal ERROR, so it could not
+ * disarm afterwards either; the pad was live with no way to command it safe
+ * from the remote. The EVT_DISPLAY_FAULT handler (any-state, §5.5.6) sends
+ * CMD_DISARM before entering ERROR for exactly this reason — the battery
+ * path simply never had it.
+ *
+ * The ARMED handler now mirrors the display-fault behaviour: stop the fire
+ * repeats, CMD_DISARM the armed channel (0xFF belt-and-braces if the channel
+ * is unknown), then enter ERROR. The remote's own battery dying is no longer
+ * a reason the base should stay armed.
+ *
+ * PRE_FIRE and FIRING already send CEASE_FIRE on this event, and the base's
+ * ARMED handler disarms on CEASE_FIRE, so those paths were never exposed —
+ * the gap was ARMED only.
+ *
+ * Remote-only change; flash both units for the version check.
+ *
+ * 1.1.34 (2026-08-28): a base-aborted countdown names its cause.
+ *
+ * Found live during the Bug #29 regression (T-A17, fw 1.1.33): with the
+ * channel armed, the countdown running and the operator holding the fire
+ * button, pulling the igniter lead produced the base-side abort exactly as
+ * specified — but the remote toasted "[NACK] WRONG STATE".
+ *
+ * The race: the base's continuity-loss disarm pushed its STATUS_UPDATE, but
+ * the operator's still-flowing CMD_FIRE repeats drew a NACK 0x05 first
+ * (measured 7 ms apart at the base; the NACK reached the remote's FSM before
+ * the status did). The NACK path showed the raw reason, and once the remote
+ * was in IDLE the arriving status was reconciled silently — so the frame
+ * that knew the cause (ch 1 OPEN, base disarmed) passed through without
+ * ever being shown. "WRONG STATE" is true about the repeat and useless
+ * about the pad; at the pad the difference between "igniter left the
+ * circuit" and anything else is the thing worth saying. Same defect class
+ * as the MAJ-06 minors: right safety behaviour, wrong operator sentence.
+ *
+ * Three changes, all display-layer:
+ *   - the PRE_FIRE fire-repeat NACK path never shows the raw NACK reason;
+ *     it says "BASE ENDED SEQUENCE" (the status-exit path's wording) and
+ *     latches the armed channel;
+ *   - the first STATUS_UPDATE in IDLE settles the latch one-shot, no
+ *     timer: channel not armed and band OPEN names the continuity-loss
+ *     disarm exactly as the ARMED handler has since RM-07, with
+ *     BEEP_CONTINUITY_LOST. Any other frame consumes the latch silently;
+ *   - the PRE_FIRE status-exit path gains the same RM-07 discrimination,
+ *     so the cause is named immediately when the status frame wins the
+ *     race instead.
+ *
+ * The latch is cleared on a new ARM attempt and on link loss, so it cannot
+ * name a continuity loss belonging to a previous sequence. The safety
+ * behaviour is untouched: the sequence ended at the base in 58 ms measured,
+ * and it still does.
+ *
+ * Remote-only change; flash both units for the version check.
+ *
+ * 1.1.33 (2026-08-28): no false ERROR on the first shot of a power cycle.
+ *
+ * Cosmetic finding from the bug #31 two-cycle regression: cycle 1 logged
+ * "E gptimer: gptimer_stop(418): timer is not running" immediately before
+ * the timer started — the BF-01 defensive stop-before-every-start firing on
+ * the first pulse of a power cycle, when there is genuinely nothing to stop.
+ * Harmless (it does not appear on cycle 2, because the completion handler
+ * has left the timer in a stoppable state), but it prints at ERROR level on
+ * every first shot, which will send someone hunting a fault that is not
+ * there.
+ *
+ * The log line comes from inside the gptimer driver, so it cannot be demoted
+ * from app code — the call itself must be skipped. New s_running flag in
+ * rlc_fire_timer.c mirrors the driver's RUN state: set by the only
+ * gptimer_start() in the unit, cleared on every stop path, and both the
+ * defensive stop in fire_timer_start() and fire_timer_stop() now only call
+ * gptimer_stop() when it is set. The stop itself is unchanged when the timer
+ * IS running, so BF-01's protection is not weakened: the flag cannot go
+ * stale in the dangerous direction, because nothing else calls gptimer_start.
+ *
+ * Base-only change; flash both units for the version check.
+ *
+ * 1.1.32 (2026-08-28): a failed ARM now undoes itself.
  *
  * Operator-reported during on-target testing: a fire press answered with
  * "NOT ARMED - ARM FIRST" while the base was in fact armed, followed a moment
@@ -718,5 +801,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  32
-#define RLC_VERSION_STRING "1.1.32"
+#define RLC_VERSION_PATCH  35
+#define RLC_VERSION_STRING "1.1.35"

@@ -42,6 +42,17 @@ static volatile uint8_t     s_selected_channel = 1;
 static volatile uint8_t     s_armed_channel = 0;
 static volatile bool        s_fire_repeat_active = false;
 
+/* T-A17 finding (2026-08-28): when the base aborts PRE_FIRE, the NACK for a
+ * fire repeat usually beats the STATUS_UPDATE carrying the *cause* (measured
+ * ~100 ms behind), so the operator saw "[NACK] WRONG STATE" — true about the
+ * repeat, useless about the pad. On that path the remote remembers the armed
+ * channel and lets the very next status in IDLE settle the cause: channel
+ * not armed and band OPEN ⇒ the base's continuity-loss disarm, named exactly
+ * as the ARMED handler names it (RM-07). One-shot, no timer — consumed by
+ * the first status whatever it says, because the disarm push is either in
+ * flight or lost, and a later frame adds nothing. */
+static volatile uint8_t     s_base_end_pending_ch = 0;
+
 /* Cached STATUS_UPDATE from base */
 static rlc_payload_status_update_t s_last_status;
 static int64_t  s_last_status_rx_ms = 0;
@@ -484,6 +495,7 @@ static void do_enter_link_lost(void)
 {
     s_fire_repeat_active = false;
     s_armed_channel = 0;
+    s_base_end_pending_ch = 0;   /* stale across a link loss (T-A17 latch) */
     set_prefire_start(0);
     buzzer_play(BUZZER_ALARM_LINK_LOST);
     rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
@@ -759,6 +771,12 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* Attempt to ARM (FSD §8.2.3) */
             uint8_t ch = encoder_get_channel();
 
+            /* A new sequence supersedes any pending cause from the last one
+             * (s_base_end_pending_ch) — leaving it set would let the first
+             * status of some later IDLE name a continuity loss that belonged
+             * to this sequence's predecessor. */
+            s_base_end_pending_ch = 0;
+
             /* Sequence guard: refuse the ARM outright if the fire button is
              * already held.
              *
@@ -1012,6 +1030,21 @@ static void process_event(const rlc_fsm_event_t *evt)
         } else if (evt->type == EVT_STATUS_UPDATE) {
             /* Cache STATUS_UPDATE */
             cache_status(&evt->data.status_update.status);
+            /* T-A17 finding: the status that followed a base-ended sequence
+             * (NACK won the race). Settle the cause now that the frame is in
+             * hand — see s_base_end_pending_ch. Cleared first: one-shot, and
+             * the checks below must run on this frame regardless. */
+            if (s_base_end_pending_ch != 0) {
+                uint8_t ch = s_base_end_pending_ch;
+                s_base_end_pending_ch = 0;
+                if (!(s_last_status.channel_armed_bitmask & (1U << (ch - 1))) &&
+                    status_continuity_band(ch) == CONT_OPEN) {
+                    ESP_LOGW(TAG, "base ended sequence: ch %u OPEN — continuity",
+                             ch);
+                    display_toast("CONTINUITY LOST - DISARMED");
+                    buzzer_play(BUZZER_BEEP_CONTINUITY_LOST);
+                }
+            }
             /* R2: multi-arm detection — base must never report >1 channel armed */
             if (is_multi_armed(s_last_status.channel_armed_bitmask)) {
                 handle_multi_arm_violation(s_last_status.channel_armed_bitmask);
@@ -1208,6 +1241,18 @@ static void process_event(const rlc_fsm_event_t *evt)
         } else if (evt->type == EVT_LINK_LOST) {
             do_enter_link_lost();
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
+            /* CRIT-01 'b' finding (2026-08-28): this path entered ERROR
+             * without telling the base, leaving it armed until its 10 s
+             * ARM TIMEOUT while the remote sat in terminal ERROR unable
+             * to disarm it. The display-fault handler above sends CMD_DISARM
+             * for the same reason — mirror it. (PRE_FIRE/FIRING are already
+             * covered: their CEASE_FIRE makes the base do_disarm().) */
+            s_fire_repeat_active = false;
+            if (s_armed_channel > 0) {
+                send_cmd_disarm(s_armed_channel);
+            } else {
+                send_cmd_disarm(0xFF);
+            }
             do_enter_error_text("REMOTE BATTERY CRITICAL");
         }
         break;
@@ -1244,10 +1289,18 @@ static void process_event(const rlc_fsm_event_t *evt)
                        s_last_status.base_state != STATE_ARMED) {
                 ESP_LOGW(TAG, "Base left PRE_FIRE/FIRING — sync to base");
                 /* MAJ-06: this was the weakest of the abort indications —
-                 * the firing tone simply stopped. §7.2.9a wants both halves. */
+                 * the firing tone simply stopped. §7.2.9a wants both halves.
+                 * RM-07 discrimination, as in ARMED: the same frame can name
+                 * the cause, and for an igniter that left the circuit that is
+                 * the thing worth hearing (BEEP_CONTINUITY_LOST). */
                 s_fire_repeat_active = false;
-                buzzer_play(BUZZER_BEEP_TRIPLE);
-                display_toast("BASE ENDED SEQUENCE");
+                if (status_continuity_band(s_armed_channel) == CONT_OPEN) {
+                    buzzer_play(BUZZER_BEEP_CONTINUITY_LOST);
+                    display_toast("CONTINUITY LOST - DISARMED");
+                } else {
+                    buzzer_play(BUZZER_BEEP_TRIPLE);
+                    display_toast("BASE ENDED SEQUENCE");
+                }
                 do_enter_idle();
             }
         } else if (evt->type == EVT_CMD_NACK &&
@@ -1267,8 +1320,14 @@ static void process_event(const rlc_fsm_event_t *evt)
             ESP_LOGW(TAG, "FIRE repeat NACKed (0x%02x) during PRE_FIRE",
                      evt->data.nack.reason_code);
             s_fire_repeat_active = false;
+            /* T-A17 finding: never show the raw NACK reason here. 0x05
+             * "WRONG STATE" answers the *repeat* ("you sent CMD_FIRE while I
+             * was in IDLE"), which is a fact about the wire, not about the
+             * pad. The cause is in the disarm STATUS_UPDATE ~100 ms behind;
+             * s_base_end_pending_ch lets the first status in IDLE name it. */
+            s_base_end_pending_ch = s_armed_channel;
             buzzer_play(BUZZER_BEEP_TRIPLE);
-            show_nack(evt->data.nack.reason_code);
+            display_toast("BASE ENDED SEQUENCE");
             do_enter_idle();
         } else if (evt->type == EVT_LINK_LOST) {
             s_fire_repeat_active = false;

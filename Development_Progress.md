@@ -19,9 +19,9 @@
 | 0 | Hardware Validation | COMPLETE |
 | 1 | Foundation and Communication | COMPLETE |
 | 2 | Input/Output and Debouncing | COMPLETE |
-| 3 | State Machines and Command Processing | CODE COMPLETE |
-| 4 | Display | CODE COMPLETE |
-| 5 | Hardening and Final Testing | NOT STARTED |
+| 3 | State Machines and Command Processing | COMPLETE — dev + FSD tests; residual test items (T-F04/T-F05) tracked under Phase 5 task 1 |
+| 4 | Display | COMPLETE — dev + FSD tests; residual test items (T-L15/T-L16) tracked under Phase 5 task 1 |
+| 5 | Hardening and Final Testing | **IN PROGRESS** (since 2026-08-27; fw 1.1.35) — safety tests §15.4 mostly PASS, review fixes applied and verified **on target** (MAJ-01, CRIT-01 both halves, bug #29 regression suite T-A16/T-A17/T-A18 all PASS); remaining: T-S10b, T-S12/S13, T-S18, T-C06 replay tool, range 10–100 m, power consumption, remote FSM host harness, CI runner, docs, final version |
 
 ---
 
@@ -35,7 +35,7 @@ on-target defect log in the Phase 3 section.
 |---|-------|-------|--------|--------|
 | 31 | Fire GPTimer never stopped on successful pulse completion — the second launch of a power cycle panicked with the igniter energised | Firmware | **RESOLVED 2026-08-27 (fw 1.1.9)** — `fire_timer_stop()` on the completion path, an unconditional stop at the top of `fire_timer_start()`, and a checked `gptimer_start()` return that makes the fire path safe and latches ERROR instead of `abort()`. Regression-tested by `tests/host/test_base_fsm.c` T-FSM05 (two full fire cycles per power-on). | Was: **NO-GO for a second live launch per power cycle.** Now clear. |
 | 30 | Continuity-loss disarm is edge-triggered only — a band change to OPEN during the 200 ms arm-verify window is dropped and never re-delivered | Firmware | **RESOLVED 2026-08-26 (fw 1.1.8)** — two fixes: a continuity re-check at arm-verify completion (aborts with `NACK_NO_CONTINUITY`), and a periodic **level** check in `check_timers()` for ARMED/PRE_FIRE which also covers an event dropped by a full FSM queue (an entry check alone does not). | Nothing. **Verification is partial:** T-F02 confirmed the entry check does not false-positive (a normal arm completes through the verify path it sits on) and the backstop does not fire spuriously in IDLE. Neither has been *positively* triggered — that needs a disconnection inside a 200 ms window or a full FSM queue, both of which want an injection to reach reliably. |
-| 29 | Base stays ARMED when the armed channel's igniter loses continuity | Firmware + spec | **RESOLVED 2026-08-26 (fw 1.1.2)** — continuity OPEN on the armed channel now disarms from ARMED or PRE_FIRE. Was a *specification* defect as much as a code one: v1.8 removed the disarm on a rationale ("sensing disabled — stale data") that the v1.10 SPDT redesign made obsolete, while the Phase 3 test criteria kept listing it as required. | Nothing now. Retest with T-A16/T-A17/T-A18 before live fire. |
+| 29 | Base stays ARMED when the armed channel's igniter loses continuity | Firmware + spec | **RESOLVED 2026-08-26 (fw 1.1.2)** — continuity OPEN on the armed channel now disarms from ARMED or PRE_FIRE. Was a *specification* defect as much as a code one: v1.8 removed the disarm on a rationale ("sensing disabled — stale data") that the v1.10 SPDT redesign made obsolete, while the Phase 3 test criteria kept listing it as required. | Nothing now. **Regression retest 2026-08-28 COMPLETE: T-A16 PASS (10 ms), T-A17 PASS after the fw 1.1.34 toast fix** (the retest itself found a display-layer defect, now fixed), **T-A18 PASS** (68 Ω on ch2 pulled while ch1 armed; base ran its full 10 s ARM TIMEOUT). Cleared for live fire. |
 | 28 | Base ARM RELAY LED lights when the key is turned to **SAFE**, while the relay itself stays de-energised | Hardware | **RESOLVED 2026-08-26** — indicator wiring corrected on the base. The ARM RELAY LED now lights only when the arm relay is actually energised. A second, related indicator fault was found and fixed in the same session: the arm-key red and green LEDs lit *simultaneously* with the key in SAFE; they now read red = ARMED, green = SAFE. | Nothing. **Fire testing is unblocked** — this was the last hardware gate. |
 | 27 | Base siren not connected — GPIO 40 drives nothing, IRLZ44N driver not fitted | Hardware | **RESOLVED (hardware) 2026-08-26** — IRLZ44N driver fitted on GPIO 40 with its 150 Ω gate series resistor, 10 kΩ gate pull-down, and a 1N5819 flyback diode across the siren (cathode VBAT+, anode drain). | Nothing further in hardware. **Retests DONE 2026-08-26 — six checks, all PASS, review finding N2 closed by measurement:** silent at power-on; continuous across ARMED→PRE_FIRE; stops and stays stopped after all three disarm routes; LINK_LOST = 4 cycles of 500/500; ERROR = 3 blasts at 200 ms; and link recovery mid-pattern silences it immediately and permanently. (This row said "retest still owed" until 2026-08-27 — it was never updated when the tests ran, and the README and changelog were correct.) |
 | 26 | Continuity misclassified — ~64 Ω return-path fault + ADC calibration disabled + 12 dB attenuation | Hardware + firmware | **RESOLVED** — return repaired, calibration on, 0 dB adopted, SHORT band merged away as unmeasurable | All continuity sensing. Operators are told a good igniter is a wiring fault, and OPEN (the only band that blocks arming) cannot be trusted. |
@@ -873,9 +873,9 @@ Note on T-R02/T-R03: if a bench supply is not available, these can be exercised 
 | T-A13 | Verify channel in CMD_ACK | **PASS** 2026-08-26 via `--inject` (after the 1.1.5 fix added the missing toast) |
 | T-A14 | ARM with MARGINAL continuity → succeeds (warning) | **PASS** 2026-08-26 (ch3, 269000 uV) |
 | T-A15 | ARM with SHORT continuity → succeeds (informational) | **N/A** — SHORT band merged into CONNECTED 2026-08-21 (bug #26); not runnable, see FSD v1.37 |
-| T-A16 | Disconnect the igniter on the armed channel while ARMED → disarm within ~1 s | **PASS** 2026-08-26 (920 ms detect, disarm +20 ms) |
-| T-A17 | Disconnect the igniter on the armed channel during the PRE_FIRE countdown → abort, no pulse | **PASS** 2026-08-26 (needed PRE_FIRE at 10 s; an igniter fired at 2 s) |
-| T-A18 | Disconnect a **non-armed** channel's igniter while another is ARMED → base stays ARMED | **PASS** 2026-08-26 (3 transitions, stayed ARMED) |
+| T-A16 | Disconnect the igniter on the armed channel while ARMED → disarm within ~1 s | **PASS** 2026-08-26 (920 ms detect, disarm +20 ms). **REGRESSION PASS 2026-08-28 (fw 1.1.33)** — pulling the halogen lead while ARMED: base disarmed **10 ms** after the band change; remote toast `CONTINUITY LOST - DISARMED` **110 ms** end-to-end with the `BEEP_CONTINUITY_LOST` pattern |
+| T-A17 | Disconnect the igniter on the armed channel during the PRE_FIRE countdown → abort, no pulse | **PASS** 2026-08-26 (needed PRE_FIRE at 10 s; an igniter fired at 2 s). **REGRESSION PASS 2026-08-28 (fw 1.1.33/1.1.34)** — abort + no pulse in both race orderings; first retest found the raw-NACK toast defect (fixed in fw 1.1.34, retest PASS). NACK-wins latch path verified by inspection (remote FSM host harness does not exist yet) |
+| T-A18 | Disconnect a **non-armed** channel's igniter while another is ARMED → base stays ARMED | **PASS** 2026-08-26 (3 transitions, stayed ARMED). **REGRESSION PASS 2026-08-28 (fw 1.1.35)** — 68 Ω resistor on ch2 (read MARGINAL, 267 mV), pulled ~1.5 s after arming ch1: ch2 MARG→OPEN, base stayed ARMED through the full `ARM TIMEOUT (10022 ms)`, remote no CONTINUITY LOST toast; at timeout the correct `BASE DISARMED` (RM-07 discrimination rightly silent for a non-armed channel) |
 | T-A19 | ARM while base is in terminal ERROR → NACK 0x0E, remote names the fault | **PASS** 2026-08-26 via `--inject` key `e` (`BASE ERROR: VBAT CRITICAL`) |
 | T-A20 | Every refusal reports audibly **and** on the display (§7.2.9a) | **PASS** 2026-08-26 (spot-checked: `BASE STATUS LOST`, `BASE DISARMED`, `BASE ERROR: <flag>`) |
 
@@ -3447,7 +3447,8 @@ behaviour rather than hardware — worth a low-priority look.
 ## Phase 5 — Hardening and Final Testing
 
 **FSD ref:** §4.3 Phase 5, §15 (Test Requirements)
-**Status:** NOT STARTED
+**Status:** IN PROGRESS (since 2026-08-27) — the Phase Overview table had this
+row at "NOT STARTED" long after work began; corrected 2026-08-28
 
 ### Phase 5 Development Tasks
 
@@ -4025,9 +4026,14 @@ CRITICAL)`, terminal and surviving the pack's return, while the remote showed
 
 **Still to do on target — all need fault-injection builds:**
 
-- **MAJ-01** — the existing base `e` key deliberately falsifies `base_state` to
-  IDLE, so it cannot present a truthful ERROR to a remote in FIRING. Needs a new
-  test-only key before this path can be exercised.
+- ~~**MAJ-01**~~ — **DONE 2026-08-28 (fw 1.1.34 injection, new base key `r`).**
+  Posts a real `EVT_ARM_SENSE_FAULT` from any state, so the base reports a
+  truthful ERROR instead of the `e` key's falsified IDLE. Auto-injected 13 ms
+  into a live pulse: base latched `-> ERROR (flags=0x04: RELAY FAULT)` mid-FIRING
+  and reported it; the remote left FIRING **16 ms** later via the 1.1.30
+  blacklist — `[TOAST] BASE ERROR: RELAY FAULT`, band → RELAY WELDED. Exactly
+  the scenario MAJ-01 was written for: no "IGNITION ACTIVE" assertion over a
+  dead pulse.
 - ~~**MAJ-02 false-completion**~~ — **effectively closed by MAJ-03.** With the
   status frame suppressed, the NACK ends the sequence within one repeat interval,
   so the remote never reaches the elapsed-time backstop that produced the false
@@ -4047,8 +4053,18 @@ interpret "not confirmed", which reads too easily as "nothing happened". The
 evidence gate itself is untouched, and deferring classification to let the
 status land was rejected as timing complexity on a safety path. Recorded in
 `Test_Report_Phase5_Review_Fixes.md` §4 finding 4 / §5 and FSD §8.2.6.
-- **CRIT-01 critical-error half** — remote `b` / `d` from ARMED must sound
-  `ALARM_CRITICAL`.
+- ~~**CRIT-01 critical-error half**~~ — **DONE 2026-08-28, both keys, both PASS
+  (audible).** `b` (battery-critical) injected automatically at ARMED entry:
+  continuous urgent alarm from the ARMED→ERROR transition — completely silent in
+  1.1.29, which is what CRIT-01 was about. `d` (display fault) from ARMED: same
+  alarm, and the base disarmed immediately (`CMD_DISARM` ACKed **1 ms** after the
+  remote entered ERROR, base `DISARMED -> IDLE` 13 ms after that).
+  **The `b` run found a new defect:** the battery-critical path from ARMED did
+  *not* disarm the base — the arm relay ran its full 10 s ARM TIMEOUT while the
+  remote sat in terminal ERROR unable to command it safe. The display-fault
+  handler sends `CMD_DISARM` for exactly this reason; the battery path never had
+  it. **Fixed in fw 1.1.35** and re-verified: armed → safe in **26 ms** (was
+  10 s), siren stopping immediately, operator-confirmed.
 - ~~**MAJ-03 attribution**~~ — **DONE 2026-08-28.** Isolated with the base's `s`
   injection key: the abort's triggered status frame was suppressed, leaving the
   NACK as the only signal. Ended the sequence in **160 ms from PRE_FIRE**
@@ -4068,6 +4084,20 @@ reset. It cost one test capture and produced one incorrect "this did not happen"
 conclusion that had to be retracted. Fixed by reopening a port after 20 s
 without data — worth carrying into any future bench session.
 
+**Tooling (2026-08-28):** that fix is now a tool — `tools/serial_log.py`, a
+timestamped dual-console logger (wall-clock stamps so base and remote captures
+correlate offline; auto-reopen on USB re-enumeration). Its `--send-on
+PATTERN:BYTES` rule auto-injects a fault key the instant a log pattern appears,
+which is how this session hit the `r` key 13 ms into a pulse and `b` at ARMED
+entry — windows too tight to hand-time. **Two incident notes for future bench
+sessions:** (1) a stale logger holding a port breaks esptool *silently* — the
+flash command can exit 0 through a pipe while pySerial threw "multiple access";
+always redirect flash output to a file and echo `$?` yourself, and stop all
+loggers before flashing. (2) immediately after a flash-reset boot the two units
+once came up unlinked and stayed wedged (base BOOT, remote LINKING, zero link
+traffic); a clean `esptool --after hard_reset chip_id` on both cleared it.
+ Suspect the wedge whenever a post-flash boot shows no LINK traffic at all.
+
 ### Phase 5 FSD Safety Tests (§15.4)
 
 | ID | Test | Status |
@@ -4080,7 +4110,7 @@ without data — worth carrying into any future bench session.
 | T-S06 | GPIO init order verification (oscilloscope on boot) | **PARTIAL PASS** 2026-08-27 — no logic analyser available; run instead with the 12 V halogen on ch 1 across ~10 consecutive base power cycles. **No flicker on any cycle**, arm and fire relays solid throughout. This catches a relay actually pulling in (a sustained wrong gate level), which is the failure that matters; it cannot catch a microsecond gate transient, which is what the written criterion measures — though a relay armature has milliseconds of mechanical inertia and physically cannot respond to one. Recorded as PARTIAL, not a pass on the written criterion |
 | T-S07 | Watchdog: infinite loop → reboot within 5 s | **PASS** 2026-08-27 (base `x` injection) — FSM task hung at 2685038, `Task watchdog got triggered` at 2689288 = **4250 ms**, `rst:0xc (RTC_SW_CPU_RST)`. Post-boot `state=1 armed=0 firing=0 arm=0 err=0x00` and continuity reading on all channels, which requires the channel relays in NC — both criteria met |
 | T-S08 | Hold fire button + arm → no fire (fresh press required) | **PASS** 2026-08-27 — button held before and through ARMED entry; no fire. Release-then-press did start the countdown, confirming the `0xFF→0x00` transition is what authorises |
-| T-S09 | LINK_REQUEST while ARMED → **rejected with `LINK_REJECT_BUSY`** (was "silently ignored" before fw 1.1.17); session and armed state unaffected | **PASS** 2026-08-27 (remote `l` injection, fired automatically 70 ms after the base logged ARMED) — `LINK_REQUEST from remote fw 1.1.27` → `rejected by app-state guard (busy)` → `LINK_REJECT sent, reason=0x02`. **The criterion is proven by what did not happen:** no LINK_ACK, no new session token, no dropped arm — the base stayed ARMED and ran its full `ARM TIMEOUT (10009 ms)`. A handshake attempt cannot reset the session out from under a live pad. **FSD §15.4 row still says "silently ignores" and needs updating** |
+| T-S09 | LINK_REQUEST while ARMED → **rejected with `LINK_REJECT_BUSY`** (was "silently ignored" before fw 1.1.17); session and armed state unaffected | **PASS** 2026-08-27 (remote `l` injection, fired automatically 70 ms after the base logged ARMED) — `LINK_REQUEST from remote fw 1.1.27` → `rejected by app-state guard (busy)` → `LINK_REJECT sent, reason=0x02`. **The criterion is proven by what did not happen:** no LINK_ACK, no new session token, no dropped arm — the base stayed ARMED and ran its full `ARM TIMEOUT (10009 ms)`. A handshake attempt cannot reset the session out from under a live pad. ~~FSD §15.4 row still says "silently ignores" and needs updating~~ — **FSD corrected 2026-08-28 (v1.48)**: §6.4.1, §7.2.6 and the App D exception table now all state the `LINK_REJECT_BUSY` behaviour |
 | T-S10 | Display SPI failure at boot → ERROR | TODO — **not runnable on this hardware**: the display is soldered, and unsoldering a working panel to run a test is a poor trade. An injection could only substitute for half of it (the boot-halt *response*), never for whether a real MOSI break is *detected*. **Investigating that half found two defects instead**, both fixed in fw 1.1.28 — see below. The response half is separately evidenced by the remote harness `d` key (T-S07/REMOTE FAULT work) |
 | T-S11 | 5 consecutive send failures → immediate link loss | PASS | Triggered on-target during RF shielding test (RSSI -98 dBm) |
 | T-S12 | Fire pulse on link loss (COMPLETE_PULSE=true) | TODO |
@@ -4115,11 +4145,14 @@ Both units must run the same MAJOR.MINOR.PATCH or they refuse to link, so every
 bump means **flash base and remote together**. Full rationale for each entry is
 in `components/rlc_common/include/rlc_version.h`; this table exists because
 entries 1.1.3–1.1.7 were previously recorded only there and nowhere in this
-document. Brought up to date through 1.1.30 on 2026-08-28 (the table had been
+document. Brought up to date through 1.1.35 on 2026-08-28 (the table had been
 left at 1.1.9 — review finding INF-12).
 
 | Version | Date | Unit(s) | Change |
 |---|---|---|---|
+| 1.1.35 | 2026-08-28 | remote | Battery-critical from ARMED now sends `CMD_DISARM` before entering ERROR, mirroring the display-fault handler. Found live during the CRIT-01 `b` retest: the base arm relay ran its full 10 s ARM TIMEOUT while the remote sat in terminal ERROR with no way to command the pad safe. Re-verified on target: armed → safe in **26 ms** (was 10 s). PRE_FIRE/FIRING were never exposed — their `CEASE_FIRE` makes the base disarm. |
+| 1.1.34 | 2026-08-28 | remote | A base-aborted countdown names its cause. Found live during the bug #29 T-A17 retest: the NACK answering a fire repeat beat the cause-carrying STATUS_UPDATE by 7 ms and the remote toasted raw `[NACK] WRONG STATE`. The NACK path now says `BASE ENDED SEQUENCE` and latches the channel; the first status in IDLE settles it one-shot — channel disarmed + band OPEN → `CONTINUITY LOST - DISARMED` with `BEEP_CONTINUITY_LOST`. PRE_FIRE status-exit gains the same RM-07 discrimination. |
+| 1.1.33 | 2026-08-28 | base | `gptimer_stop: timer is not running` false ERROR on the first shot of a power cycle silenced — the BF-01 defensive stop now only calls `gptimer_stop()` when a mirror of the driver's RUN state says it is running. The stop itself is unchanged when the timer IS running, so BF-01's protection is not weakened. |
 | 1.1.32 | 2026-08-28 | remote | Finding 6: the ARM ACK-timeout branch now sends `CMD_DISARM` like every sibling failure path. A timeout is what a lost ACK looks like, so it was the branch most likely to have left the base armed while the remote sat in IDLE showing READY TO ARM — up to 2 s of live pad before the §8.2.3 reconciliation caught it. |
 | 1.1.31 | 2026-08-28 | remote | Unconfirmed-outcome toast reworded to `CH n OUTCOME UNKNOWN - TREAT AS LIVE`. On-target testing showed the MAJ-02 evidence gate lands on the unknown case for any fire-button release within ~200 ms of ignition (the FIRING status has not arrived yet), where "NOT CONFIRMED" reads as "nothing happened". Wording only; gate untouched. |
 | 1.1.30 | 2026-08-28 | both | Phase 5 review fix round (`Code_Review_Phase5_20260828_0641.md`, RLC-REVIEW-ALL-009). **CRIT-01** the buzzer background nudge no longer destroys a just-queued alarm — the link-lost and critical alarms were silent whenever the transition started in ARMED/PRE_FIRE/FIRING; **MAJ-01** remote FIRING syncs on any base state off the firing path (a base in terminal ERROR left it showing IGNITION ACTIVE); **MAJ-02** FIRE COMPLETE / cut-short need positive evidence the base reached FIRING; **MAJ-03** NACKs for repeated CMD_FIRE are heeded; **MAJ-04/05** splash and FIRE COMPLETE never cover a live or alarmed state; **MAJ-06** three refusal paths gained their missing beep; MIN-01/03/05/07/08/09/10/11 and INF-05. |

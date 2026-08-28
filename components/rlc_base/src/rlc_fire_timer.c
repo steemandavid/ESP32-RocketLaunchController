@@ -19,6 +19,14 @@ static const char *TAG = "rlc_fire";
 static gptimer_handle_t s_timer = NULL;
 static TaskHandle_t     s_target_task = NULL;
 
+/* Mirrors the driver's RUN state. The gptimer driver logs "timer is not
+ * running" at ERROR from inside gptimer_stop() when the timer was never
+ * started, so the defensive first-shot stop below would print a false fault
+ * on every first pulse of a power cycle. Skipping the call when the flag is
+ * clear silences that without weakening the stop itself: the flag is set by
+ * the only gptimer_start() in the unit and cleared on every stop path. */
+static bool s_running = false;
+
 /* INF-02: FSD §7.4.2 describes the channel being carried as the timer
  * callback's context and asserted against the firing channel on completion.
  * This is a channel-less notification instead: the FSM owns s_firing_channel
@@ -70,11 +78,16 @@ esp_err_t fire_timer_start(uint32_t duration_ms, uint8_t channel, TaskHandle_t t
      * gptimer_set_raw_count() on a counting timer is then unsynchronised).
      * Either way the second launch of a power cycle is broken, so force the
      * timer back to the ENABLE state before every start. Unconditional, so it
-     * does not depend on which FIRING exit path ran last. */
-    err = gptimer_stop(s_timer);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "gptimer_stop failed: %s", esp_err_to_name(err));
-        return err;
+     * does not depend on which FIRING exit path ran last — except that the
+     * call itself is skipped when the timer is not running (s_running), which
+     * would otherwise log a false ERROR on the first shot of a power cycle. */
+    if (s_running) {
+        err = gptimer_stop(s_timer);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGE(TAG, "gptimer_stop failed: %s", esp_err_to_name(err));
+            return err;
+        }
+        s_running = false;
     }
 
     /* Clear any stale notification */
@@ -106,6 +119,7 @@ esp_err_t fire_timer_start(uint32_t duration_ms, uint8_t channel, TaskHandle_t t
         ESP_LOGE(TAG, "gptimer_start failed: %s", esp_err_to_name(err));
         return err;
     }
+    s_running = true;
 
     ESP_LOGI(TAG, "Fire timer started: ch %u, %lu ms", channel, (unsigned long)duration_ms);
     return ESP_OK;
@@ -114,10 +128,14 @@ esp_err_t fire_timer_start(uint32_t duration_ms, uint8_t channel, TaskHandle_t t
 void fire_timer_stop(void)
 {
     /* ESP_ERR_INVALID_STATE just means the timer was not running — expected on
-     * the paths that stop a timer which already expired (BF-01). */
-    esp_err_t err = gptimer_stop(s_timer);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "gptimer_stop failed: %s", esp_err_to_name(err));
+     * the paths that stop a timer which already expired (BF-01). Skipped
+     * entirely when s_running says it never started (first-shot false ERROR). */
+    if (s_running) {
+        esp_err_t err = gptimer_stop(s_timer);
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGE(TAG, "gptimer_stop failed: %s", esp_err_to_name(err));
+        }
+        s_running = false;
     }
 
     /* m2: Clear any pending FIRE_NOTIFY_BIT that may have been posted by the ISR

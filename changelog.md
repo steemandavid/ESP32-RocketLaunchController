@@ -1,5 +1,40 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-28 (second session) — MAJ-01/CRIT-01 closed on target; two live defects found and fixed; fw 1.1.32 → 1.1.35
+
+Full detail in `Test_Report_Phase5_OnTarget_20260828.md`. Host suite 467
+checks / 0 failures at every build; both units left on stock 1.1.35, linked,
+injection-free.
+
+- **Cleanups:** FSD "silently ignores" → `LINK_REJECT_BUSY` in three places
+  (v1.48); the first-shot-of-a-power-cycle `gptimer_stop` false ERROR
+  silenced (fw 1.1.33, verified on target); Development_Progress Phase
+  Overview table brought up to date.
+- **MAJ-01 verified** with new base injection key `r` (a real
+  `EVT_ARM_SENSE_FAULT`, auto-injected 13 ms into a live pulse): base latched
+  ERROR mid-FIRING with truthful flags; the remote left FIRING 16 ms later
+  showing `BASE ERROR: RELAY FAULT`, band RELAY WELDED. No IGNITION ACTIVE
+  over a dead pulse.
+- **CRIT-01 verified, both keys audible from ARMED** (`b` battery-critical,
+  `d` display fault) — and the `b` run found a real gap: the battery path
+  from ARMED entered ERROR **without disarming the base**, which ran its
+  full 10 s ARM TIMEOUT while the remote sat terminal. **Fixed in fw
+  1.1.35**; re-verified armed → safe in **26 ms**.
+- **Bug #29 regression:** T-A16 PASS (base disarm 10 ms, toast 110 ms
+  end-to-end); T-A17 PASS after the retest itself found the raw-NACK toast
+  defect — a repeat NACK beating the cause-carrying status by 7 ms produced
+  `[NACK] WRONG STATE` — **fixed in fw 1.1.34**, §8.4 now forbids showing
+  the raw reason for a repeat NACK (FSD v1.49); T-A18 **PASS** later the
+  same day (68 Ω on ch2 pulled while ch1 armed — base ran its full 10 s ARM
+  TIMEOUT, remote silent on the non-armed channel). **Bug #29 regression
+  suite complete; cleared for live fire.**
+- **Tooling:** `tools/serial_log.py` — timestamped dual-console logger with
+  auto-reopen on USB re-enumeration and `--send-on` auto-injection. Two
+  incident notes recorded: a stale port holder makes flashing fail
+  *silently* through a pipe (always redirect to a file and check `$?`
+  yourself; stop loggers before flashing), and a post-flash boot can come up
+  link-wedged — no LINK traffic at all means hard-reset both units.
+
 ## 2026-08-28 — On-target test campaign for the review fixes; fw 1.1.30 → 1.1.32
 
 Guided bench testing of everything fixed in 1.1.30, written up in

@@ -87,7 +87,8 @@ static void print_state(void)
     ESP_LOGW(TAG, "[FI] forced link degraded      : %s",
              s_degraded ? "ON" : "off");
     ESP_LOGW(TAG, "[FI] keys: s = suppression, a = wrong-channel, "
-                  "e = force ERROR w/ fresh cache, w = weld, g = degraded link, "
+                  "e = force ERROR w/ fresh cache, r = real weld ERROR (MAJ-01), "
+                  "w = weld flag in reports only, g = degraded link, "
                   "x = watchdog hang, c = corrupt next cmd, ? = this");
 }
 
@@ -148,6 +149,24 @@ static void fi_console_task(void *arg)
             ESP_LOGE(TAG, "INJECT: forced ERR_COMM_DEGRADED %s (T-S15/T-S16)",
                      s_degraded ? "ON" : "off");
             print_state();
+            break;
+        case 'r':
+            /* MAJ-01: a REAL, truthfully-reported ERROR while FIRING. Posts
+             * the same EVT_ARM_SENSE_FAULT the arm-sense task posts on a
+             * confirmed weld — process_event() handles it from ANY state, so
+             * from FIRING it stops the pulse, drops the relays and latches
+             * ERR_RELAY_FAULT, and every subsequent STATUS_UPDATE reports
+             * STATE_ERROR honestly. The 'e' key cannot test MAJ-01: it
+             * falsifies base_state to IDLE, which is precisely the lie the
+             * review's defective whitelist never had to face. */
+            if (base_fsm_get_queue()) {
+                rlc_fsm_event_t ev = {0};
+                ev.type = EVT_ARM_SENSE_FAULT;
+                (void)xQueueSend(base_fsm_get_queue(), &ev, pdMS_TO_TICKS(10));
+                ESP_LOGE(TAG, "INJECT: EVT_ARM_SENSE_FAULT posted — weld fault "
+                              "from any state; STATUS_UPDATE will report ERROR "
+                              "truthfully (MAJ-01)");
+            }
             break;
         case 'x':
             ESP_LOGE(TAG, "INJECT: hanging the FSM task (T-S07) — expect a "
