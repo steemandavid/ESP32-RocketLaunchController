@@ -62,6 +62,63 @@ static void play_steps(const buzzer_step_t *steps, int count, bool repeat)
     buzzer_drive(false);
 }
 
+/* CRIT-01: the background tone is polled, not nudged. See
+ * buzzer_set_background() for why a nudge could not stay. A slice short enough
+ * that a state change is audible immediately, long enough to cost nothing. */
+#define BG_POLL_SLICE_MS  20
+
+static bool bg_steps(rlc_buzzer_pattern_t bg, const buzzer_step_t **steps,
+                     int *count)
+{
+    static const buzzer_step_t armed[]  = {{80, true}, {1120, false}};
+    static const buzzer_step_t firing[] = {{90, true}, {160,  false}};
+
+    switch (bg) {
+        case BUZZER_ALARM_ARMED:  *steps = armed;  *count = 2; return true;
+        case BUZZER_ALARM_FIRING: *steps = firing; *count = 2; return true;
+        default: return false;
+    }
+}
+
+/**
+ * Play the background state tone until it changes or a pattern is queued.
+ *
+ * Unlike play_steps() this also watches s_background between slices, which is
+ * what lets buzzer_set_background() take effect without putting anything in
+ * the mailbox (CRIT-01).
+ */
+static void play_background(rlc_buzzer_pattern_t bg)
+{
+    const buzzer_step_t *steps;
+    int count;
+    if (!bg_steps(bg, &steps, &count)) return;
+
+    while (s_background == bg) {
+        for (int i = 0; i < count; i++) {
+            buzzer_drive(steps[i].on);
+            int remaining = steps[i].duration_ms;
+            while (remaining > 0) {
+                int slice = (remaining > BG_POLL_SLICE_MS) ? BG_POLL_SLICE_MS
+                                                           : remaining;
+                rlc_buzzer_pattern_t new_pat;
+                if (xQueueReceive(s_pattern_queue, &new_pat,
+                                  pdMS_TO_TICKS(slice)) == pdTRUE) {
+                    buzzer_drive(false);
+                    (void)xQueueSendToFront(s_pattern_queue, &new_pat, 0);
+                    return;
+                }
+                if (s_background != bg) {
+                    buzzer_drive(false);
+                    return;
+                }
+                remaining -= slice;
+            }
+        }
+        esp_task_wdt_reset();
+    }
+    buzzer_drive(false);
+}
+
 static void buzzer_task(void *arg)
 {
     (void)arg;
@@ -71,8 +128,11 @@ static void buzzer_task(void *arg)
     rlc_buzzer_pattern_t pattern;
 
     while (1) {
+        /* CRIT-01: 100 ms, not 1 s. The idle wait is now the only thing
+         * standing between buzzer_set_background() and the tone starting, so
+         * it has to be short enough not to be heard as a delay. */
         bool got = (xQueueReceive(s_pattern_queue, &pattern,
-                                  pdMS_TO_TICKS(1000)) == pdTRUE);
+                                  pdMS_TO_TICKS(100)) == pdTRUE);
         if (!got) {
             /* Idle. Fall through to the background below. */
             pattern = BUZZER_OFF;
@@ -157,20 +217,7 @@ static void buzzer_task(void *arg)
          * it back to the front, so this never swallows an incoming beep. */
         rlc_buzzer_pattern_t bg = s_background;
         if (bg != BUZZER_OFF && uxQueueMessagesWaiting(s_pattern_queue) == 0) {
-            switch (bg) {
-                case BUZZER_ALARM_ARMED: {
-                    buzzer_step_t steps[] = {{80, true}, {1120, false}};
-                    play_steps(steps, 2, true);
-                    break;
-                }
-                case BUZZER_ALARM_FIRING: {
-                    buzzer_step_t steps[] = {{90, true}, {160, false}};
-                    play_steps(steps, 2, true);
-                    break;
-                }
-                default:
-                    break;
-            }
+            play_background(bg);
         }
         esp_task_wdt_reset();
     }
@@ -227,10 +274,17 @@ void buzzer_set_background(rlc_buzzer_pattern_t pattern)
 {
     if (pattern == s_background) return;   /* idempotent — do not restart */
     s_background = pattern;
-    /* Nudge the task so the change takes effect now rather than after its 1 s
-     * idle timeout. BUZZER_OFF silences whatever is sounding; the loop then
-     * picks up the new background immediately. */
-    buzzer_play(BUZZER_OFF);
+    /* CRIT-01: NO nudge. This used to end with buzzer_play(BUZZER_OFF) to make
+     * the change audible before the task's next idle timeout — and because
+     * buzzer_play() is an atomic xQueueOverwrite on a one-deep mailbox (RM-05),
+     * that OFF destroyed any pattern queued microseconds earlier in the same
+     * FSM tick. check_timers() sets the background from the state on every
+     * tick, so every handler that both beeped and left ARMED/PRE_FIRE/FIRING
+     * was silenced: ALARM_LINK_LOST on link loss while armed, ALARM_CRITICAL
+     * on battery/display/multi-arm faults, and every FIRE-guard refusal triple.
+     * The task now polls s_background between pattern slices instead
+     * (play_background(), plus a 100 ms idle wait), so a background change
+     * never touches the mailbox and can never swallow an alarm. */
 }
 
 void buzzer_stop(void)

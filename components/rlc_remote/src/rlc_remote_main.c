@@ -61,29 +61,44 @@ static void encoder_task_fn(void *arg)
 
 /* ── Input Callbacks → FSM Events ─────────────────────────────── */
 
+/* MIN-06: post from a task with a short block, not a zero timeout.
+ *
+ * These callbacks run on the input poll tasks, never in an ISR, so they can
+ * afford to wait — and the events they carry are the operator's own commands.
+ * A dropped EVT_FIRE_BUTTON_RELEASED used to end the sequence via the base's
+ * dead-man instead, which is safe but then reports "BASE ENDED SEQUENCE" for
+ * something the operator did. The base migrated off zero-timeout posting for
+ * BF-05; this matches it. A drop that still happens is logged rather than
+ * discarded silently. */
+static void post_input_event(const rlc_fsm_event_t *evt, const char *what)
+{
+    QueueHandle_t q = remote_fsm_get_queue();
+    if (!q) return;
+    if (xQueueSend(q, evt, pdMS_TO_TICKS(10)) != pdTRUE) {
+        ESP_LOGE(TAG, "FSM queue full — %s event dropped!", what);
+    }
+}
+
 static void on_fire_press(void)
 {
-    if (!remote_fsm_get_queue()) return;
     rlc_fsm_event_t evt = {0};
     evt.type = EVT_FIRE_BUTTON_PRESSED;
-    (void)xQueueSend(remote_fsm_get_queue(), &evt, 0);
+    post_input_event(&evt, "fire press");
 }
 
 static void on_fire_release(void)
 {
-    if (!remote_fsm_get_queue()) return;
     rlc_fsm_event_t evt = {0};
     evt.type = EVT_FIRE_BUTTON_RELEASED;
-    (void)xQueueSend(remote_fsm_get_queue(), &evt, 0);
+    post_input_event(&evt, "fire release");
 }
 
 static void on_arm_switch_change(bool armed)
 {
-    if (!remote_fsm_get_queue()) return;
     rlc_fsm_event_t evt = {0};
     evt.type = EVT_ARM_SWITCH_CHANGED;
     evt.data.arm_state.armed = armed;
-    (void)xQueueSend(remote_fsm_get_queue(), &evt, 0);
+    post_input_event(&evt, "arm switch");
 }
 
 static void on_encoder_rotate(uint8_t channel)
@@ -99,18 +114,16 @@ static void on_encoder_rotate(uint8_t channel)
 
 static void on_encoder_press(void)
 {
-    if (!remote_fsm_get_queue()) return;
     rlc_fsm_event_t evt = {0};
     evt.type = EVT_ENCODER_SHORT_PRESS;
-    (void)xQueueSend(remote_fsm_get_queue(), &evt, 0);
+    post_input_event(&evt, "encoder press");
 }
 
 static void on_encoder_long_press(void)
 {
-    if (!remote_fsm_get_queue()) return;
     rlc_fsm_event_t evt = {0};
     evt.type = EVT_ENCODER_LONG_PRESS;
-    (void)xQueueSend(remote_fsm_get_queue(), &evt, 0);
+    post_input_event(&evt, "encoder long press");
 }
 
 /* ── Application Entry Point ──────────────────────────────────── */
@@ -166,12 +179,21 @@ void remote_app_main(void)
         vTaskDelay(portMAX_DELAY);
     }
 
+    /* MIN-11: the buzzer comes up before the display check, not after it.
+     * A total display failure at boot is the one fault with no screen to
+     * report itself on, and it used to halt on the LED alone because
+     * buzzer_init() ran later — the only fault where the audible channel was
+     * both the last one available and not yet switched on. GPIO only, so it
+     * has no ordering constraints of its own. */
+    buzzer_init();
+
     /* §9.13 step 6: display init + health check (ID read-back).
      * FSD §15.4 T-S10: a display failure at boot must halt in ERROR. */
     if (display_init() != 0 || !display_is_healthy()) {
         ESP_LOGE(TAG, "display init/health check FAILED (id=0x%08lX) — halting",
                  (unsigned long)display_get_id());
         rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
+        buzzer_play(BUZZER_ALARM_CRITICAL);
         vTaskDelay(portMAX_DELAY);
     }
     display_start_task();
@@ -186,7 +208,6 @@ void remote_app_main(void)
      * silently reintroduce it. Do not move rlc_battery_init() above this line.
      */
     encoder_init();
-    buzzer_init();
 
     /* §9.13 Step 4: Initialise ADC calibration + battery (see CI-06 above) */
     if (rlc_battery_init(PIN_VBAT_ADC, REMOTE_VBAT_DIVIDER_RATIO) != 0) {

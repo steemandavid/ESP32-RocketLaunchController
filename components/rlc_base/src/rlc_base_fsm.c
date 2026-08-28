@@ -55,6 +55,20 @@ static uint8_t  s_arm_verify_channel = 0;
 static int64_t  s_arm_verify_start_ms = 0;
 static uint32_t s_arm_verify_seq = 0;
 
+/* MIN-02 / FSD §7.2.2 step 2: consecutive arm-verify timeouts, cleared by any
+ * successful verify. The first timeout is a refusal the operator can retry;
+ * `ARM_VERIFY_FAULT_STRIKES` of them in a row is a relay, fuse or wiring
+ * fault and latches ERR_RELAY_FAULT + ERROR per §13.1 case (a).
+ *
+ * Why not latch on the first: the verify window is 200 ms and arm sense is
+ * debounced over 160 ms (INF-01), leaving ~40 ms for the relay to operate, so
+ * a slow or ageing relay can miss the window without being broken. Latching
+ * terminal ERROR there costs a power cycle at the pad for a fault that may not
+ * exist. Why latch at all: the old behaviour left no trace — a genuinely dead
+ * arm relay looked exactly like a mistimed retry, in error_flags, on the
+ * remote, and in the log. */
+static uint8_t  s_arm_verify_timeouts = 0;
+
 /* C1: Link lost pending during FIRING (COMPLETE_PULSE_ON_LINK_LOSS) */
 static bool s_link_lost_pending = false;
 
@@ -410,6 +424,19 @@ static void process_event(const rlc_fsm_event_t *evt)
     /* ─── IDLE ─────────────────────────────────────────────── */
     case STATE_IDLE:
         if (evt->type == EVT_CMD_ARM) {
+            /* MIN-01 / FSD §7.2.2: an ARM already being verified wins. A
+             * second CMD_ARM inside the 200 ms window used to overwrite the
+             * pending verify wholesale — the first ARM was then never
+             * answered at all (its seq had been replaced), and the relay it
+             * energised was verified against the second request. First wins,
+             * subsequent ones are refused. */
+            if (s_arm_verify_pending) {
+                ESP_LOGW(TAG, "CMD_ARM ch %u while ch %u verify pending — NACK",
+                         evt->data.cmd.channel, s_arm_verify_channel);
+                send_nack(MSG_CMD_ARM, evt->data.cmd.seq_number, NACK_WRONG_STATE);
+                return;
+            }
+
             uint8_t nack_reason = guard_arm(evt);
             if (nack_reason != 0) {
                 send_nack(MSG_CMD_ARM, evt->data.cmd.seq_number, nack_reason);
@@ -427,6 +454,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 /* Sense already HIGH — proceed to ARMED immediately */
                 s_armed_channel = ch;
                 s_arm_time_ms = now_ms();
+                s_arm_verify_timeouts = 0;   /* MIN-02: strikes are consecutive */
                 siren_start_continuous();
                 rlc_rgb_led_set_pattern(LED_PATTERN_ARMED);
                 send_ack(MSG_CMD_ARM, evt->data.cmd.seq_number, ch);
@@ -469,6 +497,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 s_arm_time_ms = now_ms();
                 s_arm_verify_channel = 0;
                 s_arm_verify_start_ms = 0;
+                s_arm_verify_timeouts = 0;   /* MIN-02: strikes are consecutive */
                 siren_start_continuous();
                 rlc_rgb_led_set_pattern(LED_PATTERN_ARMED);
                 send_ack(MSG_CMD_ARM, s_arm_verify_seq, ch);
@@ -732,6 +761,18 @@ static void process_event(const rlc_fsm_event_t *evt)
                 ESP_LOGW(TAG, "FIRING -> LINK_LOST (immediate abort, link lost)");
                 firing_exit(STATE_LINK_LOST);
             }
+        } else if (evt->type == EVT_LINK_RECOVERED) {
+            /* MIN-03: the link came back before the pulse ended. Unreachable
+             * with today's constants (link loss at 1.5 s > a 1.25 s FIRING
+             * state), but if FIRE_PULSE_DURATION_MS ever grows past ~1.5 s the
+             * pending flag would otherwise strand the FSM in LINK_LOST with a
+             * perfectly good link, silently dropping commands until the next
+             * full loss-and-recovery cycle. */
+            if (s_link_lost_pending) {
+                s_link_lost_pending = false;
+                ESP_LOGI(TAG, "link recovered during FIRING — staying on the "
+                              "firing path");
+            }
         }
         break;
 
@@ -853,9 +894,28 @@ static void check_timers(void)
     /* M1: Arm sense verification timeout */
     if (s_arm_verify_pending && s_arm_verify_start_ms > 0) {
         if ((t - s_arm_verify_start_ms) >= ARM_SENSE_VERIFY_TIMEOUT_MS) {
-            ESP_LOGW(TAG, "arm sense verify timeout (%d ms) — NACK ARM_SENSE_FAULT",
-                     ARM_SENSE_VERIFY_TIMEOUT_MS);
+            /* MIN-02: two strikes. The refusal below is what the operator sees
+             * the first time; the escalation is what stops them retrying into
+             * a fire path that cannot be confirmed. */
+            if (s_arm_verify_timeouts < UINT8_MAX) s_arm_verify_timeouts++;
+            ESP_LOGW(TAG, "arm sense verify timeout (%d ms) — NACK "
+                          "ARM_SENSE_FAULT (%u consecutive)",
+                     ARM_SENSE_VERIFY_TIMEOUT_MS, s_arm_verify_timeouts);
             abort_arm_verify(NACK_ARM_SENSE_FAULT);
+
+            if (s_arm_verify_timeouts >= ARM_VERIFY_FAULT_STRIKES) {
+                /* FSD §7.2.2 step 2 / §13.1 case (a): arm sense does not
+                 * confirm VBAT on the fire path when the relay is commanded
+                 * ON — wiring fault, blown fuse or a relay that no longer
+                 * closes. The NACK above already told the remote why this
+                 * attempt failed; ERROR is terminal, so the remedy is a power
+                 * cycle and an inspection, which is the right answer for a
+                 * fire path that has now failed to prove itself twice. */
+                ESP_LOGE(TAG, "arm verify failed %u times in a row — "
+                              "ERR_RELAY_FAULT, entering ERROR",
+                         s_arm_verify_timeouts);
+                do_enter_error(ERR_RELAY_FAULT);
+            }
         }
     }
 

@@ -49,5 +49,11 @@ void buzzer_stop(void);
  * Idempotent: setting the pattern already in force does nothing, so this can
  * be driven from a periodic tick without restarting the tone every call.
  * BUZZER_OFF clears it.
+ *
+ * CRIT-01: never preempts a queued or sounding one-shot/alarm — the player
+ * task polls for background changes rather than being nudged through the
+ * pattern mailbox. A repeating alarm (LINK_LOST/CRITICAL) therefore keeps
+ * sounding through a background change, which is exactly what an alarm must
+ * do; use buzzer_stop() to end one.
  */
 void buzzer_set_background(rlc_buzzer_pattern_t pattern);

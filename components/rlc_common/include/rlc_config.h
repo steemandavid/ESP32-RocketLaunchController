@@ -19,6 +19,14 @@
 #define RSSI_AVERAGE_WINDOW            3
 
 #define STATUS_UPDATE_INTERVAL_MS      2000
+/* INF-08: equal to PRE_FIRE_DELAY_MS by coincidence, not by design. A status
+ * outage starting exactly at the fire press therefore expires on the same
+ * remote tick the countdown does: check_timers() takes PRE_FIRE→FIRING first
+ * and the staleness abort immediately after, so the sequence ends with
+ * "BASE STATUS LOST" and a CEASE_FIRE within the same 50 ms pass. Fail-safe
+ * either way — and the base independently refuses to leave PRE_FIRE without a
+ * fresh dead-man — but the two constants are not tied together, so check this
+ * ordering again if either moves. */
 #define STATUS_STALE_TIMEOUT_MS        5000
 
 #define LINK_REQUEST_INTERVAL_MS       2000
@@ -71,8 +79,22 @@
  * go HIGH after energising the coil, before NACKing ARM_SENSE_FAULT. The
  * wait is non-blocking (M1) — safety events are still processed inside it.
  * m12: was a bare 200 in rlc_base_fsm.c while every sibling timeout lived
- * here. */
+ * here.
+ *
+ * INF-01: the margin here is thinner than it looks. Arm sense is debounced
+ * over 160 ms (8 samples at 20 ms, rlc_arm_sense.c), which leaves ~40 ms for
+ * the relay to actually operate. A slow or ageing relay therefore NACKs
+ * ARM_SENSE_FAULT rather than arming — the safe direction, and honest about
+ * a relay that has drifted, but do not shorten either number without
+ * re-measuring the other. */
 #define ARM_SENSE_VERIFY_TIMEOUT_MS    200
+
+/* MIN-02 / FSD §7.2.2 step 2: consecutive arm-verify timeouts (no successful
+ * verify in between) before the base latches ERR_RELAY_FAULT and enters
+ * terminal ERROR. 1 would make every slow-relay miss a power-cycle event; 2
+ * is enough that the operator's own retry distinguishes a timing miss from a
+ * relay that never closes. */
+#define ARM_VERIFY_FAULT_STRIKES       2
 
 #define SIREN_LINK_LOST_DURATION_MS    4000
 #define NACK_DISPLAY_DURATION_MS       3000

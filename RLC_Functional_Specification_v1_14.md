@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.44
-**Date:** 2026-08-27
+**Version:** 1.47
+**Date:** 2026-08-28
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -60,6 +60,7 @@
 | 1.44 | 2026-08-27 | **All findings of the full-codebase review (RLC-REVIEW-ALL-008) applied; firmware 1.1.8 → 1.1.9.** Spec changes accompanying the fixes: §7.2.4 guard 2 restated as a freshness test that must not be folded into guard 4's failure-rate test, and its action 2 now requires a stopped-first, return-checked fire-timer start that never aborts; §7.2.5 gains an explicit "stop the fire timer" step on the *successful* pulse-completion path — the omission that made a second launch per power cycle panic with the igniter energised (BF-01, CRITICAL); §5.5.6's runtime display health check corrected to run in every state (the old "during IDLE" wording contradicted its own ARMED/PRE_FIRE/FIRING requirement) and given two-consecutive-failure and SPI-return-code requirements; §5.4.6/§7.3.1 relay-settling delay specified and now actually implemented (`CONT_RELAY_DROPOUT_MS` had been dead since it was defined); §9.10 task tables audited against the built firmware (`espnow_rx` added, link manager renamed and re-levelled, encoder stack corrected) and `buzzer_task` moved back to 1/core 1 in firmware rather than relaxing the spec; §12.1 `BEEP_PING_FAIL` pinned to rising-edge semantics; §14.5 `CONT_TRACE_INTERVAL_MS` default 1000 → 0 for field builds; §7.3.1 step 2 SHORT-band remnant corrected to MARGINAL. |
 | 1.45 | 2026-08-27 | **§5.5.6 boot display health check corrected; firmware 1.1.28.** The section contradicted itself — "any non-zero read-back is considered valid" against "only a zero or *garbage* read-back or SPI failure is treated as a fault" — when all-ones is both garbage and non-zero. The firmware implemented the weaker clause (`s_panel_id != 0`), so a broken display MOSI leaving MISO undriven and floating to 0xFFFFFFFF would have booted as healthy with a dead panel, and every screen after that — including ARMED — would have been a lie. The boot read also discarded the SPI transaction status, which the same section already required and which the *periodic* check has honoured since 1.1.9. §5.5.6 now requires rejecting **both** undriven signatures (0x00000000 and 0xFFFFFFFF) and checking the SPI status; the clone-panel allowance (0x2A403300) is unchanged and verified still accepted on target. Found by working out what a fault-injection harness could substitute for T-S10, which is not runnable on this hardware (soldered display) — reading the code the test targets proved more productive than the test would have been. |
 | 1.46 | 2026-08-27 | **§5.3 dead-man debounce asymmetry; firmware 1.1.29. SAFETY DEFECT.** Edge-case testing (Phase 5 task 5) found that **rapidly mashing the fire button fired the channel**. The button used symmetric 8-bit debouncing at a 10 ms poll, so a release was only reported after 80 ms of continuous release; mash faster and the register never fills, no release is reported, the FSM sees a continuous hold, `CMD_FIRE` repeats keep flowing, and **both** dead-man layers stay satisfied — the remote's release detection and the base's `FIRE_AUTHORIZATION_TIMEOUT_MS` both sit downstream of that one decision. A worn or chattering contact produces the identical signal, and the operator would believe they were not holding the button while the system fired. §5.3 now requires dead-man inputs to debounce **asymmetrically** — 80 ms to press, 20 ms to release — because a missed release fires an igniter the operator has let go of while a spurious release only aborts. Retest logged: six mashing bursts, every one aborted (mostly at exactly the 20 ms threshold), zero pulses. |
+| 1.47 | 2026-08-28 | **Phase 5 code review (RLC-REVIEW-ALL-009) findings applied; firmware 1.1.29 → 1.1.30.** All of this round's defects were in the *operator-information* layer on the fire path — nothing energised a relay or extended a pulse, but the remote could be silent or wrong about a live pad. **CRIT-01 (§12.1):** `buzzer_set_background()`'s OFF-"nudge" atomically overwrote the one-deep pattern mailbox, so any alarm or beep queued in the same FSM tick as a transition out of ARMED/PRE_FIRE/FIRING was destroyed before it could sound — the link-lost and critical-error alarms were completely silent when they originated in an armed state, and every FIRE-guard refusal lost its audible half. The player task now polls the background instead of being nudged. **MAJ-01 (§8.2.6):** the remote's FIRING status handler is a blacklist, not a whitelist — a base that latched terminal ERROR mid-pulse no longer leaves the remote asserting "IGNITION ACTIVE" indefinitely; ERROR/LINK_LOST are named as base faults. **MAJ-02 (§8.2.6):** FIRE COMPLETE and "cut short" now require positive evidence that the base reached FIRING; local elapsed time alone could certify a never-energised channel after a single lost frame. **MAJ-03 (§8.4):** a NACK answering a repeated CMD_FIRE is acted on (~200 ms) instead of discarded. **MAJ-04/05 (§10.2.1, §10.2.4a):** neither the 10 s boot splash nor the 10 s FIRE COMPLETE hold may cover a live (ARMED/PRE_FIRE/FIRING) or alarmed (LINK_LOST) state. **MAJ-06/MIN-05/MIN-09/MIN-11 (§7.2.9a):** three refusal paths that showed a message with no beep now beep; the FIRE ACK channel mismatch and a key-off ARM abort are named instead of blamed on the link; the buzzer is initialised before the boot display check so a dead panel has an audible halt. **MIN-01 (§7.2.2):** a second CMD_ARM inside the 200 ms verify window is NACK'd — first ARM wins, as the section already required. **MIN-03, MIN-07, MIN-08, MIN-10 (§10.2.2):** `EVT_LINK_RECOVERED` handled in base FIRING; multi-flag error toasts clamp to the worst flag plus a count; no continuity glyph for an unknown igniter band; `LINK WEAK` in the top bar. **MIN-02 (§7.2.2, §13.1, §14.1):** the §7.2.2 self-contradiction over the arm-verify timeout is resolved by operator decision — refusal (NACK 0x0B, remain IDLE) on the first timeout, `ERR_RELAY_FAULT` + terminal ERROR on the second consecutive one, new `ARM_VERIFY_FAULT_STRIKES`; the weld half of the flag stays terminal on sight. **MIN-04 (§6.3.3):** new NACK `0x0F` BASE_BUSY for a validated command dropped by a full FSM queue — the last silent refusal on a safety path — with an explicit exception forbidding the remote from treating it as a base-side abort of a repeated CMD_FIRE. **MIN-12 (§8.2.3, §8.2.4):** guard-4's "last ping succeeded" wording corrected to the ping-failure *rate* test the firmware has always implemented, with the reasoning and the base-side ignition guards (§7.2.4) that make it sufficient recorded alongside it. Code unchanged. |
 
 ## Table of Contents
 
@@ -1474,8 +1475,26 @@ The remote SHALL verify that the `channel` in CMD_ACK matches the channel it req
 | `0x0C` | Remote battery below operate threshold | "REMOTE BATTERY LOW" |
 | `0x0D` | Link quality degraded (>30 % ping loss over the 10-slot window) | "COMM DEGRADED" |
 | `0x0E` | Base is in the terminal ERROR state (v1.39) | "BASE IN ERROR" |
+| `0x0F` | Validated command could not be handed to the base FSM — event queue full (v1.47) | "BASE BUSY - RETRY" |
 
 The remote shall display the human-readable text on screen for at least 3 seconds when a NACK is received.
+
+**`0x0F` — a dropped command is a refused command (v1.47, firmware 1.1.30,
+review MIN-04).** The link layer forwards validated commands to the FSM queue
+with a **zero timeout**, deliberately: `process_frame()` holds the link state
+mutex, and blocking there would stall the receive path for every other frame.
+Until now the drop was logged on the base and nothing went back on the wire, so
+a `CMD_CEASE_FIRE` lost to a queue burst was indistinguishable from RF loss —
+the last silent refusal on a safety-relevant path (§7.2.9a). The base now NACKs
+`0x0F` on the same locked path the replay (`0x08`) and integrity (`0x06`)
+refusals already use. It is deliberately distinct from `0x05 WRONG_STATE`: the
+command was legal and the base was willing, it just could not take that frame.
+
+**Exception — repeated `CMD_FIRE`.** The remote SHALL NOT treat `0x0F` as the
+base leaving the firing path (§8.4). A dropped repeat means one frame was
+refused, not that the sequence ended: the base is still counting its dead-man
+from the last repeat it *did* take, and the next is 200 ms away. Ending a live
+pulse on it would be a false abort mid-shot.
 
 **`0x0E` and the specific fault.** The NACK payload is a fixed 6 bytes and carries only a reason code, so the base cannot say *which* error it is in. It does not need to: `error_flags` arrives in every `STATUS_UPDATE`, so the remote already holds it. On `NACK_BASE_ERROR` the remote SHALL name the fault from its cached flags — e.g. **"BASE ERROR: VBAT CRITICAL"** — falling back to the bare "BASE IN ERROR" when no flags are cached. "BASE IN ERROR" alone sends an operator hunting; naming the flag points at the thing to inspect.
 
@@ -1687,7 +1706,7 @@ For the initial command:
   9. **Link quality is acceptable** — `ERR_COMM_DEGRADED` is NOT set (ping failure rate ≤ 30% in last 10 pings). Arming on a degraded link risks dead-man timeout false aborts during firing.
 - Actions on successful transition:
   1. Record armed channel number.
-  2. Energise arm relay (GPIO 47 HIGH). Verify arm sense GPIO 21 reads HIGH within `ARM_SENSE_VERIFY_TIMEOUT_MS` (200 ms — §14.1) (M1 arm relay verify — confirms contacts actually closed and VBAT on fire bus. If not HIGH, immediately disarm and set `ERR_RELAY_FAULT`).
+  2. Energise arm relay (GPIO 47 HIGH). Verify arm sense GPIO 21 reads HIGH within `ARM_SENSE_VERIFY_TIMEOUT_MS` (200 ms — §14.1) (M1 arm relay verify — confirms contacts actually closed and VBAT on fire bus. If not HIGH, immediately de-energise the relay and NACK `0x0B`; on `ARM_VERIFY_FAULT_STRIKES` consecutive timeouts, also set `ERR_RELAY_FAULT` and enter ERROR — see the escalation note below).
      The wait is **non-blocking**: the FSM remains in IDLE with a pending-verify flag, so safety events are still processed inside the window. A `CMD_DISARM`, `CMD_CEASE_FIRE`, `CMD_FIRE`, key-switch-OFF, battery-critical, weld-fault or link-loss arriving during the window SHALL cancel the pending ARM, de-energise the relay and NACK with the true reason — never complete the arm behind the operator (review findings 2.1 and 4.6).
   3. Start siren, continuous (see §7.4.1 — the 500 ms ARMED pulse was removed in v1.35).
   4. Start arm timeout timer (`ARM_TIMEOUT_MS`, default: 10000 ms). If no CMD_FIRE is received before this timer expires, auto-disarm and return to IDLE.
@@ -1696,6 +1715,31 @@ For the initial command:
   7. RGB LED → red slow blink.
 - **Note:** The channel SPDT relay remains de-energised (NC position) in ARMED state. The relay is only energised (switched to NO/fire position) in the FIRING state (§7.4.2). No current path to the igniter exists until fire command execution, because the relay NO contact is disconnected from COM. Continuity sensing remains active on all channels (no MOSFET switch to disable).
 - If any guard fails: send `CMD_NACK` with appropriate reason code (including 0x01 for base key switch OFF, 0x0B for arm sense fault). Remain in IDLE.
+
+**Arm-verify timeout — refusal first, fault on the second strike (v1.47,
+firmware 1.1.30, review MIN-02).** This section used to say two different
+things: step 2 required "disarm and set `ERR_RELAY_FAULT`" (which §13.1 classes
+Critical → terminal ERROR), while the guard-failure line above required a plain
+NACK and "Remain in IDLE". The firmware implemented the second. Resolved
+deliberately, in favour of neither:
+
+1. **First timeout:** de-energise the arm relay, `CMD_NACK` `0x0B`
+   (`ARM_SENSE_FAULT`), remain in IDLE. The operator can retry. This is already
+   fail-safe — nothing stays energised — and the verify window is genuinely
+   tight: 200 ms total against 160 ms of arm-sense debounce (§5.3) leaves ~40 ms
+   for the relay to operate, so a slow or ageing relay can miss it without being
+   broken. Latching a power-cycle-only fault on that is too brittle for a pad.
+2. **`ARM_VERIFY_FAULT_STRIKES` (2) consecutive timeouts**, with no successful
+   verify in between: set `ERR_RELAY_FAULT` and enter terminal ERROR per §13.1
+   case (a). Two failures in a row is a wiring fault, a blown fuse or a relay
+   that no longer closes — the fire path cannot be confirmed, and the base
+   SHALL stop offering to arm it.
+
+The strike counter is cleared by any successful arm verify (both the
+sense-already-HIGH path and the deferred one). The **weld** half of
+`ERR_RELAY_FAULT` (§13.1 case (b), arm sense HIGH with the relay de-energised)
+is unchanged: still terminal on the first detection, because that fault means
+current can reach the fire bus with nothing commanding it.
 - Exceptions:
   - CMD_ARM for wrong channel (e.g., 0 or 9+) → NACK reason 0x03.
   - CMD_ARM while another channel armed → NACK reason 0x0A.
@@ -2003,7 +2047,29 @@ The fire pulse shall be driven by a hardware timer interrupt, NOT a software del
   1. Local arm switch is ARMED.
   2. **Remote battery voltage is above `REMOTE_VBAT_MIN_ARM_MV`.** If below, display "REMOTE BATTERY LOW — CANNOT ARM". Do not send command.
   3. **Most recent STATUS_UPDATE was received within 2× STATUS_UPDATE_INTERVAL_MS (default: 4000 ms).** If stale, display "NO BASE STATUS DATA". Do not send command.
-  4. Link is healthy (last ping succeeded).
+  4. Link is healthy — **ping failure rate ≤ 30 % over the last `HEARTBEAT_WINDOW_SIZE` (10) pings** (`rlc_link_is_healthy()`). If degraded, display "LINK DEGRADED". Do not send command.
+
+**Guard 4 wording corrected v1.47 (review MIN-12).** This read "*last ping
+succeeded*" from v1.0 while the implementation has always measured a rate, so a
+ping that failed 200 ms ago still passes arming. The rate test is kept
+deliberately, and the spec now says what the firmware does:
+
+- A single dropped ping is ordinary RF at a 500 ms heartbeat. Refusing to arm on
+  it would refuse constantly in marginal conditions and train the operator to
+  retry through warnings — the opposite of what a guard is for.
+- The **fire path** does not rely on this test. The base independently
+  re-validates at PRE_FIRE→FIRING against two tighter conditions it owns: a
+  `CMD_FIRE` received within `FIRE_AUTHORIZATION_TIMEOUT_MS` (500 ms, the
+  dead-man) and last contact from the remote no older than
+  `HEARTBEAT_INTERVAL_MS + HEARTBEAT_TIMEOUT_MS` (1000 ms) — §7.2.4 guards 2
+  and 3, added as a separate freshness test in v1.44 precisely because a rate
+  test cannot see a link that has just died.
+- Consequence the operator sees, and it is intended: because the remote may
+  commit to the sequence on a status up to 4 s old (guard 3) while the base
+  re-checks at 1 s, a link that dies during the countdown produces a full 5 s
+  count that then aborts at the base. The abort is correct and is reported
+  (§8.2.6); the countdown running to zero first is the price of the base, not
+  the remote, being authoritative about ignition.
 - Actions:
   1. Send `CMD_ARM` for the selected channel.
   2. Wait for `CMD_ACK` (up to 500 ms, one retry on timeout).
@@ -2020,8 +2086,8 @@ The fire pulse shall be driven by a hardware timer interrupt, NOT a software del
 
 - Trigger: fire button pressed (fresh press: transition from 0xFF to 0x00 for 8-bit debounce).
 - Guard:
-  1. Most recent `STATUS_UPDATE` from base confirms the channel is still armed.
-  2. Link is healthy (last ping succeeded).
+  1. Most recent `STATUS_UPDATE` from base confirms the channel is still armed, and is fresh (within 2× `STATUS_UPDATE_INTERVAL_MS`).
+  2. Link is healthy — same ≤ 30 %-over-10-pings test as §8.2.3 guard 4, and the same reasoning applies: the base re-validates the dead-man and contact freshness at PRE_FIRE→FIRING (§7.2.4), so this guard is a sanity check on committing, not the ignition interlock (wording corrected v1.47, review MIN-12).
 - Actions:
   1. Send `CMD_FIRE` for the armed channel.
   2. Wait for `CMD_ACK` (up to 500 ms, **no retry** for fire commands).
@@ -2068,6 +2134,36 @@ reach: operator-initiated state changes whose **consequences** the operator
 needs to know about.
 - Exceptions:
   - STATUS_UPDATE shows base no longer in PRE_FIRE or FIRING unexpectedly → sync to base state. Return to IDLE. Stop sending CMD_FIRE.
+
+**Ending the sequence — what the remote may assert (fw 1.1.30, review
+MAJ-01/02/03).**
+
+1. **Any** base state outside {PRE_FIRE, FIRING} ends the sequence, not just
+   POST_FIRE and IDLE. The old whitelist left the remote showing "IGNITION
+   ACTIVE", sounding `ALARM_FIRING` and repeating CMD_FIRE indefinitely when the
+   base latched terminal ERROR mid-pulse (e.g. an arm-relay weld fault): the
+   base keeps sending STATUS_UPDATEs in ERROR, so the frames stayed fresh and
+   the §8.3 stale-data backstop never ran either.
+2. `base_state == ERROR` or `LINK_LOST` is reported as a **base fault**
+   (`BASE ERROR: <flag>` / `BASE LINK LOST - SEQUENCE ENDED`), never as a cut
+   short pulse. The pad is safe but the base needs a power cycle, and that is
+   the fact the operator must leave with.
+3. Otherwise the outcome is classified in three ways, and **completion or
+   energisation SHALL NOT be asserted without positive evidence that the base
+   reached FIRING** — a STATUS_UPDATE carrying `base_state == FIRING` (the base
+   pushes one on entry) or `POST_FIRE`:
+
+   | Evidence | Reported |
+   |---|---|
+   | `POST_FIRE` seen, or FIRING seen and local elapsed ≥ `FIRE_PULSE_DURATION_MS` | FIRE COMPLETE screen (§10.2.4a) |
+   | FIRING seen, local elapsed < pulse | `CH n CUT SHORT ...` |
+   | FIRING never seen | `CH n ENDED - NOT CONFIRMED` |
+
+   The remote's own FIRING entry is only its local countdown expiring; the base
+   can abort anywhere in the 5 s countdown while that countdown runs on. With
+   the elapsed-time test alone, one lost STATUS_UPDATE was enough to certify a
+   never-energised channel as FIRE COMPLETE, and a fresh abort was announced as
+   `CUT SHORT AT BASE` — current that never flowed.
 
 #### 8.2.7 ARMED / PRE_FIRE → IDLE (Disarm without firing)
 
@@ -2132,7 +2228,8 @@ Same calibrated ADC approach as base (§7.3.3). Three thresholds:
 While the remote is in the PRE_FIRE or FIRING state and the fire button is held:
 - A `CMD_FIRE` message is sent every 200 ms.
 - Each message has a fresh sequence number and valid integrity CRC.
-- **These repeated messages are fire-and-forget — the remote does not expect or process ACK/NACK.** The base SHALL NOT send ACK/NACK for CMD_FIRE received while in PRE_FIRE or FIRING.
+- **These repeated messages are fire-and-forget — the remote does not expect an ACK.** The base SHALL NOT send ACK/NACK for CMD_FIRE received while in PRE_FIRE or FIRING.
+- **A NACK for a repeated CMD_FIRE therefore means the base has left the firing path, and the remote SHALL act on it** (fw 1.1.30, review MAJ-03). Because the base answers nothing while on that path, the only way a NACK can arrive is that it is no longer on it — IDLE answers `WRONG_STATE`, ERROR answers `BASE_ERROR` — and it arrives within ~200 ms against the up-to-2 s a STATUS_UPDATE takes. The remote ends the sequence and classifies the outcome per §8.2.6. These NACKs used to be discarded (`EVT_CMD_NACK` was consumed only inside the ACK wait), which left base-abort detection entirely dependent on the 2 s status poll.
 - The remote monitors STATUS_UPDATE to detect base-side state changes.
 - The base uses the "last CMD_FIRE received within 500 ms" rule for dead-man authorization.
 
@@ -2362,6 +2459,16 @@ If a firmware version mismatch is detected:
 └──────────────────────────────────────────────────┘
 ```
 
+**Minimum hold — `SPLASH_MIN_DURATION_MS` (10000 ms), bounded 2026-08-28 (fw
+1.1.30, review MAJ-04).** The splash outranks the FSM-derived screen so that a
+link established in under a second is still readable, but that hold **SHALL NOT
+cover a live (ARMED/PRE_FIRE/FIRING) or alarmed (LINK_LOST) state**. Inputs are
+live well before the hold expires, so without this the remote could sit in ARMED
+— arm relay closed, base siren running, buzzer heartbeat, LED red — under a
+"Connecting to base" splash for the best part of nine seconds. Same predicate as
+the FIRE COMPLETE cancel list (§10.2.4a). Firmware-mismatch and error screens
+still outrank everything.
+
 #### 10.2.2 Main Status Screen (IDLE)
 
 ```
@@ -2383,7 +2490,7 @@ If a firmware version mismatch is detected:
 ```
 
 Key elements:
-- **Top bar:** RSSI with graphical bar (averaged over last 3 frames), ping round-trip time, remote battery voltage with bar, base battery voltage with bar, link status indicator.
+- **Top bar:** RSSI with graphical bar (averaged over last 3 frames), ping round-trip time, remote battery voltage with bar, base battery voltage with bar, link status indicator. The link field reads `LINK OK` / **`LINK WEAK`** (amber) / `LINKING` / `NO LINK`. **`LINK WEAK` added 2026-08-28 (fw 1.1.30, review MIN-10):** a LINKED-but-degraded link (ping failure rate over the §8.2.3 guard-4 threshold) used to read `LINK OK` while the buzzer chirped `BEEP_PING_FAIL` and the ARM guard refused with "LINK DEGRADED" — one condition with three different answers.
 - **Channel grid:** all 8 channels displayed with continuity band indicators. Filled circle (●) = CONNECTED. Triangle (▲) = MARGINAL (with label). Empty circle (○) = OPEN. The selected channel is highlighted with a `►[ CH N ]◄` cursor. Shape carries the meaning as well as colour, so the grid stays readable regardless of colour vision. **Three bands since 2026-08-21** — the diamond (◆) that marked SHORT is retired with that band (§5.4.2). As-built colours are dark green / light green / yellow, not the blue-based palette above; see the §10.2.0 deviation note.
 - **Status area:** base key switch state (§5.4.3b), arm relay feedback (§5.4.3), remote arm switch state.
 - **Instruction text:** context-sensitive prompt guiding the operator.
@@ -2494,12 +2601,21 @@ Lengthening the screen by reusing it would have extended the base's cooldown as
 a side effect — fire-path constants are changed here by explicit decision, not
 incidentally.
 
-**The screen is cancelled early if the remote FSM enters ARMED, PRE_FIRE or
-FIRING.** Because the screen now outlives the base's cooldown, the operator can
-re-arm while it is still displayed; a summary of the last shot must never be
-shown over a live pad. The `fire_done` branch outranks the FSM-derived screen,
-so without this the display would have shown FIRE COMPLETE during a live ARMED
-state.
+**The screen is cancelled early if the remote FSM enters ARMED, PRE_FIRE,
+FIRING or LINK_LOST.** Because the screen now outlives the base's cooldown, the
+operator can re-arm while it is still displayed; a summary of the last shot must
+never be shown over a live pad. The `fire_done` branch outranks the FSM-derived
+screen, so without this the display would have shown FIRE COMPLETE during a live
+ARMED state.
+
+**LINK_LOST added to the cancel list 2026-08-28 (fw 1.1.30, review MAJ-05).**
+A base powered down immediately after a shot puts the remote into LINK_LOST with
+`ALARM_LINK_LOST` sounding, and the green FIRE COMPLETE screen used to sit on
+top for the remainder of the 10 s hold while the igniter line greyed to
+`IGNITER ?` underneath — a success screen over a link the system had just
+declared dead. The rule is now the general one: a held screen never covers a
+**live** (ARMED/PRE_FIRE/FIRING) or **alarmed** (LINK_LOST) state. The same
+predicate gates the boot splash (§10.2.1).
 
 **Countdown wording is "CLEARS IN", not "Returning to IDLE in".** After ~2000 ms
 the base genuinely is IDLE while the screen is still up, so an "IDLE IN"
@@ -2694,6 +2810,21 @@ remote arrives as a `STATUS_UPDATE`, not a local state change, and a missed
 transition would leave the remote sounding armed when it is not.
 `buzzer_stop()` clears the background as well as silencing.
 
+**A background change SHALL NOT preempt a queued or sounding pattern (fw
+1.1.30, review CRIT-01).** `buzzer_set_background()` used to end with a
+`buzzer_play(BUZZER_OFF)` "nudge" so the change took effect at once — and
+because `buzzer_play()` is an *atomic overwrite* of a one-deep mailbox (the
+RM-05 fix), that OFF destroyed any pattern queued microseconds earlier in the
+same FSM tick. The tick sets the background from the state, so every handler
+that both beeped and left ARMED/PRE_FIRE/FIRING was silenced: `ALARM_LINK_LOST`
+on link loss while armed, `ALARM_CRITICAL` on battery/display/multi-arm faults,
+and every §8.2.4 FIRE-guard refusal triple — exactly the transitions §7.2.9a
+requires both halves for, and precisely when the pad state is least known. The
+player task now **polls** `s_background` between pattern slices (≤20 ms) and on
+a 100 ms idle wait, so a background change never touches the mailbox. A
+repeating alarm therefore keeps sounding through a background change, which is
+what an alarm must do; `buzzer_stop()` remains the way to end one.
+
 ### 12.2 Siren Patterns (Base only)
 
 | Pattern Name | Behaviour | Usage |
@@ -2743,7 +2874,7 @@ The `error_flags` field in `STATUS_UPDATE` is a bitmask:
 |---|---|---|
 | 0 | `ERR_VBAT_LOW` | Base battery below `VBAT_MIN_ARM_MV` |
 | 1 | `ERR_VBAT_CRITICAL` | Base battery below `VBAT_CRITICAL_MV` |
-| 2 | `ERR_RELAY_FAULT` | Arm relay fault: either (a) arm sense input does not confirm VBAT on fire path when arm relay is commanded ON (possible wiring fault, blown fuse, or relay failure), or (b) arm sense reads HIGH when arm relay is known to be de-energised (contact welding — critical hardware fault). |
+| 2 | `ERR_RELAY_FAULT` | Arm relay fault: either (a) arm sense input does not confirm VBAT on fire path when arm relay is commanded ON (possible wiring fault, blown fuse, or relay failure) — **set on the `ARM_VERIFY_FAULT_STRIKES`-th consecutive verify timeout, not the first; see the §7.2.2 escalation note (v1.47)** — or (b) arm sense reads HIGH when arm relay is known to be de-energised (contact welding — critical hardware fault), set on first detection. |
 | 3 | Reserved (was `ERR_CONTINUITY_LOST_WHILE_ARMED`) | Previously: continuity band transitioned to OPEN on the armed channel. Removed in v1.8; the v1.35 continuity-loss disarm is carried as an FSM event (§7.3.1), not as this flag. |
 | 4 | `ERR_COMM_DEGRADED` | > 30% ping failure rate in last 10 pings |
 | 5 | `ERR_WATCHDOG_RESET` | Set if last boot was from watchdog reset |
@@ -2828,6 +2959,7 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `WATCHDOG_TIMEOUT_S` | 5 | Hardware watchdog timeout |
 | `ARM_TIMEOUT_MS` | 10000 | Maximum time in ARMED state without CMD_FIRE before auto-disarm |
 | `ARM_SENSE_VERIFY_TIMEOUT_MS` | 200 | Time allowed for arm sense (GPIO 21) to read HIGH after the arm relay is energised, before NACK `ARM_SENSE_FAULT` (§7.2.2 step 2). The wait is non-blocking — safety events are still processed inside it. Named in v1.31; previously a bare literal in the FSM. |
+| `ARM_VERIFY_FAULT_STRIKES` | 2 | Consecutive arm-verify timeouts (no successful verify in between) before the base latches `ERR_RELAY_FAULT` and enters terminal ERROR (§7.2.2 escalation note, v1.47). 1 would make every slow-relay miss a power-cycle event — the window leaves only ~40 ms over the 160 ms sense debounce; 2 lets the operator's own retry separate a timing miss from a relay that never closes. |
 | `DEBOUNCE_POLL_INTERVAL_MS` | 10 | Default shift-register poll interval |
 | `SPLASH_MIN_DURATION_MS` | 10000 | Minimum time the splash screen stays up, even if the link comes up sooner (linking typically completes in well under a second) |
 | `FIRE_PROTECTED_CHANNEL_MASK` | `0xFF` | Bitmask of channels whose continuity ADC input has the bug #18 hardware protection fitted (bit 0 = ch1 … bit 7 = ch8). ARM is NACKed and the channel relay refuses to close for any channel not in this mask. Widened to all 8 channels on 2026-08-23, once the protection BOM was complete (snubber + 2x 1N5819 clamps + 217 Ω sense resistor per channel) |

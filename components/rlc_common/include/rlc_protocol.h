@@ -68,6 +68,15 @@ typedef enum {
      * is not carried here (the NACK payload is a fixed 6 bytes); the remote
      * names it from the error_flags in its cached STATUS_UPDATE. */
     NACK_BASE_ERROR            = 0x0E,
+    /* MIN-04: a validated command that the base could not hand to its FSM —
+     * the event queue was full. Added 2026-08-28. The forward is a
+     * zero-timeout post on purpose (process_frame() holds the link state
+     * mutex, so it must not block the receive path), which made a dropped
+     * command the one refusal that was invisible to the operator: the base
+     * logged it and said nothing on the wire, so a CEASE_FIRE lost to a queue
+     * burst looked exactly like RF loss. Deliberately distinct from
+     * WRONG_STATE — the command was legal, the base just could not take it. */
+    NACK_BASE_BUSY             = 0x0F,
 } rlc_nack_reason_t;
 
 /* ── Error Flags (bitmask in STATUS_UPDATE) ───────────────────── */
@@ -276,6 +285,52 @@ static inline const char *rlc_error_flag_nth(uint8_t flags, int n)
 }
 
 /**
+ * The most severe set flag, in the order an operator should act on them:
+ * a critical pack and a relay fault stop the session; a degraded link or a
+ * low-but-usable pack do not. Returns NULL for an empty mask.
+ */
+static inline const char *rlc_error_flag_worst_str(uint8_t flags)
+{
+    static const uint8_t order[] = {
+        ERR_VBAT_CRITICAL, ERR_RELAY_FAULT, ERR_INTERNAL,
+        ERR_WATCHDOG_RESET, ERR_COMM_DEGRADED, ERR_VBAT_LOW,
+        (1u << 3), (1u << 7),
+    };
+    for (unsigned i = 0; i < sizeof(order) / sizeof(order[0]); i++) {
+        if (flags & order[i]) return rlc_error_flag_str(order[i]);
+    }
+    return NULL;
+}
+
+/**
+ * MIN-07: one line, never truncated mid-word — the most severe flag plus a
+ * "+n" count of the rest, e.g. "VBAT CRITICAL +2". rlc_error_flags_str()'s
+ * full list is right for a log, but on a 40-character overlay a three-flag
+ * mask used to slice a name in half and overrun the box. Writes "NONE" for an
+ * empty mask; always NUL-terminates.
+ *
+ * @return buf, for convenient use inside a snprintf/log call
+ */
+static inline const char *rlc_error_flags_brief(uint8_t flags, char *buf,
+                                                size_t len)
+{
+    if (!buf || len == 0) return "";
+    const char *worst = rlc_error_flag_worst_str(flags);
+    size_t w = 0;
+    const char *src = worst ? worst : "NONE";
+    while (*src && w + 1 < len) buf[w++] = *src++;
+
+    int extra = rlc_error_flags_count(flags) - 1;   /* 0..7 */
+    if (worst && extra > 0) {
+        char pad[4] = {' ', '+', (char)('0' + extra), '\0'};
+        const char *tail = pad;
+        while (*tail && w + 1 < len) buf[w++] = *tail++;
+    }
+    buf[w] = '\0';
+    return buf;
+}
+
+/**
  * Format every set flag into `buf` as a comma-separated list, e.g.
  * "VBAT CRITICAL, RELAY FAULT". Writes "NONE" for an empty mask.
  * Always NUL-terminates. Deliberately avoids stdio so this header stays
@@ -323,6 +378,7 @@ static inline const char *rlc_nack_reason_str(uint8_t reason)
         case NACK_REMOTE_BATTERY_LOW:     return "REMOTE BATTERY LOW";
         case NACK_COMM_DEGRADED:         return "COMM DEGRADED";
         case NACK_BASE_ERROR:             return "BASE IN ERROR";
+        case NACK_BASE_BUSY:              return "BASE BUSY - RETRY";
         default:                          return "UNKNOWN ERROR";
     }
 }

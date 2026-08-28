@@ -229,6 +229,7 @@ static void reset_world(void)
     s_arm_verify_channel = 0;
     s_arm_verify_start_ms = 0;
     s_arm_verify_seq = 0;
+    s_arm_verify_timeouts = 0;   /* MIN-02 strike counter */
     s_link_lost_pending = false;
     s_last_fire_cmd_ms = 0;
 }
@@ -365,6 +366,37 @@ static void t_arm_verify_window(void)
     expect_nack("verify timeout -> ARM_SENSE_FAULT", NACK_ARM_SENSE_FAULT);
     expect("relays safe after verify timeout", !hw.arm_relay_on);
     expect_state("verify timeout stays IDLE", STATE_IDLE);
+    expect("first timeout latches no error flag", s_error_flags == 0);
+
+    /* MIN-02 / §7.2.2 escalation: the SECOND consecutive timeout is a relay,
+     * fuse or wiring fault — ERR_RELAY_FAULT and terminal ERROR. */
+    post_cmd(EVT_CMD_ARM, 1);
+    advance_ms(ARM_SENSE_VERIFY_TIMEOUT_MS + 1);
+    check_timers();
+    expect_nack("second timeout still NACKs 0x0B", NACK_ARM_SENSE_FAULT);
+    expect("second timeout sets ERR_RELAY_FAULT",
+           (s_error_flags & ERR_RELAY_FAULT) != 0);
+    expect_state("second timeout -> ERROR", STATE_ERROR);
+    expect("relays safe in ERROR", !hw.arm_relay_on);
+
+    /* A successful verify in between clears the strike count, so a slow relay
+     * that arms on the retry never escalates. */
+    reset_world();
+    in.arm_sense = false;
+    post_cmd(EVT_CMD_ARM, 1);
+    advance_ms(ARM_SENSE_VERIFY_TIMEOUT_MS + 1);
+    check_timers();
+    expect_state("strike 1 stays IDLE", STATE_IDLE);
+    in.arm_sense = true;
+    post_cmd(EVT_CMD_ARM, 1);
+    expect_state("retry arms (sense already HIGH)", STATE_ARMED);
+    post_cmd(EVT_CMD_DISARM, 1);
+    in.arm_sense = false;
+    post_cmd(EVT_CMD_ARM, 1);
+    advance_ms(ARM_SENSE_VERIFY_TIMEOUT_MS + 1);
+    check_timers();
+    expect_state("timeout after a success is strike 1 again", STATE_IDLE);
+    expect("no error flag after success-cleared strike", s_error_flags == 0);
 
     /* Key off inside the window (fix 4.6) */
     reset_world();

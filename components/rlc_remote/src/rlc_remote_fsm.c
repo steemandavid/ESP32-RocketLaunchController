@@ -54,6 +54,17 @@ static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static int64_t  s_prefire_start_ms = 0;
 static int64_t  s_firing_start_ms = 0;
 
+/* MAJ-02: positive evidence that the BASE reached FIRING — that current was
+ * actually put on the igniter. The remote's own FIRING entry proves nothing
+ * about the pad: the base can abort anywhere in the 5 s countdown while the
+ * remote's local countdown runs on regardless, and if that abort's triggered
+ * STATUS_UPDATE is lost, the next periodic one shows IDLE with the local
+ * elapsed time already past a full pulse. The old completion test would then
+ * announce FIRE COMPLETE for a channel that never carried current. The base
+ * calls status_update_trigger() on entering FIRING (rlc_base_fsm.c), so this
+ * flag is set by the same push that makes POST_FIRE reliable. */
+static bool     s_base_reached_firing = false;
+
 /* Pending command tracking — what wait_for_ack() correlates incoming
  * ACK/NACKs against (4.8).
  *
@@ -128,6 +139,9 @@ static void cache_status(const rlc_payload_status_update_t *st)
     s_last_update_seq = st->update_sequence;
     s_update_seq_valid = true;
 
+    /* MAJ-02: latch the one fact that distinguishes a shot from an abort. */
+    if (st->base_state == STATE_FIRING) s_base_reached_firing = true;
+
     int64_t t = now_ms();
     portENTER_CRITICAL(&s_status_lock);
     memcpy(&s_last_status, st, sizeof(s_last_status));
@@ -153,13 +167,22 @@ static inline uint8_t status_continuity_band(uint8_t channel)
  * thing to go and look at. Falls back to the bare reason when no flags are
  * cached — after a remote reboot, say.
  */
+static void base_error_toast(char *out, size_t len)
+{
+    /* MIN-07: the worst flag plus a "+n", not the full comma list — "BASE
+     * ERROR: " already spends 12 of the overlay's 40 characters, and a
+     * multi-flag list used to be sliced mid-word ("...RELAY F") and overrun
+     * the box. The main screen still cycles every flag (§13.2a). */
+    char errbuf[26];
+    rlc_error_flags_brief(s_last_status.error_flags, errbuf, sizeof(errbuf));
+    snprintf(out, len, "BASE ERROR: %s", errbuf);
+}
+
 static void show_nack(uint8_t reason)
 {
     if (reason == NACK_BASE_ERROR && s_last_status.error_flags != 0) {
-        char errbuf[26];
         char toast[40];
-        rlc_error_flags_str(s_last_status.error_flags, errbuf, sizeof(errbuf));
-        snprintf(toast, sizeof(toast), "BASE ERROR: %s", errbuf);
+        base_error_toast(toast, sizeof(toast));
         display_nack(toast);
         return;
     }
@@ -411,6 +434,7 @@ static void do_enter_idle(void)
     s_fire_repeat_active = false;
     set_prefire_start(0);
     s_firing_start_ms = 0;
+    s_base_reached_firing = false;
     /* 4.9: re-sync the tracked selection with the encoder — after
      * LINKING/LINK_LOST the cached s_selected_channel could be stale,
      * making the display highlight a different channel than a long-press
@@ -462,6 +486,112 @@ static void do_enter_error(void)
     rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
     ESP_LOGE(TAG, "-> ERROR");
     s_state = STATE_ERROR;
+}
+
+/**
+ * The firing sequence has ended at the base — report what happened to the
+ * channel, then stand down. Call only from PRE_FIRE/FIRING.
+ *
+ * Three outcomes, and the difference between them is what the operator carries
+ * to the pad:
+ *
+ *  - COMPLETE      the channel had its whole pulse.
+ *  - CUT SHORT     the channel WAS energised, for less than the full pulse.
+ *  - NOT CONFIRMED the base ended the sequence without this unit ever seeing
+ *                  it reach FIRING — most likely an abort during the
+ *                  countdown, before any current flowed.
+ *
+ * MAJ-02: the elapsed-time backstop may only declare completion when the base
+ * was actually seen firing. Local elapsed time alone measures the remote's own
+ * countdown, which keeps running through a base-side abort, so on a single
+ * lost STATUS_UPDATE it used to certify a never-fired channel as COMPLETE.
+ * The mirror case (a fresh abort, fired_ms < pulse) used to assert "CUT SHORT
+ * AT BASE" — current that never flowed. Neither claim is now made without
+ * evidence.
+ */
+static void report_firing_outcome(void)
+{
+    int64_t fired_ms = (s_firing_start_ms > 0) ? (now_ms() - s_firing_start_ms) : 0;
+
+    /* POST_FIRE is authoritative, and reliable: the base calls
+     * status_update_trigger() on entering it (rlc_base_fsm.c), so a completed
+     * pulse always pushes a STATUS_UPDATE saying so rather than waiting for
+     * the 2 s poll.
+     *
+     * The elapsed-time test is therefore only a backstop for that one packet
+     * being lost over the air, and it takes NO slack. An earlier version
+     * allowed 200 ms for clock skew and misclassified a real abort: the
+     * operator turned the pad key at 802 ms of a 1000 ms pulse, two
+     * milliseconds inside the margin, and the remote called it complete. The
+     * skew fear was unfounded in the wrong direction anyway — a measured
+     * completion read 1105 ms from the remote's clock, over rather than under.
+     *
+     * At the full duration the test is also true on its own terms: if the base
+     * cut the pulse at or after 1000 ms, the igniter had already had its whole
+     * pulse, so "completed" is accurate. */
+    bool completed = (s_last_status.base_state == STATE_POST_FIRE) ||
+                     (s_base_reached_firing && fired_ms >= FIRE_PULSE_DURATION_MS);
+
+    s_fire_repeat_active = false;
+
+    if (completed) {
+        ESP_LOGI(TAG, "Fire complete (base state=%d, %lld ms)",
+                 s_last_status.base_state, (long long)fired_ms);
+        display_fire_complete(s_armed_channel);
+    } else if (!s_base_reached_firing) {
+        /* No evidence the channel was ever energised — and no evidence it was
+         * not, if two frames went missing. Say exactly that. */
+        char tbuf[40];
+        ESP_LOGW(TAG, "Sequence ended without a FIRING status (base state=%d, "
+                      "%lld ms) — outcome unconfirmed",
+                 s_last_status.base_state, (long long)fired_ms);
+        snprintf(tbuf, sizeof(tbuf), "CH %u ENDED - NOT CONFIRMED",
+                 s_armed_channel);
+        buzzer_play(BUZZER_BEEP_TRIPLE);
+        display_toast(tbuf);
+    } else {
+        /* Name the pad key when the status says it is off — that is the
+         * common cause and the operator needs to know the pad end acted, not
+         * the remote. */
+        char tbuf[40];
+        ESP_LOGW(TAG, "Pulse cut short at the base after %lld ms (key=%u)",
+                 (long long)fired_ms, s_last_status.base_key_switch);
+        snprintf(tbuf, sizeof(tbuf),
+                 s_last_status.base_key_switch ? "CH %u CUT SHORT AT BASE"
+                                               : "CH %u CUT SHORT - BASE KEY",
+                 s_armed_channel);
+        buzzer_play(BUZZER_BEEP_TRIPLE);
+        display_toast(tbuf);
+    }
+
+    do_enter_idle();
+}
+
+/**
+ * The base is in a state that ends the firing sequence but says nothing about
+ * the channel — terminal ERROR, or its own LINK_LOST (MAJ-01).
+ *
+ * Reporting these as "PULSE CUT SHORT" would blame the pulse for a base that
+ * needs a power cycle, so they get their own message. Both are the base's
+ * problem, not this unit's, so the remote stands down to IDLE; the ARM guard
+ * refuses to re-arm into a base in ERROR anyway.
+ */
+static void report_base_fault_end(void)
+{
+    char tbuf[40];
+    s_fire_repeat_active = false;
+    if (s_last_status.base_state == STATE_ERROR) {
+        base_error_toast(tbuf, sizeof(tbuf));
+        ESP_LOGE(TAG, "base entered ERROR during fire sequence (flags=0x%02x)",
+                 s_last_status.error_flags);
+    } else {
+        snprintf(tbuf, sizeof(tbuf), "BASE LINK LOST - SEQUENCE ENDED");
+        ESP_LOGW(TAG, "base reports state %d during fire sequence",
+                 s_last_status.base_state);
+    }
+    buzzer_play(BUZZER_BEEP_TRIPLE);
+    display_toast(tbuf);
+    do_enter_idle();
 }
 
 /* ── ACK Wait Helper ─────────────────────────────────────────── */
@@ -643,6 +773,9 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* Guard 1: Arm switch must be ON */
             if (!arm_switch_is_armed()) {
                 ESP_LOGI(TAG, "ARM rejected: arm switch OFF");
+                /* MAJ-06: this was the one guard in the family with no
+                 * audible half. §7.2.9a wants both on every refusal. */
+                buzzer_play(BUZZER_BEEP_TRIPLE);
                 display_toast("TURN ARM KEY FIRST");
                 break;
             }
@@ -680,15 +813,10 @@ static void process_event(const rlc_fsm_event_t *evt)
              * to go and look at. ERROR is unrecoverable by design, so the
              * remedy really is a power cycle. */
             if (s_last_status.base_state == STATE_ERROR) {
-                /* "BASE ERROR: " is 12 chars and the display overlay holds
-                 * 40, so the flag text gets 26 + NUL. One flag always fits;
-                 * a rare multi-flag case truncates rather than overflowing. */
-                char errbuf[26];
                 char toast[40];
-                rlc_error_flags_str(s_last_status.error_flags, errbuf, sizeof(errbuf));
-                snprintf(toast, sizeof(toast), "BASE ERROR: %s", errbuf);
-                ESP_LOGW(TAG, "ARM rejected: base in ERROR (flags=0x%02x: %s)",
-                         s_last_status.error_flags, errbuf);
+                base_error_toast(toast, sizeof(toast));
+                ESP_LOGW(TAG, "ARM rejected: base in ERROR (flags=0x%02x)",
+                         s_last_status.error_flags);
                 buzzer_play(BUZZER_BEEP_TRIPLE);
                 display_toast(toast);
                 break;
@@ -712,6 +840,10 @@ static void process_event(const rlc_fsm_event_t *evt)
 
             /* Wait for ACK (500ms, CMD_RETRY_COUNT retries on timeout) */
             uint8_t nack_reason = 0;
+            /* MIN-09: a retry loop abandoned because the key went off is not
+             * "no response from base" — that misattribution is the exact class
+             * the FIRE path's -4 branch was written to prevent. */
+            bool key_off_abort = false;
             int result = wait_for_ack(ch, CMD_ACK_TIMEOUT_MS, &nack_reason);
             for (int retry = 0; result == 0 && retry < CMD_RETRY_COUNT; retry++) {
                 /* 2.4: a timeout is the only retry licence. Re-check the arm
@@ -720,6 +852,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                  * having been consumed yet. */
                 if (!arm_switch_is_armed()) {
                     ESP_LOGI(TAG, "ARM retry aborted: arm switch OFF");
+                    key_off_abort = true;
                     break;
                 }
                 if (send_cmd_arm(ch) != 0) {
@@ -754,6 +887,10 @@ static void process_event(const rlc_fsm_event_t *evt)
                  * on its own; also disarm in case a CMD_ARM reached it. */
                 ESP_LOGW(TAG, "ARM attempt interrupted — aborting");
                 send_cmd_disarm(ch);
+                /* MAJ-06: no beep followed this branch at all — the disarm
+                 * beep belongs to do_disarm_and_idle(), which is not on this
+                 * path (we never entered ARMED). */
+                buzzer_play(BUZZER_BEEP_TRIPLE);
                 display_toast("ARM CANCELLED");
                 /* m13: the interrupting event may have been EVT_ENCODER_ROTATE,
                  * which wait_for_ack() consumed without applying. Re-sync from
@@ -783,6 +920,11 @@ static void process_event(const rlc_fsm_event_t *evt)
                 display_toast("CHANNEL MISMATCH ERROR");
             } else if (result == WAIT_FOR_ACK_STATE_HANDLED) {
                 /* R1: state already transitioned to LINK_LOST or ERROR — do nothing */
+            } else if (key_off_abort) {
+                /* MIN-09: the operator ended it, not the link. */
+                send_cmd_disarm(ch);
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("ARM KEY OFF - ARM CANCELLED");
             } else {
                 /* Timeout. Every other outcome above tells the operator
                  * something; until 2026-08-26 this one only wrote a log line,
@@ -929,6 +1071,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                     do_disarm_and_idle();
                 } else {
                     /* ACK — enter PRE_FIRE */
+                    s_base_reached_firing = false;   /* MAJ-02: this shot only */
                     set_prefire_start(now_ms());
                     s_fire_repeat_active = true;
                     xTaskNotifyGive(s_fire_repeat_task);  /* Wake fire-repeat task */
@@ -953,7 +1096,17 @@ static void process_event(const rlc_fsm_event_t *evt)
                  * this branch since 2.4; the FIRE path did not. */
                 ESP_LOGW(TAG, "FIRE attempt interrupted by operator — aborting");
                 send_cmd_cease_fire();
+                buzzer_play(BUZZER_BEEP_TRIPLE);
                 display_toast("FIRE CANCELLED");
+                do_disarm_and_idle();
+            } else if (result == -2) {
+                /* MIN-05: the base ACKed a channel we did not ask to fire.
+                 * The ARM path names this; the FIRE path used to let it fall
+                 * into the generic "NO RESPONSE" branch and blame the link. */
+                ESP_LOGE(TAG, "FIRE ACK channel mismatch");
+                send_cmd_cease_fire();
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("CHANNEL MISMATCH - FIRE ABORTED");
                 do_disarm_and_idle();
             } else if (result == WAIT_FOR_ACK_STATE_HANDLED) {
                 /* R1: LINK_LOST or BATTERY_CRITICAL was handled inline by
@@ -1046,14 +1199,42 @@ static void process_event(const rlc_fsm_event_t *evt)
             cache_status(&evt->data.status_update.status);
 
             /* Check if base aborted */
-            if (s_last_status.base_state != STATE_PRE_FIRE &&
-                s_last_status.base_state != STATE_FIRING &&
-                s_last_status.base_state != STATE_ARMED) {
+            if (s_last_status.base_state == STATE_ERROR ||
+                s_last_status.base_state == STATE_LINK_LOST) {
+                /* MAJ-01: name the fault rather than "ENDED SEQUENCE" — a base
+                 * that needs a power cycle is not the same event as an abort. */
+                report_base_fault_end();
+            } else if (s_last_status.base_state != STATE_PRE_FIRE &&
+                       s_last_status.base_state != STATE_FIRING &&
+                       s_last_status.base_state != STATE_ARMED) {
                 ESP_LOGW(TAG, "Base left PRE_FIRE/FIRING — sync to base");
-            display_toast("BASE ENDED SEQUENCE");
+                /* MAJ-06: this was the weakest of the abort indications —
+                 * the firing tone simply stopped. §7.2.9a wants both halves. */
                 s_fire_repeat_active = false;
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_toast("BASE ENDED SEQUENCE");
                 do_enter_idle();
             }
+        } else if (evt->type == EVT_CMD_NACK &&
+                   evt->data.nack.nacked_msg_type == MSG_CMD_FIRE) {
+            /* MAJ-03: see the FIRING branch — a NACK for a fire repeat means
+             * the base is no longer on the firing path, ~200 ms after the
+             * fact instead of up to 2 s. */
+            if (evt->data.nack.reason_code == NACK_BASE_BUSY) {
+                /* MIN-04: a queue-full refusal says the base could not take
+                 * *this frame*, not that it has left the firing path — it is
+                 * still counting the dead-man from the last repeat it did
+                 * take, and the next one is 200 ms away. Do not end the
+                 * sequence on it. */
+                ESP_LOGW(TAG, "FIRE repeat dropped at the base (queue full)");
+                break;
+            }
+            ESP_LOGW(TAG, "FIRE repeat NACKed (0x%02x) during PRE_FIRE",
+                     evt->data.nack.reason_code);
+            s_fire_repeat_active = false;
+            buzzer_play(BUZZER_BEEP_TRIPLE);
+            show_nack(evt->data.nack.reason_code);
+            do_enter_idle();
         } else if (evt->type == EVT_LINK_LOST) {
             s_fire_repeat_active = false;
             do_enter_link_lost();
@@ -1087,7 +1268,13 @@ static void process_event(const rlc_fsm_event_t *evt)
             {
                 /* overlay_post() copies the string, so a stack buffer is fine. */
                 char tbuf[40];
-                snprintf(tbuf, sizeof(tbuf), "CH %u PULSE CUT SHORT",
+                /* MAJ-02: only claim the channel was energised when a
+                 * STATUS_UPDATE actually showed the base in FIRING. The local
+                 * FIRING entry is this unit's own countdown expiring and says
+                 * nothing about the pad. */
+                snprintf(tbuf, sizeof(tbuf),
+                         s_base_reached_firing ? "CH %u PULSE CUT SHORT"
+                                               : "CH %u ENDED - NOT CONFIRMED",
                          s_armed_channel);
                 buzzer_play(BUZZER_BEEP_TRIPLE);
                 display_toast(tbuf);
@@ -1101,7 +1288,9 @@ static void process_event(const rlc_fsm_event_t *evt)
             send_cmd_cease_fire();
             {
                 char tbuf[40];
-                snprintf(tbuf, sizeof(tbuf), "CH %u CUT SHORT - ARM OFF",
+                snprintf(tbuf, sizeof(tbuf),
+                         s_base_reached_firing ? "CH %u CUT SHORT - ARM OFF"
+                                               : "CH %u ENDED - NOT CONFIRMED",
                          s_armed_channel);
                 buzzer_play(BUZZER_BEEP_TRIPLE);
                 display_toast(tbuf);
@@ -1126,59 +1315,51 @@ static void process_event(const rlc_fsm_event_t *evt)
              * POST_FIRE alone is not a safe discriminator: STATUS_UPDATE_
              * INTERVAL_MS and POST_FIRE_COOLDOWN_MS are both 2000 ms, so the
              * remote can miss the POST_FIRE window entirely and see only IDLE.
-             * Local elapsed time is the reliable test and needs no packet to
-             * land in a particular window; POST_FIRE is accepted as a positive
-             * confirmation when it does arrive. */
-            if (s_last_status.base_state == STATE_POST_FIRE ||
-                s_last_status.base_state == STATE_IDLE) {
-
-                int64_t fired_ms = (s_firing_start_ms > 0)
-                                 ? (now_ms() - s_firing_start_ms) : 0;
-
-                /* POST_FIRE is authoritative, and reliable: the base calls
-                 * status_update_trigger() on entering it (rlc_base_fsm.c),
-                 * so a completed pulse always pushes a STATUS_UPDATE saying so
-                 * rather than waiting for the 2 s poll.
-                 *
-                 * The elapsed-time test is therefore only a backstop for that
-                 * one packet being lost over the air, and it takes NO slack.
-                 * An earlier version allowed 200 ms for clock skew and
-                 * misclassified a real abort: the operator turned the pad key
-                 * at 802 ms of a 1000 ms pulse, two milliseconds inside the
-                 * margin, and the remote called it complete. The skew fear was
-                 * unfounded in the wrong direction anyway — a measured
-                 * completion read 1105 ms from the remote's clock, over rather
-                 * than under.
-                 *
-                 * At the full duration the test is also true on its own terms:
-                 * if the base cut the pulse at or after 1000 ms, the igniter
-                 * had already had its whole pulse, so "completed" is accurate. */
-                bool completed = (s_last_status.base_state == STATE_POST_FIRE) ||
-                                 (fired_ms >= FIRE_PULSE_DURATION_MS);
-
-                s_fire_repeat_active = false;
-
-                if (completed) {
-                    ESP_LOGI(TAG, "Fire complete (base state=%d, %lld ms)",
-                             s_last_status.base_state, (long long)fired_ms);
-                    display_fire_complete(s_armed_channel);
-                } else {
-                    /* Name the pad key when the status says it is off — that
-                     * is the common cause and the operator needs to know the
-                     * pad end acted, not the remote. */
-                    char tbuf[40];
-                    ESP_LOGW(TAG, "Pulse cut short at the base after %lld ms "
-                                  "(key=%u)", (long long)fired_ms,
-                             s_last_status.base_key_switch);
-                    snprintf(tbuf, sizeof(tbuf),
-                             s_last_status.base_key_switch
-                                 ? "CH %u CUT SHORT AT BASE"
-                                 : "CH %u CUT SHORT - BASE KEY",
-                             s_armed_channel);
-                    buzzer_play(BUZZER_BEEP_TRIPLE);
-                    display_toast(tbuf);
-                }
+             * Local elapsed time is a backstop that needs no packet to land in
+             * a particular window; POST_FIRE is accepted as a positive
+             * confirmation when it does arrive. See report_firing_outcome().
+             *
+             * MAJ-01: this is a blacklist, not a whitelist. It used to act
+             * only on POST_FIRE/IDLE, so a base that went to terminal ERROR
+             * mid-pulse (arm-relay weld fault, battery critical) left the
+             * remote in FIRING indefinitely — "IGNITION ACTIVE", firing tone,
+             * and 5 Hz CMD_FIRE repeats over a pad that is safe but broken,
+             * with its STATUS_UPDATEs still arriving so the stale-data
+             * backstop never ran either. Any base state off the firing path
+             * ends the sequence; PRE_FIRE's branch has always worked this way. */
+            if (s_last_status.base_state == STATE_ERROR ||
+                s_last_status.base_state == STATE_LINK_LOST) {
+                report_base_fault_end();
+            } else if (s_last_status.base_state != STATE_PRE_FIRE &&
+                       s_last_status.base_state != STATE_FIRING) {
+                report_firing_outcome();
+            }
+        } else if (evt->type == EVT_CMD_NACK &&
+                   evt->data.nack.nacked_msg_type == MSG_CMD_FIRE) {
+            /* MAJ-03: heed the NACKs answering our repeats. §8.4 forbids the
+             * base answering a CMD_FIRE *while it is on the firing path*, so a
+             * NACK for one can only mean it has left — and it arrives within
+             * ~200 ms, against the 2 s a STATUS_UPDATE takes. This is the
+             * fastest abort signal the remote has, and it used to be discarded
+             * (EVT_CMD_NACK was consumed only inside wait_for_ack()). */
+            if (evt->data.nack.reason_code == NACK_BASE_BUSY) {
+                /* MIN-04: see PRE_FIRE — a dropped frame is not a departure
+                 * from the firing path, and ending a live pulse on one would
+                 * be a false abort mid-shot. */
+                ESP_LOGW(TAG, "FIRE repeat dropped at the base (queue full)");
+                break;
+            }
+            ESP_LOGW(TAG, "FIRE repeat NACKed (0x%02x) — base left the "
+                          "firing path", evt->data.nack.reason_code);
+            s_fire_repeat_active = false;
+            if (evt->data.nack.reason_code == NACK_BASE_ERROR) {
+                char tbuf[40];
+                base_error_toast(tbuf, sizeof(tbuf));
+                buzzer_play(BUZZER_BEEP_TRIPLE);
+                display_nack(tbuf);
                 do_enter_idle();
+            } else {
+                report_firing_outcome();
             }
         } else if (evt->type == EVT_LINK_LOST) {
             s_fire_repeat_active = false;

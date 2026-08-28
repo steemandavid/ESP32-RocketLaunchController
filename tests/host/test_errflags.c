@@ -93,6 +93,44 @@ int main(void)
     rlc_error_flags_str(0xFF, tiny, sizeof(tiny));
     expect_str("1-byte buffer yields empty string", tiny, "");
 
+    /* ── T-E08: MIN-07 one-line brief for the 40-char overlay ── */
+    printf("T-E08 one-line brief (worst flag + count)\n");
+    expect_str("single flag needs no count",
+               rlc_error_flags_brief(ERR_VBAT_CRITICAL, buf, sizeof(buf)),
+               "VBAT CRITICAL");
+    expect_str("worst of three, rest counted",
+               rlc_error_flags_brief(multi, buf, sizeof(buf)),
+               "VBAT CRITICAL +2");
+    expect_str("relay fault outranks comm degraded",
+               rlc_error_flags_brief(ERR_COMM_DEGRADED | ERR_RELAY_FAULT,
+                                     buf, sizeof(buf)),
+               "RELAY FAULT +1");
+    expect_str("low battery is the least of them",
+               rlc_error_flags_brief(ERR_VBAT_LOW, buf, sizeof(buf)),
+               "VBAT LOW");
+    expect_str("empty mask", rlc_error_flags_brief(0x00, buf, sizeof(buf)),
+               "NONE");
+    /* The reason this helper exists: "BASE ERROR: " + this must fit 40. */
+    {
+        char toast[40];
+        char brief[26];   /* the buffer the remote actually passes */
+        rlc_error_flags_brief(0xFF, brief, sizeof(brief));
+        snprintf(toast, sizeof(toast), "BASE ERROR: %s", brief);
+        checks++;
+        if (strlen(toast) >= sizeof(toast) - 1) {
+            printf("  FAIL worst-case brief fills the overlay: \"%s\"\n", toast);
+            fails++;
+        }
+    }
+    {
+        char tiny[4];
+        rlc_error_flags_brief(0xFF, tiny, sizeof(tiny));
+        checks++;
+        if (strlen(tiny) >= sizeof(tiny)) {
+            printf("  FAIL brief overran a 4-byte buffer\n"); fails++;
+        }
+    }
+
     /* ── T-E07: the real case that prompted this — 0x02 on the base ── */
     printf("T-E07 the reported case: base error 0x02\n");
     expect_str("0x02 names the critical battery",

@@ -7,7 +7,63 @@
 
 #pragma once
 
-/* 1.1.29 (2026-08-27): the dead-man can no longer be defeated by mashing.
+/* 1.1.30 (2026-08-28): Phase 5 review fixes (RLC-REVIEW-ALL-009) — the
+ * operator-information layer on the fire path.
+ *
+ * CRIT-01: buzzer_set_background() ended with a buzzer_play(BUZZER_OFF)
+ * "nudge", and buzzer_play() is an atomic overwrite of a one-deep mailbox. The
+ * FSM tick sets the background from the state, so any handler that beeped AND
+ * left ARMED/PRE_FIRE/FIRING had its pattern destroyed microseconds later: the
+ * link-lost alarm, the critical-error alarm, and every FIRE-guard refusal were
+ * silent exactly when they originated from an armed state. The player task now
+ * polls the background between pattern slices; nothing is queued for it.
+ *
+ * MAJ-01: the remote's FIRING status handler was a whitelist (POST_FIRE/IDLE),
+ * so a base that latched terminal ERROR mid-pulse left the remote asserting
+ * "IGNITION ACTIVE" indefinitely. Now a blacklist, with ERROR/LINK_LOST named
+ * as base faults rather than reported as a cut-short pulse.
+ *
+ * MAJ-02: FIRE COMPLETE required only the remote's own elapsed time, which
+ * keeps running through a base-side abort — one lost STATUS_UPDATE could
+ * certify a channel that never carried current. Completion (and "cut short")
+ * now need a status that actually showed the base in FIRING.
+ *
+ * MAJ-03: NACKs answering the fire repeats are heeded in PRE_FIRE/FIRING —
+ * base-abort detection in ~200 ms instead of up to 2 s.
+ *
+ * MAJ-04/05: screen precedence — the boot splash and the FIRE COMPLETE hold no
+ * longer cover a live (ARMED/PRE_FIRE/FIRING) or alarmed (LINK_LOST) state.
+ *
+ * MAJ-06 and the minors: missing beeps on three refusal paths, buzzer up
+ * before the boot display check, FIRE ACK channel mismatch and key-off ARM
+ * abort named instead of blamed on the link, "LINK WEAK" in the top bar, no
+ * continuity glyph for an unknown igniter band, first-ARM-wins during the
+ * verify window, EVT_LINK_RECOVERED handled in base FIRING, input events
+ * posted with a 10 ms block instead of a zero timeout.
+ *
+ * The three minors the review left to an operator decision were settled the
+ * same day and are in this version too:
+ *
+ * MIN-02: the arm-verify timeout is a refusal on the first strike (NACK 0x0B,
+ * stay IDLE, retryable — the 200 ms window leaves only ~40 ms over the sense
+ * debounce, so a slow relay is not necessarily a broken one) and a latched
+ * ERR_RELAY_FAULT + terminal ERROR on the second consecutive one. Cleared by
+ * any successful verify. Weld detection is unchanged: terminal on sight.
+ *
+ * MIN-04: a validated command dropped because the FSM queue was full now gets
+ * NACK 0x0F (BASE_BUSY) instead of only a log line — the last silent refusal
+ * on a safety path. The remote deliberately ignores it for repeated CMD_FIRE:
+ * one refused frame is not the base leaving the firing path, and aborting a
+ * live pulse on it would be a false abort.
+ *
+ * MIN-12: no code change — FSD §8.2.3/§8.2.4 now describe the ping-failure
+ * *rate* test the firmware has always used, and record that the base's own
+ * dead-man and 1 s contact-freshness guards are what actually gate ignition.
+ *
+ * Remote and base both changed; flash them together. New NACK code, so a
+ * mismatched pair would also disagree about 0x0F.
+ *
+ * 1.1.29 (2026-08-27): the dead-man can no longer be defeated by mashing.
  *
  * SAFETY DEFECT found in edge-case testing (Phase 5 task 5). Rapidly mashing
  * the fire button FIRED THE CHANNEL.
@@ -616,5 +672,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  29
-#define RLC_VERSION_STRING "1.1.29"
+#define RLC_VERSION_PATCH  30
+#define RLC_VERSION_STRING "1.1.30"

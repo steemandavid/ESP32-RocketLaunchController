@@ -1,5 +1,90 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-28 — Review RLC-REVIEW-ALL-009 fixed: fw 1.1.29 → 1.1.30
+
+All seven Critical/Major findings of `Code_Review_Phase5_20260828_0641.md`
+fixed, plus ten minors and three info items. Every defect this round was in the
+operator-information layer on the fire path: nothing energised a relay or
+extended a pulse, but the remote could be silent about a link loss while armed,
+assert an ignition over a base in terminal ERROR, or certify a shot that never
+happened.
+
+- **CRIT-01** `buzzer_set_background()`'s `BUZZER_OFF` nudge atomically
+  overwrote the one-deep pattern mailbox, destroying any alarm or beep queued
+  in the same FSM tick. Link-lost and critical alarms were silent whenever the
+  transition started in ARMED/PRE_FIRE/FIRING, as was every FIRE-guard refusal.
+  The player task now polls the background (≤20 ms slices, 100 ms idle wait)
+  instead of being nudged through the mailbox.
+- **MAJ-01** remote FIRING now syncs on *any* base state off the firing path,
+  not just POST_FIRE/IDLE; ERROR and LINK_LOST are named as base faults.
+- **MAJ-02** FIRE COMPLETE and "cut short" require a STATUS_UPDATE that
+  actually showed the base in FIRING; otherwise the outcome is reported as
+  `CH n ENDED - NOT CONFIRMED`.
+- **MAJ-03** NACKs answering the repeated CMD_FIREs are acted on (~200 ms)
+  instead of discarded (up to 2 s).
+- **MAJ-04/05** the boot splash and the FIRE COMPLETE hold no longer cover a
+  live (ARMED/PRE_FIRE/FIRING) or alarmed (LINK_LOST) state.
+- **MAJ-06** the three refusal paths with a message but no beep now beep.
+- Minors: buzzer up before the boot display check (MIN-11); FIRE ACK channel
+  mismatch (MIN-05) and key-off ARM abort (MIN-09) named instead of blamed on
+  the link; first-ARM-wins in the verify window (MIN-01); `EVT_LINK_RECOVERED`
+  handled in base FIRING (MIN-03); `rlc_error_flags_brief()` for one-line
+  toasts with host test T-E08 (MIN-07); no glyph for an unknown igniter band
+  (MIN-08); `LINK WEAK` in the top bar (MIN-10); 10 ms blocking posts for
+  remote input events (MIN-06); `volatile s_channel` (INF-05).
+- Docs: FSD v1.47 (§6.3.3, §7.2.2, §8.2.3, §8.2.4, §8.2.6, §8.4, §10.2.1,
+  §10.2.2, §10.2.4a, §12.1, §13.1, §14.1 + revision row), Development_Progress
+  entry and firmware-version table brought up to date through 1.1.30 (INF-12),
+  README (FSD version reference, review row, Phase 5 status, and why a state
+  tone can never silence an alarm).
+
+The three minors that needed an operator decision were settled the same day and
+are in 1.1.30 as well:
+
+- **MIN-02** arm-verify timeout is now **two strikes**: first timeout NACKs 0x0B
+  and stays IDLE (retryable — ~40 ms of margin over the sense debounce means a
+  slow relay is not necessarily a broken one), second consecutive timeout latches
+  `ERR_RELAY_FAULT` and enters terminal ERROR. Cleared by any successful verify;
+  weld detection stays terminal on sight. New `ARM_VERIFY_FAULT_STRIKES`, and
+  three new T-FSM02 cases pin it.
+- **MIN-04** a command dropped by a full FSM queue is answered with a new
+  **NACK 0x0F `BASE_BUSY`** instead of only a log line. The remote ignores that
+  reason for repeated CMD_FIRE — a refused frame is not the base leaving the
+  firing path, and ending a live pulse on one would be a false abort.
+- **MIN-12** documentation only: §8.2.3/§8.2.4 now state the ping-failure *rate*
+  test the firmware implements, and record that ignition is gated by the base's
+  dead-man and contact-freshness guards (§7.2.4), not by this one.
+
+### Flashed and verified on target
+
+Both units built and flashed at the end of the session (host suite gates every
+firmware build: **467 checks, 0 failures**, base FSM harness 120 of them — up
+from 111 with the new MIN-02 cases).
+
+| Unit | by-id (board serial, survives chip swaps) | MAC | Result |
+|---|---|---|---|
+| Base (chip #4) | `usb-1a86_USB_Single_Serial_5B5E042156-if00` | `44:1b:f6:81:f1:70` | `=== RLC Base Unit v1.1.30 ===`, `BOOT -> IDLE` |
+| Remote | `usb-1a86_USB_Single_Serial_5B5E043219-if00` | `ac:a7:04:e2:f2:8c` | `=== RLC Remote Unit v1.1.30 ===`, `LINKING -> IDLE` |
+
+MACs were read with `esptool read_mac` before flashing (note: this esptool build
+uses the underscore spellings, `read_mac` / `write_flash`, not the hyphenated
+ones). Link verified from the base log: `LINK_REQUEST from remote fw 1.1.30` →
+`LINK_ACK sent` → `link state 2 -> 3`, RSSI −38. The MIN-11 ordering change is
+visible in the remote boot log — buzzer up at 978 ms, display task at 1638 ms.
+
+Expected bench artefact, not a regression: the base latched
+`ERROR flags=0x02 VBAT CRITICAL` 4.3 s after boot with `vbat=0 mv`, because the
+3S pack was not connected and it was running on USB alone. The pack must be on
+for any functional testing.
+
+### Still to do on target
+
+The audible half of the review is fixed but **not yet heard**. From ARMED, with
+the pack connected: kill the link, drive the battery critical, force a display
+fault, and walk each FIRE-guard refusal — every one must now beep as well as
+toast (that is the CRIT-01 acceptance test). MAJ-01/02 want the fault-injection
+build to drive the base into ERROR mid-pulse and to drop the abort STATUS_UPDATE.
+
 ## 2026-08-28 — Full code review RLC-REVIEW-ALL-009: verdict MAYBE (1 Critical, 6 Major)
 
 Read-only review of the whole codebase at `a101077` (fw 1.1.29), focused on

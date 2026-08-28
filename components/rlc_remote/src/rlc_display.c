@@ -882,23 +882,29 @@ static void draw_top_bar_dynamic(const disp_data_t *d)
              linked ? pct_from_range(d->link.rssi_avg_dbm, -100, -30) : 0,
              linked ? C_INFO : C_DGREY, C_BLACK);
 
-    /* Link state + round-trip time */
+    /* Link state + round-trip time.
+     *
+     * MIN-10: a LINKED-but-degraded link is its own thing and used to read
+     * "LINK OK" — while the buzzer chirped BEEP_PING_FAIL and the ARM guard
+     * refused with "LINK DEGRADED". One condition, three answers. "LINK WEAK"
+     * in amber is the one the other two already agree with. */
+    bool weak = linked && !rlc_link_is_healthy();
     const char *lnk = "LINK ??";
     switch (d->link.state) {
-        case RLC_LINK_STATE_LINKED:  lnk = "LINK OK"; break;
+        case RLC_LINK_STATE_LINKED:  lnk = weak ? "LINK WEAK" : "LINK OK"; break;
         case RLC_LINK_STATE_LINKING: lnk = "LINKING"; break;
         case RLC_LINK_STATE_LOST:    lnk = "NO LINK"; break;
         default:                     lnk = "LINK --"; break;
     }
-    draw_field(6, BAR_TXT_Y2, 7 * CHAR_W(2), lnk, 2,
-               linked ? C_WHITE : C_WARN, C_BLACK);
+    draw_field(6, BAR_TXT_Y2, 9 * CHAR_W(2), lnk, 2,
+               (linked && !weak) ? C_WHITE : C_WARN, C_BLACK);
 
     if (linked && d->link.ping_rtt_ms > 0) {
         snprintf(buf, sizeof(buf), "%3ums", d->link.ping_rtt_ms);
     } else {
         snprintf(buf, sizeof(buf), "  --ms");
     }
-    draw_field(6 + 7 * CHAR_W(2) + 12, BAR_TXT_Y2, 6 * CHAR_W(2), buf, 2,
+    draw_field(6 + 9 * CHAR_W(2) + 12, BAR_TXT_Y2, 6 * CHAR_W(2), buf, 2,
                C_WHITE, C_BLACK);
 
     /* Remote battery (1S LiPo: 3.0-4.2 V) */
@@ -1261,9 +1267,15 @@ static void draw_fire_complete_dynamic(const disp_data_t *d, uint8_t ch,
 
     draw_text_centred_bg_in(BOX_X + 6, BOX_W - 12, BOX_Y + 106, verdict, 2,
                             verdict_col, C_BLACK);
-    /* Shape as well as colour, matching the channel grid. */
-    draw_continuity_glyph(BOX_X + 26, BOX_Y + 114, 7,
-                          band_known ? band : CONT_OPEN);
+    /* Shape as well as colour, matching the channel grid. MIN-08: no glyph at
+     * all when the band is unknown — drawing the OPEN ring next to a grey
+     * "IGNITER ?" asserted a reading the screen has just said it does not
+     * have. */
+    if (band_known) {
+        draw_continuity_glyph(BOX_X + 26, BOX_Y + 114, 7, band);
+    } else {
+        fill_rect(BOX_X + 26 - 7, BOX_Y + 114 - 7, 15, 15, C_BLACK);
+    }
 
     int64_t left = until_ms - now_ms();
     if (left < 0) left = 0;
@@ -1589,19 +1601,40 @@ static void display_task(void *arg)
          * Errors still take precedence over the hold. */
         int64_t splash_until_ms = s_boot_ms + SPLASH_MIN_DURATION_MS;
 
+        /* MAJ-04/05: one predicate for "a state that must not be covered by a
+         * held screen", instead of a different escape set per special case.
+         * ARMED/PRE_FIRE/FIRING are live-pad states; LINK_LOST is an alarmed
+         * one — its own screen carries the disarm assumption and the alarm is
+         * already sounding. */
+        bool live_state = (d.state == STATE_ARMED ||
+                           d.state == STATE_PRE_FIRE ||
+                           d.state == STATE_FIRING);
+        bool alarmed_state = (d.state == STATE_LINK_LOST);
+
         screen_t want;
         if (fw_mismatch)                 want = SCR_FW_MISMATCH;
         else if (err_latched)            want = SCR_ERROR;
-        else if (now_ms() < splash_until_ms) want = SCR_SPLASH;
+        /* MAJ-04: the splash used to outrank every FSM state for its whole
+         * 10 s hold. Inputs are live long before that and linking completes in
+         * about a second, so the remote could sit in ARMED — relay closed,
+         * base siren running, buzzer heartbeat — under a "Connected to base"
+         * splash for the best part of nine seconds. Same argument as the
+         * fire_done escape below, with more force. */
+        else if (now_ms() < splash_until_ms && !live_state && !alarmed_state)
+                                         want = SCR_SPLASH;
         /* fire_done outranks the FSM-derived screen, which was harmless while
          * the screen and the base's cooldown both ended at 2000 ms. Now that
          * the screen outlives the cooldown, the operator can re-arm while it
          * is still up — and a summary of the last shot must never sit on top
          * of a live ARMED/PRE_FIRE/FIRING state. Cancel it the moment the FSM
-         * leaves an idle state. */
-        else if (fire_done && d.state != STATE_ARMED &&
-                              d.state != STATE_PRE_FIRE &&
-                              d.state != STATE_FIRING)
+         * leaves an idle state.
+         *
+         * MAJ-05: LINK_LOST cancels it too. A base powered down right after a
+         * shot put the FSM into LINK_LOST with its alarm sounding while a
+         * green FIRE COMPLETE screen sat on top for the rest of the hold, the
+         * igniter line greying out underneath. FSD §10.2.4a's cancel list was
+         * updated to match. */
+        else if (fire_done && !live_state && !alarmed_state)
                                          want = SCR_FIRE_COMPLETE;
         else                             want = screen_for_state(&d);
 

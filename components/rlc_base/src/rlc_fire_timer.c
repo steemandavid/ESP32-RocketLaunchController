@@ -19,6 +19,13 @@ static const char *TAG = "rlc_fire";
 static gptimer_handle_t s_timer = NULL;
 static TaskHandle_t     s_target_task = NULL;
 
+/* INF-02: FSD §7.4.2 describes the channel being carried as the timer
+ * callback's context and asserted against the firing channel on completion.
+ * This is a channel-less notification instead: the FSM owns s_firing_channel
+ * and stops the timer on every FIRING exit, so a completion can only ever
+ * refer to the pulse in progress, and there is nothing for the assertion to
+ * disagree with. Equivalent, with one fewer piece of state reachable from an
+ * ISR. */
 static bool IRAM_ATTR fire_timer_isr(gptimer_handle_t timer,
                                       const gptimer_alarm_event_data_t *edata,
                                       void *user_ctx)

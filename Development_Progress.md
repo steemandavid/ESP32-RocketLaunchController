@@ -3897,6 +3897,111 @@ only works with the channel relay in NC and there is a 50 ms settling delay
 that has not re-settled and the base refuses — the safe direction. It means very
 rapid re-arming can occasionally be rejected with no cause the operator can see.
 
+### Phase 5 Review Fixes Applied — fw 1.1.30 (2026-08-28)
+
+`Code_Review_Phase5_20260828_0641.md` (RLC-REVIEW-ALL-009, verdict MAYBE) found
+one Critical and six Majors, all of them in the **operator-information layer on
+the fire path** — nothing that energises a relay or extends a pulse, but the
+remote could be silent or wrong about a live pad. All seven are fixed, plus ten
+of the minors and three of the info items. Both builds clean, all host tests
+pass (`tests/host/run.sh`, including the base FSM injection harness).
+
+**CRIT-01 — the buzzer nudge silenced the alarms.**
+`buzzer_set_background()` ended with `buzzer_play(BUZZER_OFF)` so a state-tone
+change took effect at once. `buzzer_play()` is an atomic overwrite of a
+one-deep mailbox (the RM-05 fix), and `check_timers()` sets the background from
+the state on every 50 ms tick — so any handler that beeped *and* left
+ARMED/PRE_FIRE/FIRING had its pattern destroyed microseconds later, before the
+player task could dequeue it. `ALARM_LINK_LOST` on link loss while armed,
+`ALARM_CRITICAL` on battery/display-fault/multi-arm, and every FIRE-guard
+refusal triple were inaudible. The two fixes that made it (RM-05's atomic
+mailbox, 1.1.27's state tones) were each right on their own; the interaction
+was not. The player task now *polls* the background between pattern slices
+(≤20 ms) and on a 100 ms idle wait, so a background change never touches the
+mailbox at all. A repeating alarm now survives a background change, which is
+what an alarm is for.
+
+**MAJ-01 — "IGNITION ACTIVE" over a base in terminal ERROR.** The remote's
+FIRING status handler was a whitelist (`POST_FIRE || IDLE`). A base that
+latched ERROR mid-pulse — arm-relay weld fault, say — keeps sending
+STATUS_UPDATEs, so the frames stayed fresh, the stale backstop never ran, and
+the remote sat in FIRING indefinitely repeating CMD_FIRE at 5 Hz. Now a
+blacklist, matching PRE_FIRE, with ERROR/LINK_LOST reported as base faults
+rather than as a cut-short pulse.
+
+**MAJ-02 — FIRE COMPLETE for a channel that never fired.** Completion was
+`base_state == POST_FIRE || local_elapsed >= FIRE_PULSE_DURATION_MS`, and the
+local clock runs from the *remote's* FIRING entry — its own countdown expiring,
+which says nothing about the pad. A base abort during the 5 s countdown plus
+one lost STATUS_UPDATE was enough to certify a never-energised channel. A new
+`s_base_reached_firing` latch (set when a status actually shows the base in
+FIRING — the base pushes one on entry) now gates both the completion backstop
+and the "cut short" wording; without it the outcome is reported as
+`CH n ENDED - NOT CONFIRMED`, which asserts nothing.
+
+**MAJ-03 — the NACKs were being thrown away.** §8.4 forbids the base answering
+a CMD_FIRE while it is on the firing path, so a NACK for a repeat can only mean
+it has left — within ~200 ms, against up to 2 s for a status poll. PRE_FIRE and
+FIRING now handle `EVT_CMD_NACK` for MSG_CMD_FIRE and end the sequence, which
+collapses the windows MAJ-01 and MAJ-02 live in.
+
+**MAJ-04/05 — screen precedence.** The 10 s boot splash outranked every FSM
+state, so the remote could sit in ARMED under "Connecting to base" for ~9 s;
+the FIRE COMPLETE hold outranked LINK_LOST, showing a green success screen over
+a declared-dead link. One `live_state`/`alarmed_state` predicate now gates both
+(FSD §10.2.1, §10.2.4a updated to match).
+
+**MAJ-06 + minors.** Missing beeps added to the three refusal paths that only
+showed a message ("TURN ARM KEY FIRST", "ARM CANCELLED", "BASE ENDED
+SEQUENCE"); the buzzer is initialised *before* the boot display check so a dead
+panel can be reported audibly (MIN-11); the FIRE ACK channel mismatch (MIN-05)
+and a key-off ARM abort (MIN-09) are named instead of blamed on the link; a
+second CMD_ARM inside the arm-verify window is NACK'd, first-ARM-wins as §7.2.2
+already required (MIN-01); `EVT_LINK_RECOVERED` handled in base FIRING (MIN-03,
+latent until `FIRE_PULSE_DURATION_MS` passes ~1.5 s); multi-flag error toasts
+clamp to the worst flag plus a count instead of truncating mid-word (MIN-07,
+new `rlc_error_flags_brief()` with host test T-E08); no continuity glyph beside
+an unknown igniter band (MIN-08); `LINK WEAK` in the top bar so the display
+agrees with the buzzer and the ARM guard (MIN-10); remote input events posted
+with a 10 ms block and a log on drop instead of a zero timeout (MIN-06);
+`s_channel` volatile in the encoder (INF-05). INF-01, INF-02 and INF-08 got the
+comments they asked for.
+
+**The three deferred minors — settled by operator decision, same day:**
+
+- **MIN-02 — arm-verify timeout.** §7.2.2 said two contradictory things (step 2:
+  "disarm and set `ERR_RELAY_FAULT`", which §13.1 makes terminal; guard-failure
+  line: NACK and remain in IDLE) and the firmware did the second. Resolved as
+  **two strikes**: the first timeout de-energises the relay, NACKs 0x0B and
+  stays IDLE — retryable, because a 200 ms window over a 160 ms sense debounce
+  leaves ~40 ms for the relay to operate (INF-01) and a slow relay is not
+  necessarily a broken one — while `ARM_VERIFY_FAULT_STRIKES` (2) consecutive
+  timeouts latch `ERR_RELAY_FAULT` and enter terminal ERROR. Any successful
+  verify clears the count. Weld detection (§13.1 case b) is untouched: still
+  terminal on first sight. Pinned by three new T-FSM02 cases (120 checks in the
+  base FSM harness, up from 111).
+- **MIN-04 — dropped command was silent on the wire.** The zero-timeout forward
+  stays (it runs with the link state mutex held; blocking there would stall the
+  receive path), but a drop now answers **NACK 0x0F `BASE_BUSY`** on the same
+  locked path replay and CRC refusals already use. One wrinkle worth recording:
+  the MAJ-03 fix treats a NACK for a repeated CMD_FIRE as "the base left the
+  firing path", which is wrong for this reason code — a refused frame is not a
+  departure, and the base is still counting its dead-man from the last repeat it
+  took. Both PRE_FIRE and FIRING therefore ignore 0x0F specifically, or the new
+  NACK would have introduced a false abort mid-pulse.
+- **MIN-12 — guard-4 parity.** Documentation only, by decision: §8.2.3 guard 4
+  and §8.2.4 guard 2 now describe the ≤30 %-over-10-pings rate test the code has
+  always used, and say why it is sufficient — the ignition interlock is the
+  base's own dead-man (500 ms) plus contact freshness (1000 ms) at
+  PRE_FIRE→FIRING (§7.2.4), not this guard. The known consequence is recorded
+  too: the remote may commit on a 4 s-old status while the base re-checks at 1 s,
+  so a link that dies during the countdown gives a full 5 s count that then
+  aborts at the base.
+
+**Still to do on target:** reflash both units at 1.1.30 and re-check by ear from
+ARMED — link kill, battery critical, display fault, and each FIRE-guard refusal
+must now beep — plus the MAJ-01/02 paths under fault injection.
+
 ### Phase 5 FSD Safety Tests (§15.4)
 
 | ID | Test | Status |
@@ -3944,10 +4049,32 @@ Both units must run the same MAJOR.MINOR.PATCH or they refuse to link, so every
 bump means **flash base and remote together**. Full rationale for each entry is
 in `components/rlc_common/include/rlc_version.h`; this table exists because
 entries 1.1.3–1.1.7 were previously recorded only there and nowhere in this
-document.
+document. Brought up to date through 1.1.30 on 2026-08-28 (the table had been
+left at 1.1.9 — review finding INF-12).
 
 | Version | Date | Unit(s) | Change |
 |---|---|---|---|
+| 1.1.30 | 2026-08-28 | both | Phase 5 review fix round (`Code_Review_Phase5_20260828_0641.md`, RLC-REVIEW-ALL-009). **CRIT-01** the buzzer background nudge no longer destroys a just-queued alarm — the link-lost and critical alarms were silent whenever the transition started in ARMED/PRE_FIRE/FIRING; **MAJ-01** remote FIRING syncs on any base state off the firing path (a base in terminal ERROR left it showing IGNITION ACTIVE); **MAJ-02** FIRE COMPLETE / cut-short need positive evidence the base reached FIRING; **MAJ-03** NACKs for repeated CMD_FIRE are heeded; **MAJ-04/05** splash and FIRE COMPLETE never cover a live or alarmed state; **MAJ-06** three refusal paths gained their missing beep; MIN-01/03/05/07/08/09/10/11 and INF-05. |
+| 1.1.29 | 2026-08-27 | remote | **SAFETY DEFECT (E2).** Asymmetric dead-man debounce — 80 ms to press, 20 ms to release. Mashing the fire button used to fire the channel: symmetric 8-bit debouncing never reported a release, so both dead-man layers stayed satisfied. |
+| 1.1.28 | 2026-08-27 | remote | Boot display health check rejects both undriven signatures (0x00000000/0xFFFFFFFF) and checks the SPI return status, as the periodic check has since 1.1.9. |
+| 1.1.27 | 2026-08-27 | remote | Audible state tones: `ALARM_ARMED` (~0.8 Hz heartbeat) and `ALARM_FIRING` (~4 Hz), as backgrounds so one-shot beeps do not kill them. Cut-short discrimination for the FIRING→IDLE case. |
+| 1.1.26 | 2026-08-27 | remote | Removed the 200 ms clock-skew slack that let 1.1.25 still call a base-side abort at 802 ms of a 1000 ms pulse "complete". |
+| 1.1.25 | 2026-08-27 | remote | The remote no longer claims FIRE COMPLETE for a pulse the base cut short — both end with `base_state == IDLE`. |
+| 1.1.24 | 2026-08-27 | remote | Cease-fire toasts: a cease-fire says the channel *was* energised (`CH n PULSE CUT SHORT` / `CH n CUT SHORT - ARM OFF`), which a silent return to IDLE could not distinguish from a countdown abort. |
+| 1.1.23 | 2026-08-27 | remote | FIRE COMPLETE screen holds for 10 s (5 s was still too short to read the igniter line and act). |
+| 1.1.22 | 2026-08-27 | remote | FIRE COMPLETE screen decoupled from `POST_FIRE_COOLDOWN_MS` (its own `FIRE_COMPLETE_SCREEN_MS`), plus the live igniter-continuity line. |
+| 1.1.21 | 2026-08-27 | remote | Status band drawn only where it carries information. |
+| 1.1.20 | 2026-08-27 | both | **Bug #20** — crypto keys rotated out of the repo into gitignored `rlc_secrets.h`, with a pre-commit guard. |
+| 1.1.19 | 2026-08-27 | both | The arming sequence must be walked in order, and says so: ARM is refused while the fire button or encoder is already held. |
+| 1.1.18 | 2026-08-27 | both | A firmware mismatch also reaches a remote running the older firmware. |
+| 1.1.17 | 2026-08-27 | base | The base says why it refused a handshake (`LINK_REJECT_BUSY` instead of a silent drop) — T-S09. |
+| 1.1.16 | 2026-08-27 | base | No more false RELAY WELDED on a normal disarm. |
+| 1.1.15 | 2026-08-27 | remote | Status band no longer claims SAFE on a dead link. |
+| 1.1.14 | 2026-08-27 | remote | The one-key / both-keys distinction made visible. |
+| 1.1.13 | 2026-08-27 | remote | Status band separates one key turned from two. |
+| 1.1.12 | 2026-08-27 | remote | System status band, and a background-fill fix. |
+| 1.1.11 | 2026-08-27 | remote | Stock build — the T-D09 display profiling harness removed again. |
+| 1.1.10 | 2026-08-27 | remote | Display refresh fix (T-D09 failed on target). |
 | 1.1.9 | 2026-08-27 | both | Full-codebase review fix round (`Code_Review_AllPhases_20260827_0308.md`). **BF-01/bug #31 (CRITICAL)** fire-timer fix; BF-02 PRE_FIRE heartbeat-freshness as its own guard; BF-03 `SIREN_CONTINUITY_LOST`; BF-04/CI-05 latched boot-failure halts; BF-07 FSM queue before the arm-sense task; CM-01 link-state lock; CM-02 replay/CRC NACKs; CM-03 data-gap detection; CM-04 truncated ACK/NACK dropped; CM-05 seq 0 rejected; CM-06 unused esp-now dependency removed; **DS-01** runtime display health check; DS-02/03 display corrections; RM-01/02/03/05/06/07/09/11; CI-01 relay-settling delay; CI-02 `ERR_VBAT_LOW`; CI-04 `led_task` on the TWDT; buzzer task back to §9.10's priority 1 / core 1. |
 | 1.1.8 | 2026-08-26 | base | Bug #30 — level-triggered backstop for the continuity-loss disarm, plus a re-check at arm-verify completion. |
 | 1.1.7 | 2026-08-26 | remote | Fire-button ring LED reports *state*, not the button: red only when a press would actually do something (remote ARMED/PRE_FIRE/FIRING **and** a fresh STATUS_UPDATE confirming the same channel armed at the base). It had shown the operator's finger since Phase 2. |

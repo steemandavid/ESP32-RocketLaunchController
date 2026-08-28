@@ -65,6 +65,15 @@ pattern through the pre-fire countdown and the pulse. The tempo gap is what
 carries the meaning. They are deliberately unlike the two fault alarms, which
 are both ~2.5 Hz, so "the pad is live" never sounds like "something is wrong".
 
+A state tone is a *background* the player returns to, and changing it can never
+silence anything: the player task polls for the change instead of being nudged
+through its pattern mailbox. That distinction was a real defect until firmware
+1.1.30 — the nudge was an atomic overwrite of a one-deep mailbox, so an alarm
+queued in the same 50 ms tick as a state change was deleted before it could
+sound. The link-lost and critical-error alarms were completely silent whenever
+the fault arrived while ARMED, PRE_FIRE or FIRING, which is precisely when the
+operator most needs to hear one.
+
 Battery readings take the **median** of a 33-sample burst rather than a mean,
 because a sample clipped at the ADC's full scale can only bias a mean *upward* —
 making a flat pack read as healthy, which is the one direction a battery guard
@@ -242,7 +251,7 @@ so the "pad is live" signal is never diluted into a data display.
 | 2 | Input/output and debouncing | Complete |
 | 3 | State machines and command processing | Complete — G2 arming suite 18/18, G3 fire tests all pass or discharged |
 | 4 | Display | Verified on target 2026-08-27 — 9/9 pass; status band added and its 7 states verified |
-| 5 | Hardening and final testing | In progress — §15.4 safety tests 14/19 (incl. T-S06 partial); bug #20 closed. Only T-S10 and T-S18 genuinely open, both blocked on physical access: a soldered display and a soldered key-sense wire |
+| 5 | Hardening and final testing | In progress — §15.4 safety tests 14/19 (incl. T-S06 partial); bug #20 closed. Only T-S10 and T-S18 genuinely open, both blocked on physical access: a soldered display and a soldered key-sense wire. Phase 5 code review closed out 2026-08-28 in fw 1.1.30 (1 Critical, 6 Major, 13 Minor); its audible-feedback fixes still need an on-target ear check |
 
 Known open items before any field use:
 
@@ -390,7 +399,7 @@ Known open items before any field use:
 
 | Document | Contents |
 |---|---|
-| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.44 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
+| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.47 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
 | `Development_Progress.md` | Per-phase task and test tracking, hardware reference, bug history |
 | `RLC_Project_Summary.md` | Plain-language overview written for club members |
 | `Test_Report_Phase4_Display.md` | Phase 4 on-target display tests T-D01…T-D09 — 9 PASS / 0 FAIL (T-D09 failed at 3.3 Hz, fixed same day to 10.0 Hz, §6), plus a §10.2 coverage gap: four specified screens have never been rendered |
@@ -399,6 +408,7 @@ Known open items before any field use:
 | `Code_Review_AllPhases_20260821_1430.md` | Full-codebase review: 7 Major findings, 4 gating live-fire, plus a documentation-consistency audit. All seven fixed in 28293b6. |
 | `Code_Review_AllPhases_20260821_1523.md` | Post-fix re-review: all 7 prior Majors verified fixed; 2 new Majors found (arm key at boot, siren stale-callback race) and 13 minors. Fixed in firmware 1.1.1. |
 | `Code_Review_AllPhases_20260827_0308.md` | Full-codebase review vs FSD v1.42: verdict FAIL — 1 Critical (BF-01 fire timer not stopped after pulse → second launch per power cycle panics with relay energized), 8 Major, 44 Minor. **All findings fixed 2026-08-27 in firmware 1.1.9 / FSD v1.44**, including a host FSM harness that regression-tests the Critical one. |
+| `Code_Review_Phase5_20260828_0641.md` | Phase 5 review vs FSD v1.46: verdict MAYBE — 1 Critical, 6 Major, 12 Minor, all in the *operator-information* layer (nothing energized a relay or extended a pulse; the remote could be silent or wrong about a live pad). **All Critical/Major and ten Minors fixed 2026-08-28 in firmware 1.1.30 / FSD v1.47**; the three findings needing an operator decision were settled the same day. |
 
 ## Hardware
 

@@ -851,10 +851,20 @@ static void process_frame(const link_rx_item_t *it)
                     /* CM-07: a dropped command is a refused command. Say so —
                      * post-mortem this used to be indistinguishable from RF
                      * loss. Zero timeout is deliberate: process_frame() runs
-                     * with the state mutex held. */
+                     * with the state mutex held, and blocking here would stall
+                     * the receive path for every other frame too.
+                     *
+                     * MIN-04: the log line was the whole answer until
+                     * 2026-08-28 — nothing went back on the wire, so the
+                     * operator saw a command simply do nothing. NACK it with
+                     * BASE_BUSY, on the same locked path the replay and CRC
+                     * refusals above already use. */
                     if (xQueueSend(s_cmd_queue, &evt, 0) != pdTRUE) {
                         ESP_LOGE(TAG, "FSM queue full — CMD 0x%02x seq %lu dropped!",
                                  hdr.msg_type, (unsigned long)hdr.sequence_number);
+                        send_refusal_nack_locked(hdr.msg_type,
+                                                 hdr.sequence_number,
+                                                 NACK_BASE_BUSY);
                     }
                 }
             }

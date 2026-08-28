@@ -41,7 +41,10 @@ static const char *TAG = "rlc_enc";
 
 #define ENCODER_LONG_PRESS_MS  500
 
-static uint8_t s_channel = 1;
+/* INF-05: volatile — written from the quadrature ISR, read from the FSM and
+ * display tasks, exactly like s_max_channel below. Xtensa reloads it in
+ * practice today; under LTO it need not. */
+static volatile uint8_t s_channel = 1;
 /* RM-02: highest selectable channel. Narrowed to the base's advertised
  * num_channels once LINK_ACK arrives (FSD §8.2.2). */
 static volatile uint8_t s_max_channel = NUM_CHANNELS;
