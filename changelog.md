@@ -1,5 +1,74 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-28 — Full code review RLC-REVIEW-ALL-009: verdict MAYBE (1 Critical, 6 Major)
+
+Read-only review of the whole codebase at `a101077` (fw 1.1.29), focused on
+the arm-fire sequence, error handling, and toast/status screens — the Phase 5
+delta since RLC-REVIEW-ALL-008 (fw 1.1.8). Written to
+`Code_Review_Phase5_20260828_0641.md`. No source files were touched.
+
+### Prior review's findings — all re-verified fixed
+
+BF-01 (fire timer, Critical) intact across all three layers; CM-01 mutex,
+DS-01 runtime display health check, TT-04 host FSM harness, CM-02/04/05,
+RM-05/06, BF-02/03 all confirmed in place. The fw 1.1.29 asymmetric debounce
+was traced through every layer (debounce → fresh-press → repeat task → base
+dead-man) and is correct; mash closes at the event layer.
+
+### New findings — the operator-information layer
+
+Nothing found this round extends a pulse or energizes a relay. What broke is
+what the operator is told:
+
+1. **CRIT-01** — `buzzer_set_background()`'s `BUZZER_OFF` nudge is an
+   `xQueueOverwrite` on the depth-1 mailbox, so it atomically deletes any
+   alarm queued in the same FSM tick. The link-lost and critical-error alarms
+   are **completely silent when the transition originates in ARMED/PRE_FIRE/
+   FIRING**, as are every FIRE-guard refusal beep, the disarm BEEP_LONG, the
+   arm-confirm double, and the FIRING "PULSE CUT SHORT" triples. §7.2.9a's
+   audible half fails on the highest-hazard paths; T-A20 passed because its
+   cases originate in IDLE where the idempotence guard saves the alarm.
+2. **MAJ-01** — remote FIRING only syncs on base POST_FIRE/IDLE (whitelist);
+   a base that enters ERROR mid-pulse (weld fault) leaves the remote showing
+   IGNITION ACTIVE + firing tone + 5 Hz repeats indefinitely; button release
+   then says "PULSE CUT SHORT" about a base needing a power cycle.
+3. **MAJ-02** — false FIRE COMPLETE: base aborts during PRE_FIRE (never
+   energizes) + one lost STATUS_UPDATE ⇒ remote's local-elapsed backstop
+   (`fired_ms ≥ 1000` from *local* FIRING entry) shows the 10 s green screen
+   for a channel that never carried current. cf797c0 closed the during-pulse
+   case; the before-energization case is still open.
+4. **MAJ-03** — root amplifier: the base NACKs stray CMD_FIRE repeats within
+   ~200 ms of leaving the firing path (WRONG_STATE from IDLE, BASE_ERROR from
+   ERROR) but the remote discards EVT_CMD_NACK outside `wait_for_ack()`, so
+   abort detection waits for the 2 s status cadence.
+5. **MAJ-04/05** — display precedence: the 10 s splash hold outranks the
+   ARMED/FIRING screens (splash over a live armed pad for up to ~9 s), and
+   FIRE COMPLETE outranks LINK_LOST during its hold (green screen over a
+   declared-dead link).
+6. **MAJ-06** — three refusal paths have a toast but no buzzer at all
+   (arm-guard-1 key-off, ARM −4 "CANCELLED", PRE_FIRE "BASE ENDED SEQUENCE"),
+   independent of CRIT-01.
+
+Plus 12 Minor (double-CMD_ARM in the verify window; arm-verify timeout
+doesn't latch ERR_RELAY_FAULT though §7.2.2 says to — FSD self-contradiction;
+FIRE −2 mislabeled "NO RESPONSE"; arm-retry key-off misattributed to the
+base; "LINK OK" bar while degraded; boot display-fault has no buzzer;
+error-toast truncation; IGNITER ? draws an OPEN glyph; …) and 12 Info.
+
+### Recommendation in the review
+
+Conditional GO: bench/fault-injection work can continue now; fix CRIT-01 +
+MAJ-01/02/04 and reflash both units before the next live-fire session. All
+four are small, localized fixes. MAJ-03 (heed the NACKs) collapses the
+MAJ-01/02 windows 10× and is worth doing in the same pass. MIN-03
+(EVT_LINK_RECOVERED unhandled in FIRING) becomes mandatory before any
+`FIRE_PULSE_DURATION_MS` increase past ~1.5 s.
+
+Docs to sweep: FSD §15.4 T-S09 row still says "silently ignores";
+Development_Progress firmware-version history table still ends at 1.1.9;
+DOC-03/04/TT-01 (hw-test-spec GPIO/by-id leftovers) not re-verified this
+round.
+
 ## 2026-08-27 — Phase 4 verified, bug #20 closed, firmware 1.1.11 → 1.1.27
 
 A long session. Phase 4's display suite run and its one failure fixed, the

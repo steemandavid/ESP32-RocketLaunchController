@@ -52,6 +52,45 @@ Non-blocking items tracked elsewhere: the unimplemented FSD §7 remote-battery
 arming guard / NACK `0x0C` (in "Phase 4 Findings — Battery Thresholds"), and the
 FSD §10.2.0 continuity palette deviation.
 
+**Full-codebase review 2026-08-28** (`Code_Review_Phase5_20260828_0641.md`,
+RLC-REVIEW-ALL-009, commit `a101077`, fw 1.1.29): verdict **MAYBE** —
+conditional GO. Focus: the arm-fire sequence, error handling, and
+toast/status screens. **Every ALL-008 finding was re-verified fixed**
+(BF-01's three layers, CM-01, DS-01, TT-04's harness, CM-02/04/05, RM-05/06,
+BF-02/03), and the fw 1.1.29 asymmetric debounce traced correct through
+every layer. Nothing new extends a pulse or energizes a relay; the 1
+Critical + 6 Majors are all in the operator-information layer:
+
+- **CRIT-01.** `buzzer_set_background()`'s `BUZZER_OFF` nudge is an
+  `xQueueOverwrite` on the depth-1 mailbox and atomically deletes any alarm
+  queued in the same FSM tick — the link-lost and critical-error alarms are
+  **completely silent when the transition originates in ARMED/PRE_FIRE/FIRING**,
+  as are all FIRE-guard refusal beeps and the FIRING "PULSE CUT SHORT"
+  triples. §7.2.9a's audible half fails on the highest-hazard paths.
+- **MAJ-01.** Remote FIRING syncs only on base POST_FIRE/IDLE (whitelist;
+  PRE_FIRE's is a blacklist) — a base entering ERROR mid-pulse (weld fault)
+  leaves the remote showing IGNITION ACTIVE + firing tone indefinitely.
+- **MAJ-02.** False FIRE COMPLETE: base aborts during PRE_FIRE + one lost
+  STATUS_UPDATE ⇒ the local-elapsed backstop (which assumes local FIRING
+  entry ⇒ base energized) shows the 10 s green screen for a never-fired
+  channel.
+- **MAJ-03.** The base NACKs stray CMD_FIRE repeats ~200 ms after leaving the
+  firing path (WRONG_STATE / BASE_ERROR) but the remote discards
+  `EVT_CMD_NACK` outside `wait_for_ack()` — abort detection waits for the
+  2 s status cadence. Root amplifier of MAJ-01/02.
+- **MAJ-04/05.** Display precedence: the 10 s splash hold outranks the
+  ARMED/FIRING screens; FIRE COMPLETE outranks LINK_LOST during its hold.
+- **MAJ-06.** Three refusal paths have a toast but no buzzer at all
+  (arm-guard-1 key-off, ARM −4, "BASE ENDED SEQUENCE"), independent of
+  CRIT-01.
+
+Plus 12 Minor (double-CMD_ARM in the verify window; arm-verify timeout
+doesn't latch `ERR_RELAY_FAULT` though §7.2.2 says to — FSD
+self-contradiction; FIRE −2 and arm-retry key-off misattributed to the base;
+"LINK OK" bar while degraded; boot display-fault has no buzzer; …) and
+12 Info. **Gate: fix CRIT-01 + MAJ-01/02/04 before the next live-fire
+session** (all small, localized); bench work can continue now.
+
 **Full-codebase review 2026-08-27** (`Code_Review_AllPhases_20260827_0308.md`,
 commit d04d07b): verdict **FAIL**, on one CRITICAL finding. **All findings —
 Critical, Major and Minor — were fixed on 2026-08-27 in firmware 1.1.9 and
