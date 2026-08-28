@@ -7,7 +7,30 @@
 
 #pragma once
 
-/* 1.1.35 (2026-08-28): a critical pack no longer leaves the base armed.
+/* 1.2.0 (2026-08-28): FINAL — Phase 5 release.
+ *
+ * A version-only bump: the code is byte-for-byte 1.1.35's, and 1.1.35 is the
+ * build both units ended the second on-target campaign on (stock, non-
+ * injection) with every defect it surfaced fixed and re-verified. The MINOR
+ * bump marks the release rather than another patch: the Phase 5 review round
+ * (RLC-REVIEW-ALL-009) and the two on-target campaigns that closed it out
+ * are done, and the bug #29 regression suite is complete — cleared for live
+ * fire.
+ *
+ * Final-build audit recorded with this tag: both fault-injection consoles
+ * compile to nothing (options default n, absent from every sdkconfig, zero
+ * injection symbols in both stock ELFs); the display-profile harness was
+ * removed at 1.1.11; CONT_TRACE_INTERVAL_MS is 0 for field builds; the
+ * rlc-hw-test-* bring-up projects are outside the main build.
+ *
+ * Deferred past this release, tracked in Development_Progress Phase 5:
+ * T-S12/S13 and T-S18 (needs physical access), T-C06 replay tool, range
+ * 10-100 m and power-consumption measurements (field), remote FSM host
+ * harness, CI runner.
+ *
+ * Flash both units together, as always.
+ *
+ * 1.1.35 (2026-08-28): a critical pack no longer leaves the base armed.
 
  * Found live during the CRIT-01 on-target retest (fw 1.1.34, injection key
  * 'b'): battery-critical injected from ARMED sounded the alarm and latched
@@ -800,6 +823,6 @@
  * components, so flash base and remote together or they will refuse to
  * link. */
 #define RLC_VERSION_MAJOR  1
-#define RLC_VERSION_MINOR  1
-#define RLC_VERSION_PATCH  35
-#define RLC_VERSION_STRING "1.1.35"
+#define RLC_VERSION_MINOR  2
+#define RLC_VERSION_PATCH  0
+#define RLC_VERSION_STRING "1.2.0"

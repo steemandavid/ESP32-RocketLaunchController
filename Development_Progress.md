@@ -21,7 +21,7 @@
 | 2 | Input/Output and Debouncing | COMPLETE |
 | 3 | State Machines and Command Processing | COMPLETE — dev + FSD tests; residual test items (T-F04/T-F05) tracked under Phase 5 task 1 |
 | 4 | Display | COMPLETE — dev + FSD tests; residual test items (T-L15/T-L16) tracked under Phase 5 task 1 |
-| 5 | Hardening and Final Testing | **IN PROGRESS** (since 2026-08-27; fw 1.1.35) — safety tests §15.4 mostly PASS, review fixes applied and verified **on target** (MAJ-01, CRIT-01 both halves, bug #29 regression suite T-A16/T-A17/T-A18 all PASS); remaining: T-S10b, T-S12/S13, T-S18, T-C06 replay tool, range 10–100 m, power consumption, remote FSM host harness, CI runner, docs, final version |
+| 5 | Hardening and Final Testing | **COMPLETE (release fw 1.2.0, 2026-08-28)** — safety tests §15.4 mostly PASS, review fixes applied and verified **on target** (MAJ-01, CRIT-01 both halves, bug #29 regression suite T-A16/T-A17/T-A18 all PASS); final docs sweep done, final-build audit clean (zero injection/harness symbols in both stock ELFs), both units on stock 1.2.0 and linked. **Deferred past release** (tracked here, not blocking live fire): T-S10b, T-S12/S13, T-S18 (physical access), T-C06 replay tool, range 10–100 m, power consumption, remote FSM host harness, CI runner |
 
 ---
 
@@ -4145,11 +4145,12 @@ Both units must run the same MAJOR.MINOR.PATCH or they refuse to link, so every
 bump means **flash base and remote together**. Full rationale for each entry is
 in `components/rlc_common/include/rlc_version.h`; this table exists because
 entries 1.1.3–1.1.7 were previously recorded only there and nowhere in this
-document. Brought up to date through 1.1.35 on 2026-08-28 (the table had been
+document. Brought up to date through 1.2.0 on 2026-08-28 (the table had been
 left at 1.1.9 — review finding INF-12).
 
 | Version | Date | Unit(s) | Change |
 |---|---|---|---|
+| 1.2.0 | 2026-08-28 | both | **FINAL — Phase 5 release.** Version-only bump over 1.1.35 (no code delta). Marks the close of the Phase 5 review round and both on-target campaigns; bug #29 regression suite complete — cleared for live fire. Final-build audit recorded with the tag: fault-injection consoles compile to nothing (options default n, absent from every sdkconfig, zero injection symbols in both stock ELFs), display-profile harness gone since 1.1.11, `CONT_TRACE_INTERVAL_MS 0` for field, hw-test projects outside the main build. Deferred past release: T-S12/S13, T-S18, T-C06, range/power measurements, remote FSM host harness, CI. |
 | 1.1.35 | 2026-08-28 | remote | Battery-critical from ARMED now sends `CMD_DISARM` before entering ERROR, mirroring the display-fault handler. Found live during the CRIT-01 `b` retest: the base arm relay ran its full 10 s ARM TIMEOUT while the remote sat in terminal ERROR with no way to command the pad safe. Re-verified on target: armed → safe in **26 ms** (was 10 s). PRE_FIRE/FIRING were never exposed — their `CEASE_FIRE` makes the base disarm. |
 | 1.1.34 | 2026-08-28 | remote | A base-aborted countdown names its cause. Found live during the bug #29 T-A17 retest: the NACK answering a fire repeat beat the cause-carrying STATUS_UPDATE by 7 ms and the remote toasted raw `[NACK] WRONG STATE`. The NACK path now says `BASE ENDED SEQUENCE` and latches the channel; the first status in IDLE settles it one-shot — channel disarmed + band OPEN → `CONTINUITY LOST - DISARMED` with `BEEP_CONTINUITY_LOST`. PRE_FIRE status-exit gains the same RM-07 discrimination. |
 | 1.1.33 | 2026-08-28 | base | `gptimer_stop: timer is not running` false ERROR on the first shot of a power cycle silenced — the BF-01 defensive stop now only calls `gptimer_stop()` when a mirror of the driver's RUN state says it is running. The stop itself is unchanged when the timer IS running, so BF-01's protection is not weakened. |

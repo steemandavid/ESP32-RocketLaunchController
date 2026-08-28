@@ -1,5 +1,30 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-28 (third session) — FINAL release: fw 1.2.0, Phase 5 closed
+
+- **T-A18 closed** (start of session): 68 Ω resistor on ch2, pulled ~1.5 s
+  after arming ch1 — ch2 MARG→OPEN, base stayed ARMED through its full
+  `ARM TIMEOUT (10022 ms)`, remote silent on the non-armed channel, correct
+  `BASE DISARMED` at timeout. **Bug #29 regression suite complete.**
+- **Final-build audit — no test harness or fault injection in the release:**
+  both injection consoles are wholly `#if CONFIG_*_FAULT_INJECTION`-gated
+  (options default n, absent from every sdkconfig, `#warning` + boot banner
+  when on); **zero injection symbols in both stock ELFs** by `nm`; the
+  display-profile harness was removed at 1.1.11; `CONT_TRACE_INTERVAL_MS`
+  is 0 for field builds with its code `#if`-gated; the `rlc-hw-test-*`
+  bring-up projects are outside the main build; no leftover inject mark
+  files.
+- **fw 1.2.0** — version-only bump over 1.1.35 (no code delta), marking the
+  Phase 5 release. Host suite 467 checks / 0 failures on both builds. Both
+  units flashed with stock 1.2.0, clean hard-reset, **linked on the first
+  attempt** (`LINK_REQUEST from remote fw 1.2.0`, both IDLE, rssi −44/−43),
+  boot banner `RLC Firmware v1.2.0`, zero injection mentions in either log.
+- **Docs sweep:** Development_Progress Phase 5 → COMPLETE (release 1.2.0)
+  with the deferred list recorded (T-S10b, T-S12/S13, T-S18, T-C06, range,
+  power, remote FSM host harness, CI); version table through 1.2.0; README
+  Phase 5 row updated; FSD revision 1.50 records the release and the audit.
+- Git tag `v1.2.0`.
+
 ## 2026-08-28 (second session) — MAJ-01/CRIT-01 closed on target; two live defects found and fixed; fw 1.1.32 → 1.1.35
 
 Full detail in `Test_Report_Phase5_OnTarget_20260828.md`. Host suite 467
