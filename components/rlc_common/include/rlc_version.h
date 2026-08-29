@@ -7,6 +7,25 @@
 
 #pragma once
 
+/* 1.2.1 (2026-08-29): the remote's boot splash now carries an unmissable
+ * FAULT INJECTION BUILD banner when CONFIG_RLC_REMOTE_FAULT_INJECTION is set —
+ * a red frame around the whole screen and a red block displacing the club
+ * credit. The build already announced itself four ways (compile #warning, boot
+ * banner, flash-time warning, and a build failure if the option did not reach
+ * the built config), but all four are on the developer's terminal. None is
+ * visible to someone who picks the remote up at a firing point, which is
+ * precisely the person who must not be misled by a build that lies to its
+ * operator by construction.
+ *
+ * Remote-only, display-only, no protocol change. Version bumped anyway: the
+ * binary differs, and a changed binary sharing a version number is exactly
+ * what the strict version check exists to prevent. Flash both units together.
+ *
+ * NOT covered: a *base* built with --inject cannot be signalled on the
+ * remote's splash. The remote knows only its own build, and the base does not
+ * advertise its fault-injection state on the wire. Closing that gap needs a
+ * protocol field and an explicit decision. */
+
 /* 1.2.0 (2026-08-28): FINAL — Phase 5 release.
  *
  * A version-only bump: the code is byte-for-byte 1.1.35's, and 1.1.35 is the
@@ -824,5 +843,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  0
-#define RLC_VERSION_STRING "1.2.0"
+#define RLC_VERSION_PATCH  1
+#define RLC_VERSION_STRING "1.2.1"

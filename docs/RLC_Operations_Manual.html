@@ -396,7 +396,7 @@ footer.doc {
 
   <dl class="cover-meta">
     <div><dt>Document</dt><dd>RLC-OPS-001 · Operations Manual</dd></div>
-    <div><dt>Applies to firmware</dt><dd>1.2.0 (both units, byte-identical)</dd></div>
+    <div><dt>Applies to firmware</dt><dd>1.2.1 (both units, byte-identical)</dd></div>
     <div><dt>Specification of record</dt><dd>RLC Functional Specification v1.47</dd></div>
     <div><dt>Issued</dt><dd>2026-08-29</dd></div>
     <div><dt>Operating organisation</dt><dd>VRO — Vlaamse Raket Organisatie</dd></div>
@@ -445,7 +445,7 @@ footer.doc {
     <li><span><span class="n">5</span>Safety</span>
       <ul>
         <li><span class="n">5.1</span> Safety principles</li>
-        <li><span class="n">5.2</span> The fire path: three independent breaks</li>
+        <li><span class="n">5.2</span> The fire path: two independent breaks</li>
         <li><span class="n">5.3</span> Hardware safety features</li>
         <li><span class="n">5.4</span> Firmware safety features</li>
         <li><span class="n">5.5</span> Communication security</li>
@@ -488,8 +488,8 @@ person depending on your club’s practice:</p>
 <table class="compact">
   <thead><tr><th style="width:26%">Role</th><th>Responsibility</th></tr></thead>
   <tbody>
-    <tr><td><strong>Launch&nbsp;Operator</strong></td><td>Holds the remote unit at the firing point. Selects the channel, arms, and holds the fire button. Owns every abort decision from the moment the pad is armed.</td></tr>
-    <tr><td><strong>Pad&nbsp;Crew</strong></td><td>Works at the base unit and the rocket. Connects igniters, turns the base key switch, and confirms the pad is clear. Only the pad crew may turn the base key.</td></tr>
+    <tr><td><strong>LCO</strong><br><span style="color:#6a7480">Launch Control Officer</span></td>
+        <td>Runs the whole operation, single-handed. Checks the rockets, motors and igniters at the pad; checks and arms the base unit; arms the remote; fires every shot from the remote; and afterwards returns both keys to SAFE and releases the range to the participants. <strong>Both keys live on the LCO’s lanyard and nobody else ever touches them.</strong> The LCO owns every abort decision from the moment the pad is armed.</td></tr>
     <tr><td><strong>Range&nbsp;Safety&nbsp;Officer</strong></td><td>Authorises the launch, sets the safe distances, and settles any question this manual does not. The RSO’s instruction always overrides this document.</td></tr>
   </tbody>
 </table>
@@ -516,7 +516,7 @@ person depending on your club’s practice:</p>
 
 <h3><span class="num">1.3</span> Applicability and version matching</h3>
 
-<p>This manual documents <strong>firmware 1.2.0</strong>. Both units run one
+<p>This manual documents <strong>firmware 1.2.1</strong>. Both units run one
 codebase and check each other’s version at link-up; a mismatch in any digit of
 <code>MAJOR.MINOR.PATCH</code> refuses the link outright and the remote shows a
 <strong>FIRMWARE MISMATCH</strong> screen. There is no partial-compatibility mode
@@ -533,10 +533,18 @@ not an inconvenience.</p>
 
 <div class="box danger">
   <span class="label">Danger</span>
-  <p>A base flashed with the <code>--inject</code> fault-injection build
-  <strong>deliberately reports false status to the remote</strong> and must never be
-  used with a live igniter. It announces itself with a boot banner; if you see a
-  fault-injection banner or console, stop and reflash with a stock build.</p>
+  <p>A unit flashed with the <code>--inject</code> fault-injection build
+  <strong>deliberately reports false status</strong> and must never be used with a
+  live igniter.</p>
+  <p>A fault-injection <em>remote</em> is unmistakable: its boot splash carries a red
+  frame around the whole screen and a red <strong>!! FAULT INJECTION BUILD — NOT SAFE
+  FOR LIVE USE !!</strong> block where the club credit normally sits. If you see it,
+  stop and reflash with a stock build.</p>
+  <p><strong>A fault-injection <em>base</em> has no such tell on the remote.</strong>
+  The base has no display, and it does not advertise its build over the link, so the
+  remote cannot warn you about it — it announces itself only on a developer’s
+  terminal. Treat the provenance of the base firmware as something you verify at the
+  bench, not something the remote will tell you at the pad.</p>
 </div>
 </section>
 
@@ -646,7 +654,7 @@ link. There is no wire between the firing point and the pad.</p>
     <tr><td>Arm timeout</td><td class="num">10 s</td><td>Auto-disarm if no fire command arrives</td></tr>
     <tr><td>Dead-man authorisation window</td><td class="num">500 ms</td><td>Base cuts current if fire messages stop</td></tr>
     <tr><td>Link-loss declaration</td><td class="num">1.5 s</td><td>Three consecutive missed heartbeats</td></tr>
-    <tr><td>Continuity test current</td><td class="num">≤ 1 mA</td><td>Through 3.3 kΩ of fusible series resistance</td></tr>
+    <tr><td>Continuity test current</td><td class="num">≤ 1 mA</td><td>Through two series resistors, 1.5 kΩ + 1.3 kΩ</td></tr>
     <tr><td>Continuity sweep period</td><td class="num">~800 ms</td><td>All eight channels, round robin</td></tr>
     <tr><td>Base battery</td><td class="num">3S LiPo</td><td>Arm inhibited below 10.5 V; critical at 9.0 V</td></tr>
     <tr><td>Remote battery</td><td class="num">2S LiPo</td><td>Arm inhibited below 7.0 V; critical at 6.4 V</td></tr>
@@ -767,8 +775,8 @@ link. There is no wire between the firing point and the pad.</p>
   <tbody>
     <tr><td><strong>Rotary encoder</strong></td>
         <td>Turn to select the channel, 1–8, wrapping at both ends. Press and hold for <strong>500 ms</strong> (about ⅔ of a second including debounce) to send the ARM command. A short press only shows a “Hold to ARM” prompt. Pressing while armed disarms. <em>Turning it while armed disarms immediately</em> — a channel change and a live pad are never allowed to coexist.</td></tr>
-    <tr><td><strong>Arm switch</strong></td>
-        <td>A physical toggle. Moving it to ARMED is a <em>precondition only</em> and never arms anything by itself. Moving it to DISARM at any time triggers an immediate disarm. The adjacent red LED shows the switch position.</td></tr>
+    <tr><td><strong>Arm key switch</strong></td>
+        <td>A physical key switch. Moving it to ARMED is a <em>precondition only</em> and never arms anything by itself. Moving it to SAFE at any time triggers an immediate disarm. The adjacent red LED shows the switch position. The key lives on the LCO’s lanyard and is removed after use.</td></tr>
     <tr><td><strong>Fire button</strong></td>
         <td>Dead-man. Ignition happens only while it is held. Wired so that a broken wire or unplugged connector reads as “released”. Releases are detected faster than presses (20 ms against 80 ms) — deliberately biased towards cutting current.</td></tr>
     <tr><td><strong>Fire button ring LED</strong></td>
@@ -779,6 +787,14 @@ link. There is no wire between the firing point and the pad.</p>
         <td>Eight pixels, one per channel, mirroring the continuity grid. Dims as a whole when the pad data has gone stale. Note the remote’s strip is wired with channel 8 at the data-in end.</td></tr>
     <tr><td><strong>Buzzer</strong></td>
         <td>See §3.6.</td></tr>
+    <tr><td><strong>On/off switch</strong></td>
+        <td>Wired inline with the battery. It <strong>physically cuts pack power</strong> when off — it is not a firmware command, and it is the correct way to shut the unit down or to kill it in a fault.</td></tr>
+    <tr><td><strong>USB port</strong></td>
+        <td>The ESP32-S3’s native USB, brought out to the front panel. Firmware flashing and the serial console. Not used in normal operation.</td></tr>
+    <tr><td><strong>COM port</strong></td>
+        <td>The ESP32-S3’s UART bridge, brought out to the front panel. Serial log output and flashing. Not used in normal operation.</td></tr>
+    <tr><td><strong>Charger connector (3-pin)</strong></td>
+        <td>Balance connector for the 2S pack, brought out to the panel so the pack can be charged without opening the unit. <strong>Switch the unit off before charging.</strong></td></tr>
   </tbody>
 </table>
 
@@ -788,10 +804,10 @@ link. There is no wire between the firing point and the pad.</p>
   <thead><tr><th style="width:26%">Control / indicator</th><th>Function</th></tr></thead>
   <tbody>
     <tr><td><strong>Key switch</strong></td>
-        <td>An SPDT key switch wired in series with the arm relay coil. In SAFE it physically breaks the coil circuit, so the arm relay cannot energise no matter what the firmware does. This is the pad crew’s control, and the key should live in a pocket, not in the switch.</td></tr>
-    <tr><td><strong>Green LED “SAFE”</strong></td>
+        <td>An SPDT key switch wired in series with the arm relay coil. In SAFE it physically breaks the coil circuit, so the arm relay cannot energise no matter what the firmware does. This is the LCO’s control, and the key lives on the lanyard, not in the switch.</td></tr>
+    <tr><td><strong>Green arm key LED “SAFE”</strong></td>
         <td>Lit when the key is in SAFE. <strong>Powered directly from the battery through the switch contacts</strong> — it works with the ESP32 crashed, hung or unpowered.</td></tr>
-    <tr><td><strong>Red LED “KEY ARM”</strong></td>
+    <tr><td><strong>Red arm key LED “KEY ARM”</strong></td>
         <td>Lit when the key is in ARM. Also passive.</td></tr>
     <tr><td><strong>Red LED “ARM RELAY LIVE”</strong></td>
         <td>Wired across the arm relay coil. Lit only when the key <em>and</em> the firmware are both driving the relay — i.e. when battery voltage is on the fire bus. Also passive. <strong>Treat this LED as the definitive statement that the pad is live.</strong></td></tr>
@@ -801,6 +817,16 @@ link. There is no wire between the firing point and the pad.</p>
         <td>Eight pixels, one per channel, showing live locally-measured continuity. Channel 1 is at the data-in end on the base.</td></tr>
     <tr><td><strong>Channel terminals</strong></td>
         <td>Eight igniter circuits. When idle, each channel’s relay rests on its NC contact, which routes the igniter to the continuity sense circuit rather than the fire bus.</td></tr>
+    <tr><td><strong>On/off switch</strong></td>
+        <td>Wired inline with the battery. It <strong>physically cuts pack power</strong> when off. This is the switch to reach for when a base unit must be killed — see the danger note in §5.11.</td></tr>
+    <tr><td><strong>SMA antenna connector</strong></td>
+        <td>External antenna for the 2.4 GHz link. <strong>Never power the unit up without the antenna fitted.</strong> Antenna height and clear line of sight do far more for range than anything in the firmware.</td></tr>
+    <tr><td><strong>USB port</strong></td>
+        <td>The ESP32-S3’s native USB, brought out to the front panel. Firmware flashing and the serial console. Not used in normal operation.</td></tr>
+    <tr><td><strong>COM port</strong></td>
+        <td>The ESP32-S3’s UART bridge, brought out to the front panel. Serial log output and flashing. Not used in normal operation.</td></tr>
+    <tr><td><strong>Charger connector (4-pin)</strong></td>
+        <td>Balance connector for the 3S pack, brought out to the panel so the pack can be charged without opening the unit. <strong>Switch the unit off before charging.</strong></td></tr>
   </tbody>
 </table>
 
@@ -958,6 +984,8 @@ that distance. Lay the site out so that:</p>
   <li><span class="title">Confirm no igniters are connected.</span>
     Igniters are the last thing connected, not the first — see §4.5.</li>
   <li><span class="title">Connect the 3S pack.</span>
+    Nothing should come alive yet — the on/off switch is still off.</li>
+  <li><span class="title">Flip the on/off switch to ON.</span>
     <span class="expect"><b>Expect</b> Green SAFE LED lights immediately and stays lit. The strip runs a cyan chase, then settles into the channel map once the first continuity sweep completes.</span>
     <span class="expect stop"><b>Stop if</b> the ARM RELAY LIVE LED lights at any point with the key in SAFE. That is a wiring fault in the fire path. Disconnect the battery and do not use the unit.</span></li>
   <li><span class="title">Let the boot self-tests complete.</span>
@@ -968,8 +996,10 @@ that distance. Lay the site out so that:</p>
 <h3><span class="num">4.3</span> Powering up the remote and linking</h3>
 
 <ol class="steps">
-  <li><span class="title">Confirm the remote arm switch is in DISARM.</span></li>
+  <li><span class="title">Confirm the remote arm key switch is in SAFE.</span></li>
   <li><span class="title">Connect the 2S pack.</span>
+    Nothing should come alive yet — the on/off switch is still off.</li>
+  <li><span class="title">Flip the on/off switch to ON.</span>
     <span class="expect"><b>Expect</b> Splash screen, then “Connecting to base…” with an attempt counter.</span></li>
   <li><span class="title">Wait for the link.</span>
     Linking normally completes in well under a second; the splash is held for 10 s so it stays readable.
@@ -980,36 +1010,34 @@ that distance. Lay the site out so that:</p>
 <h3><span class="num">4.4</span> Pre-operation acceptance checks</h3>
 
 <p>Run these once per session, before any igniter is connected. They take about a
-minute and they are the difference between trusting the system and hoping.</p>
+minute and they are the difference between trusting the system and hoping. Checks
+1–6 are run with the remote in hand at the base; <strong>7 and 8 are run after
+stepping back to the chosen remote firing point</strong>, because both are tests of
+distance.</p>
 
 <table>
   <thead><tr><th style="width:5%" class="num">#</th><th style="width:36%">Check</th><th>Pass criterion</th></tr></thead>
   <tbody>
     <tr><td class="num">1</td><td>Firmware versions match</td><td>No mismatch screen; both units link.</td></tr>
     <tr><td class="num">2</td><td>Battery states</td><td>Base comfortably above 10.5 V, remote above 7.0 V. Below those thresholds the system refuses to arm — find that out now, not at the pad.</td></tr>
-    <tr><td class="num">3</td><td>Link quality at the firing point</td><td>Walk to the firing point and check <span class="pill">LINK OK</span>, not <span class="pill">LINK WEAK</span>. A degraded link refuses arming by design.</td></tr>
-    <tr><td class="num">4</td><td>Status band tracks the keys</td><td>Turn the base key to ARM: band goes yellow. Turn the remote arm switch on: band goes orange <span class="band" style="background:#d97a06">READY TO ARM</span>. Return both to safe: band returns green. Never grey while linked.</td></tr>
-    <tr><td class="num">5</td><td>Passive LEDs are honest</td><td>Key SAFE → green only. Key ARM → red KEY LED only. <strong>ARM RELAY LIVE must stay dark in both positions</strong> while nothing is armed.</td></tr>
-    <tr><td class="num">6</td><td>Siren audibility</td><td>Confirm the siren is heard clearly across the whole pad area and at the firing point.</td></tr>
-    <tr><td class="num">7</td><td>Fire button ring</td><td>Green in idle. It must not go red for a press in IDLE.</td></tr>
-    <tr><td class="num">8</td><td>Continuity reads OPEN</td><td>All eight channels ○ OPEN with nothing connected. A channel reading CONNECTED with no igniter on it is a short in the harness.</td></tr>
+    <tr><td class="num">3</td><td>Status band tracks the keys</td><td>Turn the base key to ARM: band goes yellow. Turn the remote arm key to ARMED: band goes orange <span class="band" style="background:#d97a06">READY TO ARM</span>. Return both to safe: band returns green. Never grey while linked.</td></tr>
+    <tr><td class="num">4</td><td>Passive LEDs are honest</td><td>Key SAFE → green only. Key ARM → red KEY LED only. <strong>ARM RELAY LIVE must stay dark in both positions</strong> while nothing is armed.</td></tr>
+    <tr><td class="num">5</td><td>Fire button ring</td><td>Green in idle. It must not go red for a press in IDLE.</td></tr>
+    <tr><td class="num">6</td><td>Continuity reads OPEN</td><td>All eight channels ○ OPEN with nothing connected. A channel reading CONNECTED with no igniter on it is a short in the harness.</td></tr>
+    <tr><td class="num">7</td><td>Siren audibility</td><td>Confirm the siren is heard clearly across the whole pad area, and again from the remote firing point.</td></tr>
+    <tr><td class="num">8</td><td>Link quality at the firing point</td><td>Walk to the remote firing point and check <span class="pill">LINK OK</span>, not <span class="pill">LINK WEAK</span>. A degraded link refuses arming by design.</td></tr>
   </tbody>
 </table>
-
-<div class="box caution">
-  <span class="label">Caution</span>
-  <p>Do not skip check 5. A “live” lamp that lights when it should not is how
-  bug&nbsp;#28 presented, and the only reason it was benign that time was that it
-  turned out to be indicator wiring rather than the interlock itself.</p>
-</div>
 
 <h3><span class="num">4.5</span> Connecting igniters</h3>
 
 <div class="box danger">
   <span class="label">Danger</span>
   <p><strong>The base key switch is in SAFE, and the key is out of the switch and
-  in someone’s pocket, before anyone touches an igniter lead.</strong> There is no
-  step in this manual where an igniter is connected while the key is in ARM.</p>
+  around the LCO’s neck, before anyone touches an igniter lead.</strong> Both keys
+  are carried on a lanyard by the LCO at all times; nobody else ever holds them.
+  There is no step in this manual where an igniter is connected while the key is
+  in ARM.</p>
 </div>
 
 <ol class="steps">
@@ -1025,7 +1053,8 @@ minute and they are the difference between trusting the system and hoping.</p>
     <span class="expect stop"><b>Investigate if</b> the wrong channel changes — that is a harness mis-mapping, and it means you would fire a motor you did not select.</span></li>
   <li><span class="title">Note the channel numbers.</span>
     Write down which channel is which rocket or motor. The controller shows you a number; only you know what it is wired to.</li>
-  <li><span class="title">Leave the pad. Take the key with you or hand it to the pad marshal.</span></li>
+  <li><span class="title">Leave the pad, keys on the lanyard.</span>
+    The keys stay with the LCO. They are never handed over, never left in a switch, and never put down.</li>
 </ol>
 </section>
 
@@ -1050,9 +1079,9 @@ the system’s behaviour predictable in the field, including its refusals.</p>
   <thead><tr><th style="width:28%">Principle</th><th>What it means in practice</th></tr></thead>
   <tbody>
     <tr><td><strong>No single fault fires an igniter</strong></td>
-        <td>Defence in depth. Every path to ignition crosses at least three independent breaks, at least two of which are physical. No software bug, and no single failed component, is sufficient on its own.</td></tr>
+        <td>Defence in depth. The fire path crosses two independent relay breaks, and the first of those cannot even be commanded unless a physical key is turned. No software bug, and no single failed component, is sufficient on its own.</td></tr>
     <tr><td><strong>Deliberate, multi-step human action</strong></td>
-        <td>Ignition requires a key turned at the pad, a switch flipped on the remote, a held button press, and a held fire button — by two people who cannot both be in the same place. There is no single control that fires anything.</td></tr>
+        <td>Ignition requires a key turned at the pad, a second key turned on the remote, a deliberate half-second button hold, and then a fire button held continuously — four separate acts, and the first is performed at the pad while the last is performed at the firing point. There is no single control that fires anything.</td></tr>
     <tr><td><strong>Fail safe, fail loud</strong></td>
         <td>Every anomaly — link loss, low battery, a lead falling off, an invalid message — results in disarming, not in continuing. Inputs are wired active-low, so a broken wire reads as “safe”, “disarmed”, “button released”. And every refusal makes a noise <em>and</em> puts a message on screen; a refusal you cannot perceive is indistinguishable from an input that never registered, and the natural response to that is to try again.</td></tr>
     <tr><td><strong>Do not self-heal</strong></td>
@@ -1060,97 +1089,117 @@ the system’s behaviour predictable in the field, including its refusals.</p>
   </tbody>
 </table>
 
-<h3><span class="num">5.2</span> The fire path: three independent breaks</h3>
+<h3><span class="num">5.2</span> The fire path: two independent breaks</h3>
 
-<p>Current can only reach an igniter if three switches in series are all closed at
-the same time. Two are physical relays and a physical key; only one is under
-software control alone.</p>
+<p>Current can only reach an igniter if <strong>two relays in series</strong> are closed
+at the same time: the arm relay and the selected channel’s relay. Neither one alone
+can complete the circuit.</p>
+
+<p>The arm key switch is <strong>not</strong> in the fire path itself. It sits in the arm
+relay’s <em>coil drive</em> path, in series with a firmware-driven MOSFET, so it
+governs whether the arm relay may close at all. That is a different kind of
+protection from a contact in the fire path, and a stronger one: with the key in
+SAFE the arm relay cannot be energised by any software fault whatsoever, because
+the coil has no current available to it.</p>
 
 <figure>
-  <svg viewBox="0 0 700 268" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
-    <!-- battery -->
-    <g>
-      <rect x="14" y="96" width="56" height="52" rx="4" fill="#f5f7f9" stroke="#16191d" stroke-width="2"/>
-      <text x="42" y="118" text-anchor="middle" font-size="10" font-weight="700" fill="#16191d">3S</text>
-      <text x="42" y="132" text-anchor="middle" font-size="10" font-weight="700" fill="#16191d">LiPo</text>
-      <text x="42" y="164" text-anchor="middle" font-size="9" fill="#6a7480">VBAT+</text>
-    </g>
+  <svg viewBox="0 0 700 322" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+    <defs>
+      <marker id="op" markerWidth="8" markerHeight="8" refX="7" refY="2.8" orient="auto">
+        <path d="M0,0 L7,2.8 L0,5.6 z" fill="#6a7480"/>
+      </marker>
+    </defs>
 
-    <!-- break 1: key switch -->
-    <line x1="70" y1="122" x2="132" y2="122" stroke="#16191d" stroke-width="2.5"/>
-    <g>
-      <circle cx="136" cy="122" r="4" fill="#16191d"/>
-      <line x1="136" y1="122" x2="182" y2="100" stroke="#a8102a" stroke-width="3"/>
-      <circle cx="186" cy="122" r="4" fill="#16191d"/>
-      <rect x="118" y="176" width="90" height="46" rx="4" fill="#fdf2f4" stroke="#a8102a" stroke-width="1.5"/>
-      <text x="163" y="192" text-anchor="middle" font-size="9" font-weight="700" fill="#a8102a">BREAK 1</text>
-      <text x="163" y="205" text-anchor="middle" font-size="9" fill="#16191d">KEY SWITCH</text>
-      <text x="163" y="216" text-anchor="middle" font-size="8" fill="#6a7480">physical · at the pad</text>
-      <line x1="163" y1="132" x2="163" y2="174" stroke="#c9ced4" stroke-width="1"/>
-    </g>
+    <!-- ============ FIRE PATH ============ -->
+    <text x="14" y="18" font-size="9" font-weight="700" fill="#a8102a" letter-spacing="1.2">THE FIRE PATH — TWO BREAKS IN SERIES</text>
 
-    <!-- break 2: arm relay -->
-    <line x1="186" y1="122" x2="248" y2="122" stroke="#16191d" stroke-width="2.5"/>
-    <g>
-      <circle cx="252" cy="122" r="4" fill="#16191d"/>
-      <line x1="252" y1="122" x2="298" y2="100" stroke="#a8102a" stroke-width="3"/>
-      <circle cx="302" cy="122" r="4" fill="#16191d"/>
-      <rect x="234" y="176" width="90" height="46" rx="4" fill="#fdf2f4" stroke="#a8102a" stroke-width="1.5"/>
-      <text x="279" y="192" text-anchor="middle" font-size="9" font-weight="700" fill="#a8102a">BREAK 2</text>
-      <text x="279" y="205" text-anchor="middle" font-size="9" fill="#16191d">ARM RELAY</text>
-      <text x="279" y="216" text-anchor="middle" font-size="8" fill="#6a7480">key AND firmware</text>
-      <line x1="279" y1="132" x2="279" y2="174" stroke="#c9ced4" stroke-width="1"/>
-    </g>
+    <rect x="14" y="46" width="56" height="52" rx="4" fill="#f5f7f9" stroke="#16191d" stroke-width="2"/>
+    <text x="42" y="68" text-anchor="middle" font-size="10" font-weight="700" fill="#16191d">3S</text>
+    <text x="42" y="82" text-anchor="middle" font-size="10" font-weight="700" fill="#16191d">LiPo</text>
+    <text x="42" y="114" text-anchor="middle" font-size="9" fill="#6a7480">VBAT+</text>
 
-    <!-- arm sense tap -->
-    <g>
-      <line x1="330" y1="122" x2="330" y2="62" stroke="#2f5d8c" stroke-width="1.6" stroke-dasharray="4 3"/>
-      <circle cx="330" cy="122" r="3.5" fill="#2f5d8c"/>
-      <rect x="266" y="34" width="140" height="26" rx="4" fill="#eff4f9" stroke="#2f5d8c" stroke-width="1.4"/>
-      <text x="336" y="51" text-anchor="middle" font-size="9" fill="#2f5d8c" font-weight="700">ARM SENSE → GPIO 21</text>
-      <text x="336" y="24" text-anchor="middle" font-size="8" fill="#6a7480">verifies the relay really closed; detects welding</text>
-    </g>
+    <line x1="70" y1="72" x2="126" y2="72" stroke="#16191d" stroke-width="2.5"/>
+    <circle cx="130" cy="72" r="4" fill="#16191d"/>
+    <line x1="130" y1="72" x2="176" y2="50" stroke="#a8102a" stroke-width="3"/>
+    <circle cx="180" cy="72" r="4" fill="#16191d"/>
+    <rect x="100" y="112" width="112" height="46" rx="4" fill="#fdf2f4" stroke="#a8102a" stroke-width="1.5"/>
+    <text x="156" y="128" text-anchor="middle" font-size="9" font-weight="700" fill="#a8102a">BREAK 1</text>
+    <text x="156" y="141" text-anchor="middle" font-size="9" fill="#16191d">ARM RELAY</text>
+    <text x="156" y="152" text-anchor="middle" font-size="8" fill="#6a7480">contacts · driven below</text>
+    <line x1="156" y1="82" x2="156" y2="110" stroke="#c9ced4" stroke-width="1"/>
 
-    <!-- break 3: channel relay -->
-    <line x1="302" y1="122" x2="404" y2="122" stroke="#16191d" stroke-width="2.5"/>
-    <g>
-      <circle cx="408" cy="122" r="4" fill="#16191d"/>
-      <line x1="408" y1="122" x2="454" y2="100" stroke="#a8102a" stroke-width="3"/>
-      <circle cx="458" cy="122" r="4" fill="#16191d"/>
-      <!-- NC branch to continuity -->
-      <line x1="408" y1="122" x2="408" y2="122" stroke="#16191d"/>
-      <line x1="412" y1="140" x2="470" y2="140" stroke="#6a7480" stroke-width="1.6" stroke-dasharray="4 3"/>
-      <circle cx="412" cy="140" r="3.5" fill="#6a7480"/>
-      <text x="476" y="144" font-size="8.5" fill="#6a7480">NC rest position →</text>
-      <text x="476" y="155" font-size="8.5" fill="#6a7480">continuity sense, ≤1 mA</text>
-      <rect x="390" y="176" width="96" height="46" rx="4" fill="#fdf2f4" stroke="#a8102a" stroke-width="1.5"/>
-      <text x="438" y="192" text-anchor="middle" font-size="9" font-weight="700" fill="#a8102a">BREAK 3</text>
-      <text x="438" y="205" text-anchor="middle" font-size="9" fill="#16191d">CHANNEL RELAY</text>
-      <text x="438" y="216" text-anchor="middle" font-size="8" fill="#6a7480">closes only during the pulse</text>
-      <line x1="438" y1="132" x2="438" y2="174" stroke="#c9ced4" stroke-width="1"/>
-    </g>
+    <line x1="216" y1="72" x2="216" y2="34" stroke="#2f5d8c" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <circle cx="216" cy="72" r="3.5" fill="#2f5d8c"/>
+    <rect x="228" y="22" width="168" height="24" rx="4" fill="#eff4f9" stroke="#2f5d8c" stroke-width="1.4"/>
+    <text x="312" y="38" text-anchor="middle" font-size="9" font-weight="700" fill="#2f5d8c">ARM SENSE → GPIO 21</text>
+    <text x="404" y="32" font-size="8" fill="#6a7480">confirms the relay really closed;</text>
+    <text x="404" y="43" font-size="8" fill="#6a7480">detects welded contacts</text>
 
-    <!-- igniter -->
-    <line x1="458" y1="122" x2="560" y2="122" stroke="#16191d" stroke-width="2.5"/>
-    <g>
-      <rect x="560" y="104" width="76" height="36" rx="4" fill="#fff" stroke="#16191d" stroke-width="2"/>
-      <path d="M572 122 l8 -8 l8 16 l8 -16 l8 16 l8 -8" fill="none" stroke="#a8102a" stroke-width="2"/>
-      <text x="598" y="160" text-anchor="middle" font-size="9" font-weight="700" fill="#16191d">IGNITER</text>
-    </g>
-    <line x1="636" y1="122" x2="668" y2="122" stroke="#16191d" stroke-width="2.5"/>
-    <line x1="668" y1="122" x2="668" y2="146" stroke="#16191d" stroke-width="2.5"/>
-    <path d="M656 146 h24 M660 152 h16 M664 158 h8" stroke="#16191d" stroke-width="2"/>
+    <line x1="180" y1="72" x2="296" y2="72" stroke="#16191d" stroke-width="2.5"/>
+    <circle cx="300" cy="72" r="4" fill="#16191d"/>
+    <line x1="300" y1="72" x2="346" y2="50" stroke="#a8102a" stroke-width="3"/>
+    <circle cx="350" cy="72" r="4" fill="#16191d"/>
+    <line x1="304" y1="90" x2="360" y2="90" stroke="#6a7480" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <circle cx="304" cy="90" r="3.5" fill="#6a7480"/>
+    <text x="366" y="87" font-size="8.5" fill="#6a7480">NC rest position →</text>
+    <text x="366" y="98" font-size="8.5" fill="#6a7480">continuity sense, ≤1 mA</text>
+    <rect x="252" y="112" width="112" height="46" rx="4" fill="#fdf2f4" stroke="#a8102a" stroke-width="1.5"/>
+    <text x="308" y="128" text-anchor="middle" font-size="9" font-weight="700" fill="#a8102a">BREAK 2</text>
+    <text x="308" y="141" text-anchor="middle" font-size="9" fill="#16191d">CHANNEL RELAY</text>
+    <text x="308" y="152" text-anchor="middle" font-size="8" fill="#6a7480">closes only during the pulse</text>
+    <line x1="308" y1="82" x2="308" y2="110" stroke="#c9ced4" stroke-width="1"/>
 
-    <!-- AND gate note -->
-    <g>
-      <rect x="118" y="236" width="206" height="26" rx="4" fill="#f5f7f9" stroke="#6a7480" stroke-width="1.2"/>
-      <text x="221" y="253" text-anchor="middle" font-size="9" fill="#16191d">Breaks 1 and 2 form a hardware AND gate</text>
-    </g>
+    <line x1="350" y1="72" x2="452" y2="72" stroke="#16191d" stroke-width="2.5"/>
+    <rect x="452" y="54" width="76" height="36" rx="4" fill="#fff" stroke="#16191d" stroke-width="2"/>
+    <path d="M464 72 l8 -8 l8 16 l8 -16 l8 16 l8 -8" fill="none" stroke="#a8102a" stroke-width="2"/>
+    <text x="490" y="110" text-anchor="middle" font-size="9" font-weight="700" fill="#16191d">IGNITER</text>
+    <line x1="528" y1="72" x2="566" y2="72" stroke="#16191d" stroke-width="2.5"/>
+    <line x1="566" y1="72" x2="566" y2="96" stroke="#16191d" stroke-width="2.5"/>
+    <path d="M554 96 h24 M558 102 h16 M562 108 h8" stroke="#16191d" stroke-width="2"/>
+
+    <line x1="0" y1="176" x2="700" y2="176" stroke="#d7dce1" stroke-width="1.5" stroke-dasharray="6 4"/>
+
+    <!-- ============ COIL DRIVE PATH ============ -->
+    <text x="14" y="198" font-size="9" font-weight="700" fill="#16191d" letter-spacing="1.2">ARM RELAY COIL DRIVE — NOT IN THE FIRE PATH</text>
+
+    <line x1="42" y1="98" x2="42" y2="240" stroke="#16191d" stroke-width="2.5"/>
+    <line x1="42" y1="240" x2="96" y2="240" stroke="#16191d" stroke-width="2.5"/>
+
+    <circle cx="100" cy="240" r="4" fill="#16191d"/>
+    <line x1="100" y1="240" x2="146" y2="218" stroke="#1f7a4d" stroke-width="3"/>
+    <circle cx="150" cy="240" r="4" fill="#16191d"/>
+    <rect x="70" y="266" width="112" height="46" rx="4" fill="#eef7f2" stroke="#1f7a4d" stroke-width="1.5"/>
+    <text x="126" y="282" text-anchor="middle" font-size="9" font-weight="700" fill="#1f7a4d">ARM KEY SWITCH</text>
+    <text x="126" y="294" text-anchor="middle" font-size="8" fill="#16191d">physical · on the LCO’s lanyard</text>
+    <text x="126" y="305" text-anchor="middle" font-size="8" fill="#6a7480">SAFE = no coil current, ever</text>
+    <line x1="126" y1="250" x2="126" y2="264" stroke="#c9ced4" stroke-width="1"/>
+
+    <line x1="150" y1="240" x2="212" y2="240" stroke="#16191d" stroke-width="2.5"/>
+    <rect x="212" y="222" width="94" height="36" rx="4" fill="#fff" stroke="#16191d" stroke-width="2"/>
+    <text x="259" y="245" text-anchor="middle" font-size="9" font-weight="700" fill="#16191d">ARM RELAY COIL</text>
+
+    <line x1="306" y1="240" x2="360" y2="240" stroke="#16191d" stroke-width="2.5"/>
+    <rect x="360" y="222" width="104" height="36" rx="4" fill="#f5f7f9" stroke="#16191d" stroke-width="2"/>
+    <text x="412" y="238" text-anchor="middle" font-size="9" font-weight="700" fill="#16191d">MOSFET</text>
+    <text x="412" y="250" text-anchor="middle" font-size="8" fill="#6a7480">firmware, GPIO 47</text>
+    <line x1="464" y1="240" x2="500" y2="240" stroke="#16191d" stroke-width="2.5"/>
+    <line x1="500" y1="240" x2="500" y2="264" stroke="#16191d" stroke-width="2.5"/>
+    <path d="M488 264 h24 M492 270 h16 M496 276 h8" stroke="#16191d" stroke-width="2"/>
+
+    <path d="M259 220 v-42 h-103 v-8" fill="none" stroke="#6a7480" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#op)"/>
+    <text x="272" y="196" font-size="8.5" fill="#6a7480">operates BREAK 1</text>
+
+    <rect x="516" y="266" width="176" height="46" rx="4" fill="#f5f7f9" stroke="#6a7480" stroke-width="1.2"/>
+    <text x="604" y="282" text-anchor="middle" font-size="9" font-weight="700" fill="#16191d">HARDWARE AND GATE</text>
+    <text x="604" y="294" text-anchor="middle" font-size="8" fill="#6a7480">Key AND firmware, in series.</text>
+    <text x="604" y="305" text-anchor="middle" font-size="8" fill="#6a7480">Either alone does nothing.</text>
   </svg>
-  <figcaption><b>Figure 4</b> The fire path. All three breaks must close
-  simultaneously for current to reach an igniter. The channel relay rests on its
-  NC contact, which routes the igniter to the continuity sense circuit — so a
-  channel at rest is being <em>measured</em>, not powered.</figcaption>
+  <figcaption><b>Figure 4</b> The fire path (top) and the arm relay’s coil drive
+  (bottom). Both breaks must close for current to reach an igniter. The arm key
+  switch is <em>not</em> in the fire path — it gates the coil that operates break 1,
+  in series with a firmware-driven MOSFET. The channel relay rests on its NC
+  contact, which routes the igniter to the continuity sense circuit, so a channel
+  at rest is being <em>measured</em>, not powered.</figcaption>
 </figure>
 
 <div class="box good">
@@ -1161,6 +1210,9 @@ software control alone.</p>
   the key in SAFE; a key left in ARM achieves nothing without the firmware. This
   has been verified electrically at the arm-sense node, not merely inferred from
   the indicator LEDs.</p>
+  <p>This is why the fire path counts <strong>two</strong> breaks rather than three,
+  and why that is not a weakening. The key does not merely add another contact in
+  series — it removes the <em>possibility</em> of the first break moving at all.</p>
 </div>
 
 <h3><span class="num">5.3</span> Hardware safety features</h3>
@@ -1168,16 +1220,16 @@ software control alone.</p>
 <table>
   <thead><tr><th style="width:30%">Feature</th><th>What it protects against</th></tr></thead>
   <tbody>
-    <tr><td><strong>Three independent breaks</strong></td><td>Any single closed contact, stuck output or software fault. Two of the three are physical and one of those is key-operated.</td></tr>
-    <tr><td><strong>Hardware AND gate on the arm relay</strong></td><td>Firmware energising the fire bus on its own, or a key left in ARM doing so on its own.</td></tr>
+    <tr><td><strong>Two independent breaks in the fire path</strong></td><td>Any single closed contact, stuck output or software fault. Both are relays, and they are commanded by different parts of the firmware at different times — the arm relay at arming, the channel relay only during the pulse itself.</td></tr>
+    <tr><td><strong>Hardware AND gate on the arm relay coil</strong></td><td>Firmware energising the fire bus on its own, or a key left in ARM doing so on its own. The key switch and the MOSFET are in series in the coil path, so <em>both</em> are required before the first break in the fire path can even move.</td></tr>
     <tr><td><strong>Fail-safe relay defaults</strong></td><td>Boot, brown-out and crash. All relays rest de-energised; 10 kΩ gate pull-downs hold every MOSFET off while the ESP32’s pins are still high-impedance, before a single instruction of firmware has run.</td></tr>
     <tr><td><strong>Relay outputs configured first at boot</strong></td><td>A crash during later initialisation. Relay GPIOs are driven safe before any other peripheral is touched.</td></tr>
     <tr><td><strong>Passive, battery-powered status LEDs</strong></td><td>A dead, crashed or unpowered microcontroller. The SAFE / KEY ARM / ARM RELAY LIVE lamps run from the battery through the switch and relay contacts and require no GPIO at all.</td></tr>
-    <tr><td><strong>Current-limited continuity sensing</strong></td><td>The measurement itself igniting the device. Test current is capped at ≈1 mA by 3.3 kΩ of series resistance, fitted as two fusible resistors in series so a single shorted resistor does not remove the limit.</td></tr>
+    <tr><td><strong>Current-limited continuity sensing</strong></td><td>The measurement itself igniting the device. Test current is capped at ≈1 mA by two fusible resistors in series — <strong>1.5 kΩ and 1.3 kΩ</strong> — so a single shorted resistor does not remove the limit.</td></tr>
     <tr><td><strong>Igniter routed to sense, not to power, at rest</strong></td><td>An energised bus reaching a resting channel. The channel relay’s NC contact physically disconnects the igniter from the fire bus whenever the relay is not driven.</td></tr>
     <tr><td><strong>Arm-sense feedback on the fire bus</strong></td><td>A relay that did not close, and a relay that will not open. The same input verifies arming and detects welded contacts.</td></tr>
     <tr><td><strong>Active-low inputs throughout</strong></td><td>Broken wires and unplugged connectors. A disconnected fire button reads “released”; a disconnected arm switch reads “disarmed”.</td></tr>
-    <tr><td><strong>Snubbers and clamps on every channel</strong></td><td>Relay-arc energy coupling back into the microcontroller’s sense inputs — which destroyed a base ESP32 during an early fire test. All eight channels now carry RC snubbers, dual Schottky clamps and a sense-branch series resistor, and the firmware refuses to arm any channel not marked as protected.</td></tr>
+    <tr><td><strong>Snubbers and clamps on every channel</strong></td><td>Relay-arc energy coupling back into the microcontroller’s sense inputs. All eight channels carry RC snubbers, dual Schottky clamps and a sense-branch series resistor.</td></tr>
     <tr><td><strong>Hardware brown-out detector</strong></td><td>Under-voltage operation with unpredictable GPIO states. A brown-out resets to the safe state of the row above.</td></tr>
   </tbody>
 </table>
@@ -1186,7 +1238,7 @@ software control alone.</p>
 
 <h4>The arming guards</h4>
 
-<p>Every one of these must pass before the base will energise the arm relay. Any
+<p>Every one of these nine must pass before the base will energise the arm relay. Any
 failure produces a NACK, a message on the remote and a beep — never a silent
 refusal.</p>
 
@@ -1201,8 +1253,7 @@ refusal.</p>
     <tr><td class="num">6</td><td>Session token matches</td><td>A command from a previous session cannot be honoured in this one.</td></tr>
     <tr><td class="num">7</td><td>Sequence number is newer</td><td>A previously captured ARM or FIRE cannot be replayed.</td></tr>
     <tr><td class="num">8</td><td>Base battery above 10.5 V</td><td>A pack that sags under relay and igniter load is an unreliable fire path.</td></tr>
-    <tr><td class="num">9</td><td>Channel has protection hardware fitted</td><td>The bug&nbsp;#18 protection gate. Any channel not in the mask cannot be armed at all.</td></tr>
-    <tr><td class="num">10</td><td>Link quality acceptable (≤30 % ping loss over 10)</td><td>Arming on a degraded link invites a false dead-man abort mid-countdown.</td></tr>
+    <tr><td class="num">9</td><td>Link quality acceptable (≤30 % ping loss over 10)</td><td>Arming on a degraded link invites a false dead-man abort mid-countdown.</td></tr>
   </tbody>
 </table>
 
@@ -1224,7 +1275,7 @@ be confirmed.</p>
   <thead><tr><th style="width:30%">Feature</th><th>Behaviour</th></tr></thead>
   <tbody>
     <tr><td><strong>Continuity watched throughout</strong></td>
-        <td>Continuity is not merely checked at the instant of arming. If the armed channel goes OPEN — a clip falls off, someone pulls a lead — the base disarms itself and silences the siren within about a second, and the remote sounds a distinctive three-beep pattern. This exists because bench testing found the opposite behaviour: the pad staying armed, siren running, with the igniter gone and neither unit saying so.</td></tr>
+        <td>Continuity is not merely checked at the instant of arming. If the armed channel goes OPEN — a clip falls off, someone pulls a lead — the base disarms itself and silences the siren within about a second, and the remote sounds a distinctive three-beep pattern.</td></tr>
     <tr><td><strong>Dead-man switch</strong></td>
         <td>While firing, the remote repeats a FIRE message every 200 ms. If the base does not receive one within 500 ms — button released, operator down, link gone — it cuts power. The button’s release is debounced faster than its press (20 ms against 80 ms) because a missed release fires an igniter the operator has let go of, while a spurious release merely aborts.</td></tr>
     <tr><td><strong>Auto-disarm after 10 s</strong></td>
@@ -1265,17 +1316,6 @@ three independent layers:</p>
 <p>Both units must also be running byte-identical firmware, or the link is refused
 outright.</p>
 
-<div class="box note">
-  <span class="label">Note — key history</span>
-  <p>The project was developed in the open, and the original keys for layers 1 and 2
-  were literal ASCII placeholders committed to a public repository. They were
-  rotated out on 2026-08-27 and the real keys are now generated locally and never
-  committed, with a pre-commit hook that refuses to stage them. <strong>The old
-  values remain permanently public</strong> — they are in the git history of a public
-  repo. Rotation does not un-publish them; it makes them irrelevant. Never reuse
-  them.</p>
-</div>
-
 <h3><span class="num">5.6</span> Fail-safe behaviour matrix</h3>
 
 <p>What the system does when something goes wrong. In every row the answer is a
@@ -1286,7 +1326,7 @@ variation on “de-energise everything and say so”.</p>
   <tbody>
     <tr><td>Power applied to either unit</td><td>All relays de-energised, no channel armed, key position read but not acted on.</td></tr>
     <tr><td>Base key switch turned to SAFE</td><td>Arm relay coil current is physically broken. The relay drops out regardless of what the software wants. Fire path dead for every channel.</td></tr>
-    <tr><td>Remote arm switch to DISARM</td><td>Immediate DISARM ALL sent; remote disarms locally whether or not the message gets through.</td></tr>
+    <tr><td>Remote arm key to SAFE</td><td>Immediate DISARM ALL sent; remote disarms locally whether or not the message gets through.</td></tr>
     <tr><td>Fire button released</td><td>CEASE FIRE sent immediately; the base cuts current at the next 500 ms dead-man check at the latest.</td></tr>
     <tr><td>Link lost (1.5 s of silence)</td><td>Base disarms all, de-energises every relay, sounds four siren pulses. Remote alarms continuously and disables all commands. Recovery returns to IDLE, never to ARMED.</td></tr>
     <tr><td>Continuity lost on the armed channel</td><td>Base disarms within ~1 s, siren off, distinctive alert on both units.</td></tr>
@@ -1311,10 +1351,10 @@ they matter more than any of its interlocks.</p>
   <p><strong>1.</strong> Nobody approaches the pad while the status band reads
   <span class="band" style="background:#a8102a">ARM RELAY LIVE</span>, while the siren
   is sounding, or while the base’s ARM RELAY LIVE lamp is lit.<br>
-  <strong>2.</strong> The base key lives with the pad crew, and it is removed from the
-  switch whenever anyone is at the pad.<br>
-  <strong>3.</strong> The operator does not arm until the pad is confirmed clear by
-  voice, and does not fire until the range is confirmed clear.<br>
+  <strong>2.</strong> Both keys live on the LCO’s lanyard, and the base key is removed
+  from the switch whenever anyone is at the pad.<br>
+  <strong>3.</strong> The LCO does not arm until the pad is confirmed clear by voice,
+  and does not fire until the range is confirmed clear.<br>
   <strong>4.</strong> A grey <span class="band" style="background:#7d8792">STATUS UNKNOWN</span>
   band is not permission to approach. It means the system cannot tell you
   anything.</p>
@@ -1322,7 +1362,7 @@ they matter more than any of its interlocks.</p>
 
 <ul class="plain">
   <li><strong>Safe distances come from your code, not from this manual.</strong> Set them from the total installed impulse, per NAR, Tripoli or your national body, and let the RSO have the final word.</li>
-  <li><strong>The pre-fire delay is agreed in advance.</strong> The default is 5 s. It was raised from 2 s after testing showed 2 s was too short to act inside — an operator could not disconnect an igniter within the countdown, and it fired. If you change it, both units must be reflashed together, since the remote runs its own countdown against the same constant.</li>
+  <li><strong>The pre-fire delay is agreed in advance.</strong> The default is 5 s. If you change it, both units must be reflashed together, since the remote runs its own countdown against the same constant.</li>
   <li><strong>Announce the count.</strong> The siren tells the pad; your voice tells the range.</li>
   <li><strong>One armed channel, one motor, one operator.</strong> The system enforces single-channel arming; do not defeat it with parallel wiring on a single channel unless the RSO has explicitly approved the cluster and the current budget.</li>
   <li><strong>Fire extinguishing equipment appropriate to the propellant is at hand</strong>, and someone other than the operator is watching for grass fires.</li>
@@ -1333,10 +1373,18 @@ they matter more than any of its interlocks.</p>
 <p>This is the full procedure, from a set-up-and-checked system to a fired motor.
 Steps in red are the irreversible ones.</p>
 
+<div class="box note">
+  <span class="label">One person, in sequence</span>
+  <p>The LCO performs every step below alone, in order: the pad work first, then the
+  walk back to the firing point, then the shot. The sequence is written so that no
+  step requires a second pair of hands and no step is safe to perform out of order.
+  Both keys stay on the LCO’s lanyard throughout.</p>
+</div>
+
 <h4>Before you start</h4>
 <ul class="plain">
   <li>§4 setup and acceptance checks complete; igniters connected and the channel numbers written down.</li>
-  <li>Everyone clear of the pad; the operator at the firing point with the remote.</li>
+  <li>Everyone clear of the pad; the LCO at the firing point with the remote and both keys.</li>
   <li>RSO authorisation given.</li>
 </ul>
 
@@ -1356,12 +1404,12 @@ Steps in red are the irreversible ones.</p>
   <li><span class="title">Call the pad clear and get an acknowledgement.</span>
     Verbal, both ways. This is the last point at which a person can still be at the pad.</li>
 
-  <li class="hz"><span class="title">Pad crew: turn the base key to ARM.</span>
-    Then step back from the base and take the key out if your switch allows it.
+  <li class="hz"><span class="title">Walk to the base and turn the arm key to ARM.</span>
+    Then step back from the base, take the key out if your switch allows it, and return to the firing point before doing anything else.
     <span class="expect"><b>Expect</b> Base red KEY ARM lamp lit, green SAFE lamp out, ARM RELAY LIVE still <em>dark</em>. Remote band turns yellow.</span>
     <span class="expect stop"><b>Stop if</b> ARM RELAY LIVE lights now. Nothing has been armed yet, so the fire bus must not be live. Turn the key back to SAFE and take the unit out of service.</span></li>
 
-  <li><span class="title">Operator: flip the remote arm switch to ARMED.</span>
+  <li><span class="title">At the firing point, turn the remote arm key to ARMED.</span>
     <span class="expect"><b>Expect</b> Band turns orange <span class="band" style="background:#d97a06">READY TO ARM</span>, arm switch LED lit. Nothing at the pad has changed yet.</span></li>
 
   <li class="hz"><span class="title">Long-press the encoder button for 500 ms to arm.</span>
@@ -1384,13 +1432,19 @@ Steps in red are the irreversible ones.</p>
   <li><span class="title">Release the button.</span>
     <span class="expect"><b>Expect</b> FIRE COMPLETE screen for 10 s with the igniter reading: <span class="pill">○ OPEN – LIKELY FIRED</span> is the expected outcome. Siren stops, band returns to yellow or green, LED strip shows the fired channel flipping to OPEN.</span></li>
 
-  <li class="hz"><span class="title">Operator: return the remote arm switch to DISARM.</span>
-    Do this before anything else, including celebrating.
+  <li><span class="title">Fire the remaining pads, if any.</span>
+    Return to step 2 and repeat for the next channel. The remote stays armed and the base key stays in ARM between shots — but <em>only</em> while you remain at the firing point and nobody goes forward. If anyone needs to approach the pad for any reason, do steps 12 and 13 first.</li>
+
+  <li class="hz"><span class="title">Return the remote arm key to SAFE and remove it.</span>
+    The moment the last shot of the session is done, before anything else and before celebrating. Back on the lanyard.
     <span class="expect"><b>Expect</b> One long beep; band drops to yellow.</span></li>
 
-  <li class="hz"><span class="title">Pad crew: return the base key to SAFE and remove it.</span>
-    Only now is the pad approachable.
+  <li class="hz"><span class="title">Walk to the base, return the arm key to SAFE and remove it.</span>
+    Check the remote reads a green band before you go forward, and confirm the lamps when you arrive. Only now is the pad approachable.
     <span class="expect"><b>Expect</b> Green SAFE lamp lit, both red lamps dark, remote band green <span class="band" style="background:#1f7a4d">SAFE</span>.</span></li>
+
+  <li><span class="title">Release the range to the participants.</span>
+    Both keys on the lanyard, both units still powered so the pad state stays visible.</li>
 </ol>
 
 <div class="box caution">
@@ -1433,7 +1487,7 @@ controller’s procedure is unchanged; the surroundings are not.</p>
 
 <ol class="steps">
   <li><span class="title">Prepare and verify the stand first.</span>
-    Motor restrained, thrust axis clear both ways, anchoring checked, deflector in place, area cleared and damped down. Do this with the base unit unpowered.</li>
+    Motor restrained, thrust axis clear both ways, anchoring checked, deflector in place, area cleared and damped down. Do this with the base unit switched off.</li>
   <li><span class="title">Set up the controller per §4, base off-axis and behind the stand.</span>
     Site it where its siren carries and its three status lamps are visible on approach, and where exhaust cannot reach it.</li>
   <li><span class="title">Run the §4.4 acceptance checks, then place instrumentation.</span>
@@ -1442,13 +1496,14 @@ controller’s procedure is unchanged; the surroundings are not.</p>
     Confirm the remote reads a green <span class="band" style="background:#1f7a4d">SAFE</span> band before you approach. Verify the channel steps to ● CONNECTED as you connect.</li>
   <li><span class="title">Withdraw everyone to the firing point.</span>
     Beyond the RSO’s distance for a case failure, off the thrust axis, with a clear view of the stand.</li>
-  <li><span class="title">Confirm fire watch posted and recorders armed.</span></li>
+  <li><span class="title">Confirm the fire watch is posted — someone other than the LCO — and the recorders are running.</span></li>
   <li class="hz"><span class="title">Execute §5.8 steps 1–10 exactly as written.</span>
-    Select, call clear, key to ARM, arm switch, long-press to arm, hold fire through the countdown and the pulse. The siren gives everyone on site the same warning it gives at a launch.</li>
+    Select, call clear, key to ARM, remote arm key, long-press to arm, hold fire through the countdown and the pulse. The siren gives everyone on site the same warning it gives at a launch.</li>
   <li><span class="title">Hold position through the entire burn and afterwards.</span>
     The fire pulse ends after 1 s; the motor does not. Nobody moves until the RSO calls it.
     <span class="expect"><b>Expect</b> FIRE COMPLETE, siren off, base auto-disarmed, fired channel reading ○ OPEN.</span></li>
-  <li class="hz"><span class="title">Disarm the remote, then have the key returned to SAFE and removed.</span></li>
+  <li class="hz"><span class="title">Remote arm key to SAFE and removed; then walk to the base and return its arm key to SAFE and remove it.</span>
+    Both back on the lanyard.</li>
   <li><span class="title">Wait out the cool-down before approaching.</span>
     Then disconnect the igniter leads at the stand before touching anything else, and confirm the channel returns to ○ OPEN on the remote as you do.</li>
 </ol>
@@ -1470,10 +1525,10 @@ is fastest for you at the moment you decide.</p>
   <thead><tr><th style="width:30%">Action</th><th style="width:14%">Speed</th><th>Effect</th></tr></thead>
   <tbody>
     <tr><td><strong>Release the fire button</strong></td><td>&lt; 0.5 s</td><td>Fastest and the intended abort. Sends CEASE FIRE immediately, and the dead-man cuts current within 500 ms even if the message is lost.</td></tr>
-    <tr><td><strong>Remote arm switch to DISARM</strong></td><td>&lt; 0.5 s</td><td>Full disarm, everything de-energises.</td></tr>
+    <tr><td><strong>Remote arm key to SAFE</strong></td><td>&lt; 0.5 s</td><td>Full disarm, everything de-energises.</td></tr>
     <tr><td><strong>Press the encoder button</strong></td><td>&lt; 0.5 s</td><td>Disarms from ARMED.</td></tr>
     <tr><td><strong>Turn the encoder</strong></td><td>&lt; 0.5 s</td><td>Also disarms — a channel change while armed is never allowed.</td></tr>
-    <tr><td><strong>Base key to SAFE</strong></td><td>immediate</td><td><em>Physical.</em> Breaks the arm relay coil circuit; the relay drops out with no software involvement. Only available to someone at the pad — which, during a live sequence, nobody should be.</td></tr>
+    <tr><td><strong>Base arm key to SAFE</strong></td><td>immediate</td><td><em>Physical.</em> Breaks the arm relay coil circuit; the relay drops out with no software involvement. Only available to someone at the pad — which, during a live sequence, nobody should be.</td></tr>
     <tr><td><strong>Walk away / drop the remote</strong></td><td>&lt; 1.5 s</td><td>Losing the link disarms the pad. The system treats an absent operator as an abort.</td></tr>
   </tbody>
 </table>
@@ -1494,8 +1549,8 @@ physically disconnected it.</p>
 <ol class="steps">
   <li class="hz"><span class="title">Keep holding, or release — but do not re-fire.</span>
     Release the fire button. Do not immediately re-arm and try again; a second pulse into an igniter that has partially initiated is how people get hurt at the pad.</li>
-  <li class="hz"><span class="title">Disarm the remote, then have the key turned to SAFE and removed.</span>
-    <span class="expect"><b>Expect</b> Green SAFE lamp lit at the base, both red lamps dark, remote band green.</span></li>
+  <li class="hz"><span class="title">Remote arm key to SAFE and removed. Do not walk to the base yet.</span>
+    <span class="expect"><b>Expect</b> Remote band drops to yellow — the base key is still in ARM, and you return it to SAFE on the approach in step 5.</span></li>
   <li><span class="title">Wait. Minimum 60 seconds, or your code’s figure if it is longer.</span>
     NAR and Tripoli both specify 60 s before approaching a rocket that has not launched. Time it; do not estimate it.</li>
   <li><span class="title">Read the igniter status on the remote before you move.</span>
@@ -1503,8 +1558,8 @@ physically disconnected it.</p>
     <span class="pill">● STILL CONNECTED</span> — the igniter is intact and never fired: a fire-path or igniter-current problem.<br>
     <span class="pill">▲ MARGINAL</span> — partial. Assume the worst.<br>
     <span class="pill">IGNITER ?</span> — unknown. Assume the worst.</li>
-  <li class="hz"><span class="title">Approach only after confirming SAFE at the base with your own eyes.</span>
-    The passive lamps, not the display. Green lit, both reds dark.</li>
+  <li class="hz"><span class="title">Approach, turn the base arm key to SAFE, remove it, and confirm with your own eyes.</span>
+    The passive lamps, not the display. Green lit, both reds dark. Do not go past the base until they read that way.</li>
   <li><span class="title">Disconnect the igniter leads at the pad first.</span>
     Before touching the rocket, the motor or the stand. Short the leads.
     <span class="expect"><b>Expect</b> The channel returns to ○ OPEN on the remote as you disconnect.</span></li>
@@ -1517,8 +1572,8 @@ physically disconnected it.</p>
   <p>If the status band shows <span class="band" style="background:#a8102a">RELAY WELDED</span>,
   or the base’s ARM RELAY LIVE lamp is lit with the key in SAFE, <strong>the fire bus
   may be energised with nothing commanding it</strong>. Do not approach the igniter.
-  Approach the base from the side, disconnect its battery, and only then treat the
-  pad as safe. Take the unit out of service until the arm relay has been
+  Approach the base from the side, power it off at the on/off switch, and only then
+  treat the pad as safe. Take the unit out of service until the arm relay has been
   replaced and the AND gate re-verified at the arm-sense node.</p>
 </div>
 
@@ -1526,13 +1581,13 @@ physically disconnected it.</p>
 
 <p>Stated plainly, because overstating the safety case would be worse than
 carrying these openly. Every item below is known, tracked, and unresolved at
-firmware 1.2.0.</p>
+firmware 1.2.1.</p>
 
 <table>
   <thead><tr><th style="width:32%">Limitation</th><th>What it means for you</th></tr></thead>
   <tbody>
-    <tr><td><strong>Not field-hardened; no enclosure</strong></td>
-        <td>The system has completed its bench and on-target test campaign but not environmental or field hardening, and it has no finished enclosure. Weather, vibration and handling robustness are unproven.</td></tr>
+    <tr><td><strong>Not field-hardened</strong></td>
+        <td>The system has completed its bench and on-target test campaign but not environmental or field hardening,. Weather, vibration and handling robustness are unproven.</td></tr>
     <tr><td><strong>No hardware undervoltage cut-off on either battery</strong></td>
         <td>Battery protection is firmware-only, and the ERROR state halts operation <em>without</em> disconnecting the load. A unit left switched on, or one whose firmware has halted, will discharge its LiPo into permanent damage and eventually into an unsafe-to-recharge state. <strong>Disconnect packs at the end of the day, every day.</strong></td></tr>
     <tr><td><strong>No overvoltage clamp on the remote’s battery sense</strong></td>
@@ -1545,8 +1600,6 @@ firmware 1.2.0.</p>
         <td>The band means only that current can flow. A dead short reads identically to a healthy 1.5 Ω igniter — the difference is about a millivolt at 1 mA, which is the size of the noise. A separate SHORT band was specified and proved unmeasurable.</td></tr>
     <tr><td><strong>Continuity detection is a backstop, not real-time</strong></td>
         <td>Up to ~800 ms of latency plus hysteresis. It will catch a lead falling off an armed pad; it is not an instantaneous interlock.</td></tr>
-    <tr><td><strong>Old crypto keys are permanently public</strong></td>
-        <td>See §5.5. Rotation was completed; the historical values cannot be retracted.</td></tr>
     <tr><td><strong>Two safety tests remain open</strong></td>
         <td>Both are blocked on physical access — a soldered display and a soldered key-sense wire — rather than on a known defect. Ask before you assume they are equivalent to a pass.</td></tr>
     <tr><td><strong>Channels 2–8 have limited live-fire history</strong></td>
@@ -1569,8 +1622,8 @@ correctly.</p>
 <table class="compact">
   <thead><tr><th style="width:32%">Message</th><th style="width:34%">Meaning</th><th>What to do</th></tr></thead>
   <tbody>
-    <tr><td><span class="pill">BASE KEY OFF</span></td><td>The base key switch is not in ARM.</td><td>Have the pad crew turn it — but only with the pad confirmed clear.</td></tr>
-    <tr><td><span class="pill">REMOTE KEY MISMATCH</span></td><td>The base and remote disagree about the remote’s arm switch.</td><td>Cycle the remote arm switch and retry.</td></tr>
+    <tr><td><span class="pill">BASE KEY OFF</span></td><td>The base key switch is not in ARM.</td><td>Walk to the base and turn it — but only with the pad confirmed clear.</td></tr>
+    <tr><td><span class="pill">REMOTE KEY MISMATCH</span></td><td>The base and remote disagree about the remote’s arm switch.</td><td>Cycle the remote arm key and retry.</td></tr>
     <tr><td><span class="pill">INVALID CHANNEL</span></td><td>Channel outside 1–8.</td><td>Reselect. If it recurs, suspect corruption and power-cycle both units.</td></tr>
     <tr><td><span class="pill">NO CONTINUITY ON CH n</span></td><td>That channel reads OPEN.</td><td>Igniter or lead problem at the pad. Approach only per §5.7.</td></tr>
     <tr><td><span class="pill">WRONG STATE</span></td><td>The base is not in a state that accepts this command.</td><td>Wait for it to return to IDLE (post-fire cooldown is 2 s) and retry.</td></tr>
@@ -1633,7 +1686,8 @@ one is set.</p>
 <h2><span class="num">7</span>Shutdown, care and storage</h2>
 
 <ol class="steps">
-  <li class="hz"><span class="title">Remote arm switch to DISARM; base key to SAFE and removed.</span></li>
+  <li class="hz"><span class="title">Remote arm key to SAFE and removed; base arm key to SAFE and removed.</span>
+    Both on the LCO’s lanyard.</li>
   <li><span class="title">Disconnect every igniter lead at the pad, shorted.</span></li>
   <li><span class="title">Confirm all eight channels read ○ OPEN.</span>
     A channel still reading CONNECTED means something is still wired.</li>
@@ -1651,7 +1705,6 @@ one is set.</p>
 <ul class="plain">
   <li>Inspect igniter leads and clips for arc damage.</li>
   <li>Re-run the §4.4 acceptance checks — in particular the passive LED check.</li>
-  <li>After <em>any</em> rework of the base indicator wiring, re-verify the hardware AND gate at the arm-sense node rather than inferring it from the lamps. The lamps have been wrong before, and the whole safety case rests on that gate.</li>
 </ul>
 </section>
 
@@ -1718,7 +1771,7 @@ one is set.</p>
 </ul>
 
 <footer class="doc">
-  <span>RLC-OPS-001 · Operations Manual · firmware 1.2.0 · issued 2026-08-29</span>
+  <span>RLC-OPS-001 · Operations Manual · firmware 1.2.1 · issued 2026-08-29</span>
   <span>Safety questions to the RSO. Always.</span>
 </footer>
 </section>

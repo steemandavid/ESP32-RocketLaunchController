@@ -1376,8 +1376,21 @@ static void draw_splash_static(void)
     draw_text_centred(64, "LAUNCH CONTROLLER", 3, C_WHITE);
     draw_text_centred(106, "v" RLC_VERSION_STRING, 2, C_SELECTED);
 
+#if CONFIG_RLC_REMOTE_FAULT_INJECTION
+    /* A fault-injection build lies to its operator by construction, so the
+     * boot screen SHALL say so before anything else can be believed. The
+     * compile #warning, the boot banner and the flash-time warning are all on
+     * the developer's terminal; this is the only one of the four an operator
+     * standing at a firing point can see. It displaces the club credit
+     * deliberately — an abnormal build should not look normal. */
+    draw_frame(0, 0, DW, DH, 6, C_FAULT);
+    fill_rect(24, 130, DW - 48, 58, C_FAULT);
+    draw_text_centred(138, "!! FAULT INJECTION BUILD !!", 2, C_WHITE);
+    draw_text_centred(164, "NOT SAFE FOR LIVE USE", 2, C_WHITE);
+#else
     fill_rect(90, 138, DW - 180, 1, C_DGREY);
     draw_text_centred(152, "VRO - VLAAMSE RAKET ORGANISATIE", 2, C_INFO);
+#endif
 
     /* The credit and the progress bar sit on the status band and are drawn
      * per-frame in the dynamic half; the band would otherwise erase them. */
