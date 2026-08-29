@@ -414,6 +414,8 @@ Known open items before any field use:
 | `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.47 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
 | `Development_Progress.md` | Per-phase task and test tracking, hardware reference, bug history |
 | `RLC_Project_Summary.md` | Plain-language overview written for club members |
+| `docs/RLC_Operations_Manual.html` | **RLC-OPS-001** — operations manual: setup, controls, the safety case in full (interlocks, fail-safe matrix, residual risks), and the safe-ignition procedures for launches and static motor tests. A4 print stylesheet; open in a browser and print to PDF |
+| `docs/RLC_Field_Reference_Card.html` | **RLC-OPS-002** — single-page A4 field card: firing sequence, abort actions, misfire drill, status band and limits |
 | `Test_Report_Phase4_Display.md` | Phase 4 on-target display tests T-D01…T-D09 — 9 PASS / 0 FAIL (T-D09 failed at 3.3 Hz, fixed same day to 10.0 Hz, §6), plus a §10.2 coverage gap: four specified screens have never been rendered |
 | `changelog.md` | Session-by-session development log |
 | `Phase{1,2,3}_Code_Review*.md` | Code reviews against the specification |

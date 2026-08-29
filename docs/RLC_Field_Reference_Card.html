@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RLC Field Reference Card — A4</title>
+<style>
+/* ============================================================
+   ESP32 Wireless Rocket Launch Controller
+   RLC-OPS-002 · Field Reference Card — ONE A4 PAGE
+   Styling deliberately matches RLC-OPS-001 Operations Manual.
+   ============================================================ */
+
+@page { size: A4 portrait; margin: 11mm 10mm; }
+
+:root {
+  --ink:      #16191d;
+  --body:     #2b3138;
+  --slate:    #6a7480;
+  --rule:     #d7dce1;
+  --wash:     #f5f7f9;
+  --hazard:   #a8102a;
+  --hazard-w: #fdf2f4;
+  --safe:     #1f7a4d;
+  --safe-w:   #eef7f2;
+  --sans:     "Inter", "Helvetica Neue", "Segoe UI", "Liberation Sans", Arial, sans-serif;
+  --mono:     "SF Mono", "DejaVu Sans Mono", "Consolas", monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 7.4pt; }
+
+body {
+  font-family: var(--sans);
+  color: var(--body);
+  line-height: 1.3;
+  width: 190mm;
+  margin: 0 auto;
+  padding: 5mm 0;
+  background: #fff;
+}
+
+/* ---------- Masthead ---------- */
+
+.mast {
+  border-top: 4px solid var(--hazard);
+  border-bottom: 1.5px solid var(--ink);
+  padding: 2.2mm 0 1.8mm;
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 6mm;
+  margin-bottom: 3mm;
+}
+.mast .t1 {
+  font-size: 6pt; font-weight: 700; letter-spacing: .2em;
+  text-transform: uppercase; color: var(--hazard);
+}
+.mast h1 {
+  font-size: 14pt; font-weight: 750; letter-spacing: -.015em;
+  color: var(--ink); line-height: 1.08; margin-top: .5mm;
+}
+.mast h1 small { font-size: 8pt; font-weight: 600; color: var(--slate); display: block; letter-spacing: 0; }
+.mast .meta { text-align: right; font-size: 6.4pt; color: var(--slate); line-height: 1.45; white-space: nowrap; }
+.mast .meta b { color: var(--ink); }
+
+/* ---------- Columns ---------- */
+
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 7mm; }
+
+h2 {
+  font-size: 7pt; font-weight: 700; letter-spacing: .15em;
+  text-transform: uppercase; color: #fff; background: var(--ink);
+  padding: .85mm 2mm; margin: 3.2mm 0 1.6mm;
+}
+h2.hz { background: var(--hazard); }
+h2 .n { opacity: .55; margin-right: 1.8mm; }
+.col > h2:first-child { margin-top: 0; }
+
+h3 {
+  font-size: 6.5pt; font-weight: 700; letter-spacing: .11em;
+  text-transform: uppercase; color: var(--slate);
+  margin: 2.4mm 0 .9mm;
+}
+
+/* ---------- Steps ---------- */
+
+ol.seq { counter-reset: s; list-style: none; }
+ol.seq > li {
+  counter-increment: s; position: relative;
+  padding: 0 0 1.05mm 6mm;
+}
+ol.seq > li::before {
+  content: counter(s);
+  position: absolute; left: 0; top: .1mm;
+  width: 4.3mm; height: 4.3mm; line-height: 4.3mm; text-align: center;
+  font-size: 5.7pt; font-weight: 700; color: #fff;
+  background: var(--slate); border-radius: 50%;
+}
+ol.seq > li.hz::before { background: var(--hazard); }
+ol.seq b { color: var(--ink); font-weight: 700; }
+ol.seq .x { display: block; color: var(--slate); font-size: 6.6pt; }
+ol.seq .x::before { content: "→ "; color: var(--safe); font-weight: 700; }
+ol.seq .x.stop::before { content: "■ "; color: var(--hazard); }
+
+ul.tick { list-style: none; }
+ul.tick li { position: relative; padding: 0 0 .85mm 4.2mm; }
+ul.tick li::before {
+  content: ""; position: absolute; left: 0; top: .95mm;
+  width: 2.1mm; height: 2.1mm; border: 1px solid var(--slate); border-radius: .5mm;
+}
+ul.tick li b { color: var(--ink); }
+
+/* ---------- Tables ---------- */
+
+table { width: 100%; border-collapse: collapse; font-size: 6.8pt; }
+th {
+  text-align: left; font-size: 6pt; font-weight: 700; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--slate);
+  border-bottom: 1.2px solid var(--ink); padding: 0 1.8mm .7mm 0;
+}
+td { padding: .7mm 1.8mm .7mm 0; border-bottom: .5px solid var(--rule); vertical-align: top; }
+td.r { text-align: right; font-variant-numeric: tabular-nums; padding-right: 0; white-space: nowrap; font-weight: 600; color: var(--ink); }
+tr:last-child td { border-bottom: none; }
+
+/* ---------- Bits ---------- */
+
+.band {
+  display: inline-block; width: 100%; text-align: center;
+  font-size: 5.9pt; font-weight: 700; letter-spacing: .05em;
+  color: #fff; padding: .6mm 0; border-radius: .6mm;
+}
+.dot { display: inline-block; width: 2.3mm; height: 2.3mm; border-radius: 50%; vertical-align: -.1mm; margin-right: 1.1mm; }
+.gl { font-size: 8.5pt; line-height: 1; }
+
+.pill {
+  font-family: var(--mono); font-size: 6pt;
+  background: var(--wash); border: .5px solid var(--rule);
+  padding: .15mm .9mm; border-radius: .6mm; white-space: nowrap;
+}
+
+.callout {
+  border-left: 2.5px solid var(--hazard); background: var(--hazard-w);
+  padding: 1.4mm 2.2mm; margin: 1.8mm 0; font-size: 6.7pt;
+}
+.callout.ok { border-color: var(--safe); background: var(--safe-w); }
+.callout .lb {
+  display: block; font-size: 5.9pt; font-weight: 700; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--hazard); margin-bottom: .4mm;
+}
+.callout.ok .lb { color: var(--safe); }
+
+/* ---------- Full-width bars + footer ---------- */
+
+.limits {
+  margin-top: 3.2mm;
+  border-top: 1.2px solid var(--ink); border-bottom: .5px solid var(--rule);
+  padding: 1.3mm 0; font-size: 6.5pt; color: var(--slate);
+  display: flex; flex-wrap: wrap; gap: 1mm 5mm; align-items: baseline;
+}
+.limits b { color: var(--ink); font-weight: 700; }
+.limits .lb {
+  font-size: 5.9pt; font-weight: 700; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--hazard); white-space: nowrap;
+}
+
+.strip {
+  margin-top: 2.4mm;
+  border: 1.2px solid var(--hazard); background: var(--hazard-w);
+  padding: 1.6mm 3mm; font-size: 6.7pt;
+  display: flex; gap: 4mm; align-items: baseline;
+}
+.strip .lb {
+  font-size: 5.9pt; font-weight: 700; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--hazard); white-space: nowrap;
+}
+
+.foot {
+  margin-top: 2.2mm; border-top: 1.5px solid var(--ink); padding-top: 1.5mm;
+  display: flex; justify-content: space-between; gap: 5mm;
+  font-size: 6.1pt; color: var(--slate);
+}
+.foot b { color: var(--ink); }
+
+@media print { body { padding: 0; width: auto; } .so { display: none; } }
+.so {
+  font-size: 7pt; background: var(--wash); border: 1px dashed var(--rule);
+  padding: 2mm 3mm; margin-bottom: 4mm; color: var(--slate); border-radius: 1mm;
+}
+</style>
+</head>
+<body>
+
+<div class="so"><b>Printing:</b> A4 portrait, margins <em>Default</em>, background graphics ON, scale 100%. Fits one page.</div>
+
+<!-- ================= MASTHEAD ================= -->
+<div class="mast">
+  <div>
+    <div class="t1">Field Reference Card · RLC-OPS-002</div>
+    <h1>Rocket Launch Controller
+      <small>Firing sequence · abort actions · safety limits</small>
+    </h1>
+  </div>
+  <div class="meta">
+    Firmware <b>1.2.0</b>, both units<br>
+    Pre-fire <b>5 s</b> · pulse <b>1 s</b> · arm timeout <b>10 s</b><br>
+    Full detail in <b>RLC-OPS-001</b>
+  </div>
+</div>
+
+<div class="cols">
+
+<!-- ================= COLUMN 1 ================= -->
+<div class="col">
+
+  <h2 class="hz"><span class="n">A</span>Firing sequence</h2>
+
+  <ol class="seq">
+    <li><b>Check the remote.</b> LINK OK not WEAK, band green SAFE, packs good.
+      <span class="x stop">Grey band = pad state unknown. Stop.</span></li>
+    <li><b>Select the channel.</b> The one you wrote down.
+      <span class="x stop">○ OPEN → arming will be refused.</span></li>
+    <li><b>Call the pad clear.</b> Get an acknowledgement back.</li>
+    <li class="hz"><b>Pad crew: key to ARM</b>, then step back.
+      <span class="x">KEY lamp on, <b>RELAY LIVE still dark</b>, band yellow.</span>
+      <span class="x stop">Relay lamp lit now → key to SAFE, unit out of service.</span></li>
+    <li><b>Operator: arm switch to ARMED.</b>
+      <span class="x">Band orange READY TO ARM. Pad unchanged.</span></li>
+    <li class="hz"><b>Long-press the encoder, 500 ms.</b>
+      <span class="x">2 beeps, band red ARM RELAY LIVE, <b>siren on and stays on</b>.</span>
+      <span class="x stop">3 rapid beeps = refused. Read §C, fix, restart at 1.</span></li>
+    <li><b>You now have 10 s.</b> Not ready? Disarm and re-arm.</li>
+    <li class="hz"><b>Range clear → press and HOLD fire.</b> Never tap it.
+      <span class="x">Ring red, tone 4 Hz, 5 s countdown.</span></li>
+    <li class="hz"><b>Keep holding</b> through the countdown and the 1 s pulse.
+      <span class="x">Releasing from step 8 on cuts current.</span></li>
+    <li><b>Release.</b>
+      <span class="x">FIRE COMPLETE, 10 s. <span class="pill">○ OPEN – LIKELY FIRED</span> expected.</span></li>
+    <li class="hz"><b>Arm switch to DISARM.</b> Before anything else.</li>
+    <li class="hz"><b>Key to SAFE and removed.</b> Only now approach the pad.
+      <span class="x">Green lamp lit, both reds dark, band green.</span></li>
+  </ol>
+
+  <div class="callout">
+    <span class="lb">FIRE COMPLETE is not ignition</span>
+    It means the controller finished its pulse. Rocket still on the pad = misfire.
+    Go to <b>§E</b>; do not shorten the wait.
+  </div>
+
+  <h2><span class="n">B</span>Static motor test — what changes</h2>
+
+  <ul class="tick">
+    <li><b>Sequence identical</b> — §A steps 1–12, unabbreviated.</li>
+    <li><b>Nobody on the thrust axis</b>, either way. Base off-axis, behind the stand.</li>
+    <li><b>Distances sized for a case failure</b>, not launch tables. RSO decides.</li>
+    <li><b>Stand and anchoring verified first</b>, base unpowered. Igniter fitted last.</li>
+    <li><b>Recorders running, cabling clear of firing leads</b> before the igniter goes in.</li>
+    <li><b>Fire watch posted</b> who is not the operator. Area cleared and damped.</li>
+    <li><b>Hold position through the burn and cool-down.</b> The pulse ends; the motor doesn’t.</li>
+    <li><b>Never “try it again.”</b> A misfire here is a loaded motor within reach.</li>
+  </ul>
+
+  <h2><span class="n">C</span>Refusals</h2>
+
+  <table>
+    <tbody>
+      <tr><td style="width:40%"><span class="pill">BASE KEY OFF</span></td><td>Key not in ARM.</td></tr>
+      <tr><td><span class="pill">NO CONTINUITY</span></td><td>Channel OPEN — igniter or lead.</td></tr>
+      <tr><td><span class="pill">ARM SENSE FAULT</span></td><td>Retry <b>once</b>; a second latches ERROR.</td></tr>
+      <tr><td><span class="pill">COMM DEGRADED</span></td><td>&gt;30 % ping loss. Do not arm.</td></tr>
+      <tr><td><span class="pill">LOW BATTERY</span></td><td>Base &lt;10.5 V. Change the pack.</td></tr>
+      <tr><td><span class="pill">ALREADY ARMED</span></td><td>Disarm first — one channel only.</td></tr>
+      <tr><td><span class="pill">BASE IN ERROR</span></td><td>Power cycle at the base only.</td></tr>
+      <tr><td><span class="pill">ENDED SEQUENCE</span></td><td>Base quit mid-hold. Treat as misfire.</td></tr>
+    </tbody>
+  </table>
+
+</div>
+
+<!-- ================= COLUMN 2 ================= -->
+<div class="col">
+
+  <h2 class="hz"><span class="n">D</span>Abort — every control is an abort</h2>
+
+  <table>
+    <thead><tr><th>Action</th><th style="width:24%">Cuts in</th></tr></thead>
+    <tbody>
+      <tr><td><b>Release the fire button</b> — intended abort</td><td class="r">&lt; 0.5 s</td></tr>
+      <tr><td>Arm switch to DISARM</td><td class="r">&lt; 0.5 s</td></tr>
+      <tr><td>Press or turn the encoder</td><td class="r">&lt; 0.5 s</td></tr>
+      <tr><td>Base key to SAFE — <em>physical</em></td><td class="r">immediate</td></tr>
+      <tr><td>Drop the remote — link loss disarms</td><td class="r">&lt; 1.5 s</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout ok">
+    <span class="lb">Aborting is free</span>
+    It costs one igniter at most. The cheapest action — letting go — is also the
+    safest. <b>If you are unsure, let go.</b>
+  </div>
+
+  <h2><span class="n">E</span>Misfire drill</h2>
+
+  <ol class="seq">
+    <li class="hz"><b>Release. Do not re-fire.</b></li>
+    <li class="hz"><b>Disarm the remote. Key to SAFE, removed.</b></li>
+    <li><b>Wait 60 s minimum</b> (NAR / TRA) or your code’s figure. Time it.</li>
+    <li><b>Read the igniter line first.</b> <span class="pill">○ OPEN</span> fired, motor didn’t light · <span class="pill">● CONNECTED</span> never fired · <span class="pill">▲ / ?</span> assume the worst.</li>
+    <li class="hz"><b>Confirm SAFE by the base lamps</b>, not the screen.</li>
+    <li><b>Disconnect and short the leads first.</b> Then diagnose.</li>
+  </ol>
+
+  <div class="callout">
+    <span class="lb">Danger — a pad you cannot disarm</span>
+    <b>RELAY WELDED</b>, or RELAY LIVE lit with the key in SAFE → the bus may be live
+    with nothing commanding it. <b>Do not approach the igniter.</b> Reach the base from
+    the side and disconnect its battery.
+  </div>
+
+  <h2><span class="n">F</span>Status band · base lamps</h2>
+
+  <table>
+    <tbody>
+      <tr><td style="width:40%"><span class="band" style="background:#1f7a4d">SAFE</span></td>
+          <td>Confirmed safe — both keys off.</td></tr>
+      <tr><td><span class="band" style="background:#c9a227">KEY / REMOTE ARMED</span></td>
+          <td>One key turned. Cannot proceed.</td></tr>
+      <tr><td><span class="band" style="background:#d97a06">READY TO ARM</span></td>
+          <td>Both keys. One press from live.</td></tr>
+      <tr><td><span class="band" style="background:#a8102a">ARM RELAY LIVE</span></td>
+          <td><b>Pad live. Nobody approaches.</b></td></tr>
+      <tr><td><span class="band" style="background:#a8102a">RELAY WELDED</span></td>
+          <td>Flashing. Closed wrongly — §E.</td></tr>
+      <tr><td><span class="band" style="background:#8c1230">BASE / REMOTE FAULT</span></td>
+          <td>Faulted. Power cycle at the unit.</td></tr>
+      <tr><td><span class="band" style="background:#7d8792">STATUS UNKNOWN</span></td>
+          <td><b>Grey is not green.</b> Do not approach.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Base lamps — the only indicators not made of software</h3>
+  <table>
+    <tbody>
+      <tr><td style="width:40%"><span class="dot" style="background:#1f7a4d"></span><b>GREEN SAFE</b></td><td>Coil circuit physically broken.</td></tr>
+      <tr><td><span class="dot" style="background:#a8102a"></span><b>RED KEY ARM</b></td><td>Key turned. Precondition only.</td></tr>
+      <tr><td><span class="dot" style="background:#a8102a"></span><b>RED RELAY LIVE</b></td><td><b>Battery on the fire bus.</b></td></tr>
+    </tbody>
+  </table>
+
+  <h2><span class="n">G</span>Continuity · sounds · limits</h2>
+
+  <table>
+    <tbody>
+      <tr><td style="width:40%"><span class="gl" style="color:#2e8b57">●</span> <b>CONNECTED</b> &lt;67 Ω</td><td>Current can flow. Arm OK.</td></tr>
+      <tr><td><span class="gl" style="color:#b8a30a">▲</span> <b>MARGINAL</b> 67–500 Ω</td><td>Arm OK — re-seat the clips.</td></tr>
+      <tr><td><span class="gl" style="color:#d97a06">○</span> <b>OPEN</b> &gt;500 Ω</td><td><b>Refused</b>; disarms an armed channel.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Sounds</h3>
+  <table>
+    <tbody>
+      <tr><td style="width:40%"><b>Siren continuous</b></td><td><b>Pad is live.</b></td></tr>
+      <tr><td><b>Siren 4 × 500 ms</b></td><td>Link lost; base disarmed.</td></tr>
+      <tr><td><b>Siren 3 × 200 ms</b></td><td>Error or continuity loss.</td></tr>
+      <tr><td><b>0.8 Hz / 4 Hz tone</b></td><td>ARMED / FIRING.</td></tr>
+    </tbody>
+  </table>
+
+</div>
+</div>
+
+<div class="limits">
+  <span class="lb">Limits</span>
+  <span><b>Base pack</b> arm 10.5 V · critical 9.0 V</span>
+  <span><b>Remote pack</b> arm 7.0 V · critical 6.4 V</span>
+  <span><b>Range</b> ~200 m LOS</span>
+  <span><b>Dead-man</b> 500 ms</span>
+  <span><b>Link loss</b> 1.5 s</span>
+  <span><b>Cooldown</b> 2 s</span>
+</div>
+
+<div class="strip">
+  <span class="lb">End of day — not optional</span>
+  <span><b>Disconnect both battery packs.</b> Neither unit has a hardware undervoltage
+  cut-off, and ERROR halts operation without disconnecting the load — a unit left switched
+  on will flatten its LiPo. Confirm all eight channels read ○ OPEN before packing up.</span>
+</div>
+
+<div class="foot">
+  <span><b>RLC-OPS-002</b> · Field Reference Card · firmware 1.2.0 · issued 2026-08-29 · VRO</span>
+  <span><b>This card summarises. RLC-OPS-001 governs. The RSO overrides both.</b></span>
+</div>
+
+</body>
+</html>
