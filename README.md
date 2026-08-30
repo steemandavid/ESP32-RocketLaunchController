@@ -17,14 +17,15 @@ Developed for use with **VRO — Vlaamse Raket Organisatie**.
 
 ## How it works
 
-The operator selects a channel on the remote, completes a deliberate multi-step
-arming procedure, then presses and **holds** a fire button. Releasing the button
+A single LCO (Launch Control Officer) runs the whole sequence: select a channel
+on the remote, complete a deliberate multi-step arming procedure, then presses and **holds** a fire button. Releasing the button
 at any point cuts current to the igniter — it is a dead-man switch, not a latch.
 
 1. Both units power up and link automatically.
 2. Operator selects a channel (1–8) with the rotary encoder.
-3. Someone at the pad turns the base unit's physical **key switch** to ARM.
-4. Operator flips the remote's physical **arm switch**.
+3. The LCO turns the base unit's physical **base arm key** to ARM at the pad,
+   then returns to the firing point.
+4. The LCO turns the remote's physical **remote arm key** to ARMED.
 5. Operator **long-presses** the encoder (500 ms) to send the arm command.
 6. The base checks its guard conditions and energises the arm relay; the pad
    siren sounds continuously and stays on for the rest of the sequence.
@@ -147,9 +148,13 @@ watchdog (T-S07), `c` corrupts the next outgoing command (T-S05), `?` prints
 state.
 
 **This firmware deliberately lies to the remote and is not safe for live use.**
-It announces itself four ways — a compile `#warning`, a boot banner, a
-flash-time warning, and a build failure if the option did not reach the built
-config — and `sdkconfig.base` is never modified, so the option cannot leak into
+It announces itself five ways — a compile `#warning`, a boot banner, a
+flash-time warning, a build failure if the option did not reach the built
+config, and (remote only, since 1.2.1) a red **FAULT INJECTION BUILD — NOT SAFE
+FOR LIVE USE** banner on the boot splash, which is the only one of the five an
+operator at a firing point can actually see. A fault-injection *base* has no
+such tell: the remote knows only its own build, and the base does not advertise
+its own over the link — and `sdkconfig.base` is never modified, so the option cannot leak into
 a later normal build. Reflash with plain `./build_base.sh flash` afterwards.
 
 `./build_remote.sh --inject` is the remote-side counterpart
@@ -267,7 +272,7 @@ so the "pad is live" signal is never diluted into a data display.
 | 2 | Input/output and debouncing | Complete |
 | 3 | State machines and command processing | Complete — G2 arming suite 18/18, G3 fire tests all pass or discharged |
 | 4 | Display | Verified on target 2026-08-27 — 9/9 pass; status band added and its 7 states verified |
-| 5 | Hardening and final testing | **Complete — release fw 1.2.0, 2026-08-28.** §15.4 safety tests 14/19 (incl. T-S06 partial); bug #20 closed. Only T-S10 and T-S18 genuinely open, both blocked on physical access: a soldered display and a soldered key-sense wire. Phase 5 code review closed out 2026-08-28 in fw 1.1.30 (1 Critical, 6 Major, 13 Minor) and **verified on target the same day — 11 tests, 11 PASS** (`Test_Report_Phase5_Review_Fixes.md`), taking firmware to 1.1.32. **MAJ-01 and CRIT-01 closed on target later the same day** (fw 1.1.35, `Test_Report_Phase5_OnTarget_20260828.md`) — two more live defects found and fixed on the way (raw-NACK toast, battery-critical disarm); bug #29 regression suite T-A16/T-A17/T-A18 all PASS, **cleared for live fire**. Final-build audit clean (zero injection/harness symbols in both stock ELFs); both units on stock 1.2.0 |
+| 5 | Hardening and final testing | **Complete — release fw 1.2.0, 2026-08-28; currently fw 1.2.1.** §15.4 safety tests 14/19 (incl. T-S06 partial); bug #20 closed. Only T-S10 and T-S18 genuinely open, both blocked on physical access: a soldered display and a soldered key-sense wire. Phase 5 code review closed out 2026-08-28 in fw 1.1.30 (1 Critical, 6 Major, 13 Minor) and **verified on target the same day — 11 tests, 11 PASS** (`Test_Report_Phase5_Review_Fixes.md`), taking firmware to 1.1.32. **MAJ-01 and CRIT-01 closed on target later the same day** (fw 1.1.35, `Test_Report_Phase5_OnTarget_20260828.md`) — two more live defects found and fixed on the way (raw-NACK toast, battery-critical disarm); bug #29 regression suite T-A16/T-A17/T-A18 all PASS, **cleared for live fire**. Final-build audit clean (zero injection/harness symbols in both stock ELFs); both units on stock 1.2.0. **fw 1.2.1 (2026-08-30)** adds the remote's fault-injection splash banner (display-only, no protocol change) — both units need reflashing together before next use |
 
 Known open items before any field use:
 
@@ -420,6 +425,7 @@ Known open items before any field use:
 | `RLC_Project_Summary.md` | Plain-language overview written for club members |
 | `docs/RLC_Operations_Manual.html` | **RLC-OPS-001** — operations manual: setup, controls, the safety case in full (interlocks, fail-safe matrix, residual risks), and the safe-ignition procedures for launches and static motor tests. A4 print stylesheet; open in a browser and print to PDF |
 | `docs/RLC_Field_Reference_Card.html` | **RLC-OPS-002** — single-page A4 field card: firing sequence, abort actions, misfire drill, status band and limits |
+| `docs/reference/` | Source drawings the manual figures are derived from — currently the remote front panel. Re-derive figures from these rather than redrawing by eye |
 | `Test_Report_Phase4_Display.md` | Phase 4 on-target display tests T-D01…T-D09 — 9 PASS / 0 FAIL (T-D09 failed at 3.3 Hz, fixed same day to 10.0 Hz, §6), plus a §10.2 coverage gap: four specified screens have never been rendered |
 | `changelog.md` | Session-by-session development log |
 | `Phase{1,2,3}_Code_Review*.md` | Code reviews against the specification |

@@ -1,5 +1,184 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-29/30 — Operations manual + field card (RLC-OPS-001/002), fire-path correction, fw 1.2.1
+
+Documentation session. Two operator-facing documents written from scratch, then
+revised twice against operator review, plus one firmware change and one factual
+correction that reached back into the repo's older docs.
+
+### Deliverables
+
+| File | What it is |
+|---|---|
+| `docs/RLC_Operations_Manual.html` | **RLC-OPS-001** — full operations manual. Styled HTML with an A4 print stylesheet; open in a browser and print to PDF |
+| `docs/RLC_Field_Reference_Card.html` | **RLC-OPS-002** — single A4 page for the firing point |
+| `docs/reference/ESP32-RLC-front-remote.svg` | Source drawing Figure 2 is derived from |
+
+HTML rather than Markdown because the deliverable is a printed artefact with a
+fixed page budget, inline SVG diagrams and a consistent visual system — none of
+which survives Markdown.
+
+Manual contents: roles, version-matching rules, system overview, controls and
+indicators for both units, all eight display screens, the status band, continuity
+glyphs and the sound catalogue; setup, power-up and an acceptance-check list;
+**§5 Safety** (design principles, the fire path, hardware and firmware
+interlocks, link security, fail-safe matrix, pad rules, safe-ignition procedures
+for launches *and* static motor tests, abort options ranked by speed, misfire
+drill, residual risks); NACK reference, fault flags, troubleshooting, shutdown
+and reference data. Five inline SVG figures.
+
+### Fire path: TWO breaks, not three — a real correction
+
+`README.md` and `RLC_Project_Summary.md` both claimed *"three independent break
+points in the fire path (key switch, arm relay, channel relay)"*. That is wrong
+and it propagated into the manual's first draft before the operator caught it.
+
+The arm key switch is **not** in series with igniter current. It sits in the arm
+relay's **coil drive** path, in series with the firmware MOSFET. The fire path
+has two breaks: arm relay contacts and channel relay contacts.
+
+The FSD had this right all along — the v1.10 revision note says *"fire path now
+has two independent break points (arm switch + channel relay)"* — but the two
+summaries did not, and they are what people read first. Both corrected, and both
+now say why it is not a downgrade: a key in the coil path is a **stronger**
+position than a third series contact, because in SAFE there is no coil current
+available and no software fault can close the first break at all.
+
+Figure 4 redrawn accordingly: fire path on top, coil drive underneath, with the
+key switch, coil, MOSFET and ARM SENSE tap where they actually are.
+
+### Firmware 1.2.0 → 1.2.1 — fault-injection boot banner
+
+A remote built with `CONFIG_RLC_REMOTE_FAULT_INJECTION` announced itself four
+ways: compile `#warning`, boot banner, flash-time warning, and a build failure if
+the option did not reach the built config. **All four land on a developer's
+terminal.** None is visible to somebody picking the remote up at a firing point —
+which is exactly the person a build that lies about its own state must not
+mislead.
+
+`draw_splash_static()` now draws a red frame around the whole panel and a red
+`!! FAULT INJECTION BUILD !!` / `NOT SAFE FOR LIVE USE` block in place of the
+club credit, under `#if CONFIG_RLC_REMOTE_FAULT_INJECTION`. An abnormal build
+should not look normal.
+
+Display-only, no protocol change. Version bumped anyway: **a changed binary
+sharing a version number is precisely what the strict version check exists to
+prevent.** Flash both units together and reset the first-flashed one.
+
+> **Known gap, documented rather than papered over.** A *base* built with
+> `CONFIG_RLC_FAULT_INJECTION` cannot be signalled this way. The remote knows
+> only its own build, and the base does not advertise its fault-injection state
+> on the wire. Closing that needs a protocol field and an explicit decision.
+> Base firmware provenance is a bench check, not a pad check.
+
+### Operating model: single LCO
+
+Launch Operator and Pad Crew are collapsed into one **LCO** (Launch Control
+Officer) who does everything: checks rockets, motors and igniters; checks and
+arms the base; arms the remote; fires every shot; then returns both keys to SAFE
+and releases the range. §5.8 is resequenced for one person working alone — walk
+out, arm, walk back, shoot — and §5.9/§5.11 follow.
+
+**Both units have arm key switches**, and both keys ride on the LCO's lanyard.
+Nobody else touches them. Note the FSD still describes the remote's arm control
+as a plain toggle switch (§5.5.2); as built it is keyed.
+
+Consequence: every operator-facing reference now names *which* key — **base arm
+key** or **remote arm key**. A bare "the key" is ambiguous at exactly the moment
+ambiguity is expensive: mid-sequence, one key at the pad, the other in your hand.
+
+### Figure 2 redrawn from the real panel
+
+Derived from `ESP32-RLC-front remote.svg` by resolving the Visio transform stack
+to absolute coordinates rather than eyeballing it. A **200 × 135 mm** panel:
+
+| Region | Contents |
+|---|---|
+| Left half | Display (480×320), then IGNITER CHANNELS silkscreen 1–8 above the 8-pixel strip |
+| Top edge | SMA antenna (`ANT 2.4GHz`), buzzer, on/off switch (`ON` above / `OFF` below), USB and COM ports |
+| Right edge | Arm key (`SAFE`/`ARMED`) → rotary selector (`SELECT`) → fire button (`FIRE`), top to bottom, in the order they are used |
+
+First pass used an earlier drawing in which the top-left round part was
+unlabelled and the on/off switch was absent entirely; I guessed the round part
+was the power switch. **It is the SMA antenna connector.** Corrected against the
+operator's updated drawing, which is fully annotated. The source SVG is now
+committed to `docs/reference/` so the figure can be re-derived rather than
+re-guessed.
+
+Knock-on text fixes: the manual never mentioned the remote has an external
+antenna (only the base did) — §3.1 gains an SMA row and "never power up without
+the antenna fitted" now appears for both units; the on/off row names its real
+location; and the strip row no longer mentions the channel-8 data-in end, which
+reads as a contradiction next to a panel silkscreened 1–8 left to right.
+
+### Other content changes from operator review
+
+- Added to both units' controls tables: **on/off switch** (inline with the
+  battery, physically cuts pack power), **USB and COM ports**, **balance
+  connector** (3-pin remote, 4-pin base). Base also gains its SMA row.
+- Power-up procedures gain the on/off step.
+- §4.4 reordered: link-range and siren-audibility checks moved to the end, since
+  both are tests of *distance* and are run after stepping back to the firing
+  point.
+- Continuity limit resistors documented as **1.5 kΩ + 1.3 kΩ** per the operator.
+  See the open item below.
+- Card: firing sequence gains "fire the other pads if needed" and an explicit
+  igniter-continuity check after release; the static-test "never try it again"
+  item now says what it means.
+- "Unknown is not safe" replaces "Grey is not green"; "power it off at the
+  on/off switch" replaces "disconnect its battery".
+- Removed at operator request: the check-5 caution, the bug #18 protection-mask
+  arming guard (manual now lists nine guards), the ESP32-destroyed-in-testing
+  clause, the continuity-disarm backstory, the crypto key-history note and its
+  residual-risk row, the pre-fire 2 s→5 s backstory, the enclosure clause, and
+  the AND-gate re-verification bullet.
+
+### Page-fit verification
+
+The field card must be one A4 page and there is no headless browser on this
+machine, so column heights are budgeted by calculation (a script that estimates
+wrapped line counts per block against the column width). Final: **229 mm and
+231 mm against 239 mm available** — roughly 10 mm slack each. First draft
+overflowed by 12–73 mm and was trimmed and rebalanced across three passes.
+
+**This is a calculation, not a render.** Worth one test print before the card
+goes in a folder. If it spills, the cheapest fix is dropping the card's
+`html { font-size }` from 7.4pt to 7.1pt — everything below is sized in relative
+units, so the whole layout scales together.
+
+### Commits
+
+| Commit | Subject |
+|---|---|
+| `26b60eb` | docs: operations manual (RLC-OPS-001) and A4 field reference card (RLC-OPS-002) |
+| `417b494` | docs: LCO single-operator model, corrected fire-path topology, panel hardware |
+| `077706d` | docs: fire path has two breaks, not three — correct README and project summary |
+| `512c1e1` | docs: disambiguate every key reference; redraw the remote panel from the as-built SVG |
+| `43ddbd6` | docs: remote panel corrections — SMA antenna, real on/off switch position, panel legend |
+
+Host tests 30/30 throughout. Both units build clean, stock and `--inject`.
+
+### Open items / follow-ups
+
+- **Continuity resistor values are unresolved and deliberately untouched in
+  code.** The operator reports **1.5 kΩ + 1.3 kΩ** installed; the FSD says
+  1.5 + 1.8 = 3.3 kΩ in four places and `CONT_R_REF_OHM` is `3300`. If 1.3 kΩ is
+  correct then test current is ~1.18 mA (not ≤ 1 mA as specified) **and** the
+  `CONT_MARGINAL_UV` / `CONT_OPEN_UV` thresholds sit at different resistances
+  than intended, because they are derived from R_ref. Operator is measuring.
+  Nothing in firmware or the FSD was changed pending that.
+- **Base unit diagram is still generic** — awaiting a sketch or photo of the real
+  base panel. The remote is done.
+- **The 3-pin balance connector does not appear in the remote drawing**, so it is
+  in the controls table but not depicted.
+- `README.md` says "ten guard conditions", the manual says nine. Both are
+  defensible: the bug #18 protection-mask guard exists in firmware but the mask
+  is `0xFF`, so it never refuses anything in practice, and it was dropped from
+  the operator-facing document at the operator's request. Left as-is.
+- Manual and card carry **firmware 1.2.1**; both units are still on 1.2.0 and
+  need reflashing together before next use.
+
+
 ## 2026-08-28 (third session) — FINAL release: fw 1.2.0, Phase 5 closed
 
 - **T-A18 closed** (start of session): 68 Ω resistor on ch2, pulled ~1.5 s
