@@ -218,10 +218,10 @@ tr:last-child td { border-bottom: none; }
     <li><b>Select the correct channel. Double-check.</b>
       <span class="x stop">○ OPEN → arming will be refused.</span></li>
     <li><b>Call the pad clear.</b> Get an acknowledgement back.</li>
-    <li class="hz"><b>LCO: key to ARM</b>, then step back.
+    <li class="hz"><b>LCO: base arm key to ARM</b>, then step back.
       <span class="x">KEY lamp on, <b>RELAY LIVE still dark</b>, band yellow.</span>
-      <span class="x stop">Relay lamp lit now → key to SAFE, unit out of service.</span></li>
-    <li><b>LCO: arm switch to ARMED.</b>
+      <span class="x stop">Relay lamp lit now → base arm key to SAFE, unit out of service.</span></li>
+    <li><b>LCO: remote arm key to ARMED.</b>
       <span class="x">Band orange READY TO ARM. Pad unchanged.</span></li>
     <li class="hz"><b>Long-press the encoder, 500 ms.</b>
       <span class="x">2 beeps, band red ARM RELAY LIVE, <b>siren on and stays on</b>.</span>
@@ -234,7 +234,7 @@ tr:last-child td { border-bottom: none; }
     <li><b>Release.</b> FIRE COMPLETE, 10 s. Check igniter continuity:
       <span class="x"><span class="pill">○ OPEN – LIKELY FIRED</span> expected.</span></li>
     <li><b>Fire the other pads if needed.</b> Repeat from step 2.</li>
-    <li class="hz"><b>Remote arm switch to SAFE, key removed.</b> Before anything else.</li>
+    <li class="hz"><b>Remote arm key to SAFE and removed.</b> Before anything else.</li>
     <li class="hz"><b>Base arm key to SAFE and removed.</b> Check the band is green. Only now approach the pad.</li>
   </ol>
 
@@ -260,7 +260,7 @@ tr:last-child td { border-bottom: none; }
 
   <table>
     <tbody>
-      <tr><td style="width:40%"><span class="pill">BASE KEY OFF</span></td><td>Key not in ARM.</td></tr>
+      <tr><td style="width:40%"><span class="pill">BASE KEY OFF</span></td><td>Base arm key not in ARM.</td></tr>
       <tr><td><span class="pill">NO CONTINUITY</span></td><td>Channel OPEN — igniter or lead.</td></tr>
       <tr><td><span class="pill">ARM SENSE FAULT</span></td><td>Retry <b>once</b>; a second latches ERROR.</td></tr>
       <tr><td><span class="pill">COMM DEGRADED</span></td><td>&gt;30 % ping loss. Do not arm.</td></tr>
@@ -282,7 +282,7 @@ tr:last-child td { border-bottom: none; }
     <thead><tr><th>Action</th><th style="width:24%">Cuts in</th></tr></thead>
     <tbody>
       <tr><td><b>Release the fire button</b> — intended abort</td><td class="r">&lt; 0.5 s</td></tr>
-      <tr><td>Arm switch to DISARM</td><td class="r">&lt; 0.5 s</td></tr>
+      <tr><td>Remote arm key to SAFE</td><td class="r">&lt; 0.5 s</td></tr>
       <tr><td>Press or turn the encoder</td><td class="r">&lt; 0.5 s</td></tr>
       <tr><td>Base arm key to SAFE — <em>physical</em></td><td class="r">immediate</td></tr>
       <tr><td>Drop the remote — link loss disarms</td><td class="r">&lt; 1.5 s</td></tr>
@@ -299,7 +299,7 @@ tr:last-child td { border-bottom: none; }
 
   <ol class="seq">
     <li class="hz"><b>Release. Do not re-fire.</b></li>
-    <li class="hz"><b>Disarm the remote. Key to SAFE, removed.</b></li>
+    <li class="hz"><b>Remote arm key to SAFE and removed.</b></li>
     <li><b>Wait 60 s minimum</b> (NAR / TRA) or your code’s figure. Time it.</li>
     <li><b>Read the igniter line first.</b> <span class="pill">○ OPEN</span> fired, motor didn’t light · <span class="pill">● CONNECTED</span> never fired · <span class="pill">▲ / ?</span> assume the worst.</li>
     <li class="hz"><b>Confirm SAFE by the base lamps</b>, not the screen.</li>
@@ -308,7 +308,7 @@ tr:last-child td { border-bottom: none; }
 
   <div class="callout">
     <span class="lb">Danger — a pad you cannot disarm</span>
-    <b>RELAY WELDED</b>, or RELAY LIVE lit with the key in SAFE → the bus may be live
+    <b>RELAY WELDED</b>, or RELAY LIVE lit with the base arm key in SAFE → the bus may be live
     with nothing commanding it. <b>Do not approach the igniter.</b> Reach the base from
     the side and power it off at the on/off switch.
   </div>
@@ -318,11 +318,11 @@ tr:last-child td { border-bottom: none; }
   <table>
     <tbody>
       <tr><td style="width:40%"><span class="band" style="background:#1f7a4d">SAFE</span></td>
-          <td>Confirmed safe — both keys off.</td></tr>
+          <td>Confirmed safe — both arm keys off.</td></tr>
       <tr><td><span class="band" style="background:#c9a227">KEY / REMOTE ARMED</span></td>
-          <td>One key turned. Cannot proceed.</td></tr>
+          <td>One arm key turned. Cannot proceed.</td></tr>
       <tr><td><span class="band" style="background:#d97a06">READY TO ARM</span></td>
-          <td>Both keys. One press from live.</td></tr>
+          <td>Both arm keys. One press from live.</td></tr>
       <tr><td><span class="band" style="background:#a8102a">ARM RELAY LIVE</span></td>
           <td><b>Pad live. Nobody approaches.</b></td></tr>
       <tr><td><span class="band" style="background:#a8102a">RELAY WELDED</span></td>
@@ -337,8 +337,8 @@ tr:last-child td { border-bottom: none; }
   <h3>Base lamps — the only indicators not made of software</h3>
   <table>
     <tbody>
-      <tr><td style="width:40%"><span class="dot" style="background:#1f7a4d"></span><b>GREEN SAFE</b></td><td>Coil circuit physically broken.</td></tr>
-      <tr><td><span class="dot" style="background:#a8102a"></span><b>RED KEY ARM</b></td><td>Key turned. Precondition only.</td></tr>
+      <tr><td style="width:40%"><span class="dot" style="background:#1f7a4d"></span><b>GREEN SAFE</b></td><td>Base arm key in SAFE — coil broken.</td></tr>
+      <tr><td><span class="dot" style="background:#a8102a"></span><b>RED KEY ARM</b></td><td>Base arm key turned. Precondition only.</td></tr>
       <tr><td><span class="dot" style="background:#a8102a"></span><b>RED RELAY LIVE</b></td><td><b>Battery on the fire bus.</b></td></tr>
     </tbody>
   </table>

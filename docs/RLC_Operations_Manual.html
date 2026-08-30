@@ -320,21 +320,39 @@ footer.doc {
       <rect x="0" y="205" width="700" height="45" fill="#f5f7f9"/>
 
       <!-- REMOTE -->
-      <g transform="translate(40,58)">
-        <rect x="0" y="0" width="150" height="147" rx="7" fill="#fff" stroke="#16191d" stroke-width="2"/>
-        <rect x="12" y="12" width="126" height="62" rx="3" fill="#16191d"/>
-        <text x="75" y="38" text-anchor="middle" fill="#7fd4a6" font-size="11" font-weight="700">CH 3  SAFE</text>
-        <text x="75" y="55" text-anchor="middle" fill="#8b98a5" font-size="9">● ● ▲ ○ ○ ● ● ●</text>
-        <rect x="12" y="66" width="126" height="8" fill="#1f7a4d"/>
-        <circle cx="38" cy="100" r="15" fill="#f5f7f9" stroke="#6a7480" stroke-width="2"/>
-        <text x="38" y="126" text-anchor="middle" font-size="8" fill="#6a7480">ENCODER</text>
-        <rect x="66" y="88" width="22" height="24" rx="3" fill="#f5f7f9" stroke="#6a7480" stroke-width="2"/>
-        <text x="77" y="126" text-anchor="middle" font-size="8" fill="#6a7480">ARM</text>
-        <circle cx="118" cy="100" r="16" fill="#a8102a"/>
-        <text x="118" y="126" text-anchor="middle" font-size="8" fill="#6a7480">FIRE</text>
+      <g transform="translate(30,86)">
+        <rect x="0" y="0" width="176" height="119" rx="6" fill="#fff" stroke="#16191d" stroke-width="2"/>
+        <!-- display -->
+        <rect x="10" y="26" width="94" height="62" rx="2" fill="#dfe4e9" stroke="#6a7480"/>
+        <rect x="18" y="26" width="86" height="62" fill="#111417"/>
+        <text x="61" y="42" text-anchor="middle" fill="#8b98a5" font-size="6.5">LINK OK  12.1V</text>
+        <text x="61" y="56" text-anchor="middle" fill="#7fd4a6" font-size="7">● ● ▲ ○ ○ ● ● ●</text>
+        <rect x="18" y="76" width="86" height="12" fill="#1f7a4d"/>
+        <text x="61" y="85" text-anchor="middle" fill="#fff" font-size="7" font-weight="700">SAFE</text>
+        <!-- strip -->
+        <rect x="24" y="96" width="62" height="8" rx="1.5" fill="#20262c"/>
+        <g fill="#4fae7d">
+          <circle cx="30" cy="100" r="2.6"/><circle cx="38" cy="100" r="2.6"/>
+          <circle cx="46" cy="100" r="2.6" fill="#d9a13f"/><circle cx="54" cy="100" r="2.6" fill="#d9a13f"/>
+          <circle cx="62" cy="100" r="2.6" fill="#d9a13f"/><circle cx="70" cy="100" r="2.6" fill="#d9d24a"/>
+          <circle cx="78" cy="100" r="2.6"/><circle cx="86" cy="100" r="2.6"/>
+        </g>
+        <!-- top row: on/off, buzzer, ports -->
+        <circle cx="20" cy="14" r="6" fill="#f0f3f6" stroke="#16191d" stroke-width="1.4"/>
+        <circle cx="45" cy="14" r="5.5" fill="#f0f3f6" stroke="#16191d" stroke-width="1.2"/>
+        <rect x="74" y="11" width="10" height="5" rx="1" fill="#c9ced4" stroke="#16191d" stroke-width="0.8"/>
+        <rect x="88" y="11" width="10" height="5" rx="1" fill="#c9ced4" stroke="#16191d" stroke-width="0.8"/>
+        <!-- right column: arm key, selector, fire -->
+        <circle cx="142" cy="26" r="12" fill="#eef1f4" stroke="#16191d" stroke-width="1.6"/>
+        <path d="M142 26 v-7" stroke="#16191d" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="160" cy="38" r="3" fill="#f4c9d1" stroke="#a8102a"/>
+        <circle cx="142" cy="63" r="7" fill="#f0f3f6" stroke="#16191d" stroke-width="1.6"/>
+        <path d="M142 63 v-5" stroke="#16191d" stroke-width="1.6" stroke-linecap="round"/>
+        <circle cx="142" cy="98" r="14" fill="#a8102a" stroke="#6d0a1c" stroke-width="1.6"/>
+        <circle cx="142" cy="98" r="9.5" fill="none" stroke="#1f7a4d" stroke-width="2.4"/>
       </g>
-      <text x="115" y="228" text-anchor="middle" font-size="11" font-weight="700" fill="#16191d">REMOTE UNIT</text>
-      <text x="115" y="242" text-anchor="middle" font-size="9" fill="#6a7480">operator, at safe distance</text>
+      <text x="118" y="228" text-anchor="middle" font-size="11" font-weight="700" fill="#16191d">REMOTE UNIT</text>
+      <text x="118" y="242" text-anchor="middle" font-size="9" fill="#6a7480">operator, at safe distance</text>
 
       <!-- link -->
       <g>
@@ -350,7 +368,7 @@ footer.doc {
         <rect x="0" y="0" width="150" height="147" rx="7" fill="#fff" stroke="#16191d" stroke-width="2"/>
         <circle cx="30" cy="30" r="13" fill="#f5f7f9" stroke="#16191d" stroke-width="2"/>
         <line x1="30" y1="30" x2="30" y2="20" stroke="#16191d" stroke-width="3"/>
-        <text x="30" y="56" text-anchor="middle" font-size="8" fill="#6a7480">KEY</text>
+        <text x="30" y="56" text-anchor="middle" font-size="8" fill="#6a7480">ARM KEY</text>
         <circle cx="72" cy="24" r="5" fill="#1f7a4d"/><text x="84" y="27" font-size="8" fill="#6a7480">SAFE</text>
         <circle cx="72" cy="40" r="5" fill="#e8e8e8" stroke="#c9ced4"/><text x="84" y="43" font-size="8" fill="#6a7480">KEY ARM</text>
         <circle cx="72" cy="56" r="5" fill="#e8e8e8" stroke="#c9ced4"/><text x="84" y="59" font-size="8" fill="#6a7480">RELAY LIVE</text>
@@ -564,7 +582,7 @@ link. There is no wire between the firing point and the pad.</p>
     <tr>
       <td><strong>Base unit</strong></td>
       <td>At the launch pad or test stand, wired directly to up to eight igniter circuits.</td>
-      <td>Owns the fire path. Measures igniter continuity, holds the physical key switch, energises the arm and channel relays, sounds the pad siren. <em>The base is authoritative — it decides whether ignition happens.</em></td>
+      <td>Owns the fire path. Measures igniter continuity, holds the physical arm key switch, energises the arm and channel relays, sounds the pad siren. <em>The base is authoritative — it decides whether ignition happens.</em></td>
     </tr>
     <tr>
       <td><strong>Remote unit</strong></td>
@@ -621,7 +639,7 @@ link. There is no wire between the firing point and the pad.</p>
       <line x1="456" y1="94" x2="456" y2="52" stroke="#c9ced4" stroke-width="1"/>
       <line x1="554" y1="94" x2="554" y2="52" stroke="#c9ced4" stroke-width="1"/>
 
-      <text x="156" y="40" font-weight="700">Key + arm switch</text>
+      <text x="156" y="40" font-weight="700">Base + remote arm keys</text>
       <text x="156" y="50" fill="#6a7480">+ 500 ms long-press</text>
       <text x="310" y="40" font-weight="700">Press &amp; HOLD fire</text>
       <text x="310" y="50" fill="#6a7480">dead-man from here on</text>
@@ -670,104 +688,155 @@ link. There is no wire between the firing point and the pad.</p>
 <h3><span class="num">3.1</span> Remote unit</h3>
 
 <figure>
-  <svg viewBox="0 0 700 300" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <svg viewBox="0 0 960 400" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
     <defs>
-      <marker id="lead" markerWidth="7" markerHeight="7" refX="6" refY="2.4" orient="auto">
+      <marker id="ld" markerWidth="7" markerHeight="7" refX="6" refY="2.4" orient="auto">
         <path d="M0,0 L6,2.4 L0,4.8 z" fill="#6a7480"/>
       </marker>
     </defs>
 
-    <!-- body -->
-    <rect x="196" y="16" width="308" height="268" rx="12" fill="#fff" stroke="#16191d" stroke-width="2.5"/>
+    <!-- ===== front panel, 200 x 135 mm ===== -->
+    <rect x="210" y="60" width="474.6" height="319.9" rx="6" fill="#fbfcfd" stroke="#16191d" stroke-width="2.2"/>
 
-    <!-- display -->
-    <rect x="216" y="34" width="268" height="150" rx="4" fill="#16191d"/>
-    <!-- top bar -->
-    <text x="228" y="52" fill="#8b98a5" font-size="9">RSSI −48 dBm  ▮▮▮▮</text>
-    <text x="380" y="52" fill="#8b98a5" font-size="9">BATT 8.1 V  ▮▮▮▮</text>
-    <text x="228" y="65" fill="#8b98a5" font-size="9">LINK OK  12 ms</text>
-    <text x="380" y="65" fill="#8b98a5" font-size="9">BASE 12.1 V ▮▮▮▮</text>
-    <line x1="222" y1="72" x2="478" y2="72" stroke="#3a424b"/>
-    <!-- grid -->
-    <g font-size="12" font-weight="700">
-      <text x="240" y="98" fill="#3fa06b">1 ●</text><text x="300" y="98" fill="#3fa06b">2 ●</text>
-      <text x="360" y="98" fill="#c9c53f">3 ▲</text><text x="420" y="98" fill="#d9a13f">4 ○</text>
-      <text x="240" y="124" fill="#d9a13f">5 ○</text><text x="300" y="124" fill="#d9a13f">6 ○</text>
-      <text x="360" y="124" fill="#3fa06b">7 ●</text><text x="420" y="124" fill="#3fa06b">8 ●</text>
+    <!-- corner mounting blocks + screw holes -->
+    <g fill="#eef1f4" stroke="#a8b2bc" stroke-width="1">
+      <rect x="210"   y="60"    width="23.7" height="23.7"/>
+      <rect x="660.9" y="60"    width="23.7" height="23.7"/>
+      <rect x="210"   y="356.2" width="23.7" height="23.7"/>
+      <rect x="660.9" y="356.2" width="23.7" height="23.7"/>
     </g>
-    <rect x="230" y="84" width="42" height="20" fill="none" stroke="#4fd2e8" stroke-width="1.6"/>
-    <text x="228" y="146" fill="#fff" font-size="10">SEL CH 1   BASE SAFE   REMOTE DISARMED</text>
-    <text x="228" y="160" fill="#c9c53f" font-size="10">TURN ARM KEY TO ARM CH 1</text>
-    <!-- status band -->
-    <rect x="216" y="168" width="268" height="16" fill="#1f7a4d"/>
-    <text x="350" y="180" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">SAFE</text>
-
-    <!-- LED strip -->
-    <g transform="translate(216,192)">
-      <rect x="0" y="0" width="268" height="16" rx="3" fill="#20262c"/>
-      <circle cx="18" cy="8" r="5" fill="#3fa06b"/><circle cx="52" cy="8" r="5" fill="#3fa06b"/>
-      <circle cx="86" cy="8" r="5" fill="#c9c53f"/><circle cx="120" cy="8" r="5" fill="#d9a13f"/>
-      <circle cx="154" cy="8" r="5" fill="#d9a13f"/><circle cx="188" cy="8" r="5" fill="#d9a13f"/>
-      <circle cx="222" cy="8" r="5" fill="#3fa06b"/><circle cx="250" cy="8" r="5" fill="#3fa06b"/>
+    <g fill="#fff" stroke="#8b98a5" stroke-width="1.2">
+      <circle cx="233.7" cy="83.7"  r="5.9"/>
+      <circle cx="660.9" cy="83.7"  r="5.9"/>
+      <circle cx="233.7" cy="356.2" r="5.9"/>
+      <circle cx="660.9" cy="356.2" r="5.9"/>
     </g>
 
-    <!-- controls row -->
-    <circle cx="252" cy="242" r="22" fill="#f5f7f9" stroke="#16191d" stroke-width="2"/>
-    <circle cx="252" cy="242" r="7" fill="#c9ced4"/>
-    <path d="M252 220 v-6 M274 242 h6 M252 264 v6 M230 242 h-6" stroke="#6a7480" stroke-width="2"/>
+    <!-- ===== display module + active area ===== -->
+    <rect x="231.3" y="160.7" width="229.9" height="130.4" rx="2" fill="#dfe4e9" stroke="#6a7480" stroke-width="1.4"/>
+    <rect x="252.1" y="160.7" width="201.4" height="130.4" fill="#111417"/>
+    <!-- screen content -->
+    <text x="259" y="176" fill="#8b98a5" font-size="7.5">RSSI -48 dBm  BATT 8.1V</text>
+    <text x="259" y="187" fill="#8b98a5" font-size="7.5">LINK OK 12ms  BASE 12.1V</text>
+    <line x1="257" y1="192" x2="449" y2="192" stroke="#39424b"/>
+    <g font-size="10" font-weight="700">
+      <text x="268" y="215" fill="#3fa06b">1 ●</text><text x="313" y="215" fill="#3fa06b">2 ●</text>
+      <text x="358" y="215" fill="#c9c53f">3 ▲</text><text x="403" y="215" fill="#d9a13f">4 ○</text>
+      <text x="268" y="240" fill="#d9a13f">5 ○</text><text x="313" y="240" fill="#d9a13f">6 ○</text>
+      <text x="358" y="240" fill="#3fa06b">7 ●</text><text x="403" y="240" fill="#3fa06b">8 ●</text>
+    </g>
+    <rect x="263" y="203" width="32" height="16" fill="none" stroke="#4fd2e8" stroke-width="1.4"/>
+    <text x="259" y="258" fill="#fff" font-size="7.5">SEL CH 1  BASE SAFE  REMOTE SAFE</text>
+    <rect x="252.1" y="266" width="201.4" height="14" fill="#1f7a4d"/>
+    <text x="352.8" y="276" text-anchor="middle" fill="#fff" font-size="9" font-weight="700">SAFE</text>
 
-    <rect x="316" y="222" width="30" height="40" rx="4" fill="#f5f7f9" stroke="#16191d" stroke-width="2"/>
-    <rect x="322" y="228" width="18" height="14" rx="2" fill="#a8102a"/>
-    <circle cx="331" cy="252" r="4" fill="#c9ced4"/>
-
-    <circle cx="428" cy="242" r="26" fill="#a8102a" stroke="#6d0a1c" stroke-width="2.5"/>
-    <circle cx="428" cy="242" r="18" fill="none" stroke="#1f7a4d" stroke-width="3"/>
-    <text x="428" y="246" text-anchor="middle" fill="#fff" font-size="10" font-weight="700">FIRE</text>
-
-    <!-- callouts left -->
-    <g font-size="9" fill="#16191d">
-      <line x1="216" y1="110" x2="120" y2="110" stroke="#6a7480" marker-end="url(#lead)"/>
-      <text x="10" y="103" font-weight="700">Channel grid</text>
-      <text x="10" y="115" fill="#6a7480">continuity of all 8 channels;</text>
-      <text x="10" y="126" fill="#6a7480">cyan box = selected channel</text>
-
-      <line x1="216" y1="176" x2="120" y2="176" stroke="#6a7480" marker-end="url(#lead)"/>
-      <text x="10" y="170" font-weight="700">Status band</text>
-      <text x="10" y="182" fill="#6a7480">state of the fire path — §3.4</text>
-
-      <line x1="216" y1="200" x2="120" y2="212" stroke="#6a7480" marker-end="url(#lead)"/>
-      <text x="10" y="218" font-weight="700">8-pixel strip</text>
-      <text x="10" y="230" fill="#6a7480">same continuity map, readable</text>
-      <text x="10" y="241" fill="#6a7480">without looking at the screen</text>
-
-      <line x1="230" y1="242" x2="150" y2="262" stroke="#6a7480" marker-end="url(#lead)"/>
-      <text x="10" y="266" font-weight="700">Rotary encoder</text>
-      <text x="10" y="278" fill="#6a7480">turn = select channel;</text>
-      <text x="10" y="289" fill="#6a7480">hold 500 ms = ARM</text>
+    <!-- ===== WS2812 strip, 8 px, ch8 at the data-in end ===== -->
+    <rect x="288.3" y="338.5" width="120.8" height="11.8" rx="1.5" fill="#20262c"/>
+    <g>
+      <circle cx="296" cy="344.4" r="4" fill="#3fa06b"/><circle cx="311.9" cy="344.4" r="4" fill="#3fa06b"/>
+      <circle cx="327.8" cy="344.4" r="4" fill="#d9a13f"/><circle cx="343.7" cy="344.4" r="4" fill="#d9a13f"/>
+      <circle cx="359.6" cy="344.4" r="4" fill="#d9a13f"/><circle cx="375.5" cy="344.4" r="4" fill="#c9c53f"/>
+      <circle cx="391.4" cy="344.4" r="4" fill="#3fa06b"/><circle cx="407.3" cy="344.4" r="4" fill="#3fa06b"/>
     </g>
 
-    <!-- callouts right -->
-    <g font-size="9" fill="#16191d">
-      <line x1="484" y1="52" x2="560" y2="42" stroke="#6a7480" marker-end="url(#lead)"/>
-      <text x="566" y="36" font-weight="700">Link + battery bar</text>
-      <text x="566" y="48" fill="#6a7480">RSSI, ping, both packs</text>
+    <!-- ===== on/off switch ===== -->
+    <circle cx="261.3" cy="113.1" r="15.4" fill="#f0f3f6" stroke="#16191d" stroke-width="1.8"/>
+    <circle cx="261.3" cy="113.1" r="8.4" fill="#c9ced4" stroke="#6a7480"/>
+    <path d="M261.3 106.5 v6" stroke="#16191d" stroke-width="2" stroke-linecap="round"/>
 
-      <line x1="346" y1="228" x2="560" y2="150" stroke="#6a7480" marker-end="url(#lead)"/>
-      <text x="566" y="140" font-weight="700">Arm switch</text>
-      <text x="566" y="152" fill="#6a7480">physical; red LED lit</text>
-      <text x="566" y="163" fill="#6a7480">when in ARMED position</text>
+    <!-- ===== buzzer ===== -->
+    <circle cx="327.8" cy="113.3" r="14.2" fill="#f0f3f6" stroke="#16191d" stroke-width="1.6"/>
+    <circle cx="327.8" cy="113.3" r="3.5" fill="#6a7480"/>
 
-      <line x1="454" y1="242" x2="560" y2="230" stroke="#6a7480" marker-end="url(#lead)"/>
-      <text x="566" y="224" font-weight="700">Fire button</text>
-      <text x="566" y="236" fill="#6a7480">dead-man — press and hold.</text>
-      <text x="566" y="247" fill="#6a7480">Ring is GREEN when inert,</text>
-      <text x="566" y="258" fill="#6a7480">RED only when the base has</text>
-      <text x="566" y="269" fill="#6a7480">confirmed the same channel</text>
-      <text x="566" y="280" fill="#6a7480">armed.</text>
+    <!-- ===== USB + COM ports ===== -->
+    <rect x="422.1" y="108.6" width="21.1" height="7.6" rx="1" fill="#c9ced4" stroke="#16191d" stroke-width="1.2"/>
+    <rect x="450.8" y="108.6" width="21.1" height="7.6" rx="1" fill="#c9ced4" stroke="#16191d" stroke-width="1.2"/>
+
+    <!-- ===== arm key switch ===== -->
+    <circle cx="598.6" cy="122.8" r="29.6" fill="#eef1f4" stroke="#16191d" stroke-width="2"/>
+    <circle cx="598.6" cy="122.8" r="19.0" fill="#f7f9fa" stroke="#16191d" stroke-width="1.6"/>
+    <circle cx="598.6" cy="122.8" r="4.6" fill="#8b98a5"/>
+    <path d="M598.6 122.8 L598.6 108.5" stroke="#16191d" stroke-width="3" stroke-linecap="round"/>
+    <text x="598.6" y="160" text-anchor="middle" font-size="8" fill="#1f7a4d" font-weight="700">SAFE</text>
+
+    <!-- arm LED -->
+    <circle cx="643.7" cy="152.5" r="5.9" fill="#f4c9d1" stroke="#a8102a" stroke-width="1.4"/>
+
+    <!-- ===== rotary selector ===== -->
+    <circle cx="597.4" cy="214.1" r="8.3" fill="#f0f3f6" stroke="#16191d" stroke-width="1.8"/>
+    <path d="M597.4 214.1 v-6.4" stroke="#16191d" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M577 214.1 a20.4 20.4 0 0 1 40.8 0" fill="none" stroke="#c9ced4" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <text x="597.4" y="240" text-anchor="middle" font-size="8" fill="#6a7480" font-weight="700">SELECT</text>
+
+    <!-- ===== fire button ===== -->
+    <circle cx="598.6" cy="302.9" r="26.1" fill="#eef1f4" stroke="#16191d" stroke-width="2"/>
+    <circle cx="598.6" cy="302.9" r="22.5" fill="#a8102a" stroke="#6d0a1c" stroke-width="1.6"/>
+    <circle cx="598.6" cy="302.9" r="16.5" fill="none" stroke="#1f7a4d" stroke-width="3.2"/>
+    <text x="598.6" y="306" text-anchor="middle" fill="#fff" font-size="8.5" font-weight="700">FIRE</text>
+
+    <!-- ===== callouts, left ===== -->
+    <g font-size="10" fill="#16191d">
+      <line x1="246" y1="113.1" x2="150" y2="96" stroke="#6a7480" marker-end="url(#ld)"/>
+      <text x="145" y="88" text-anchor="end" font-weight="700">ON/OFF SWITCH</text>
+      <text x="145" y="100" text-anchor="end" font-size="8.5" fill="#6a7480">cuts pack power</text>
+      <text x="145" y="111" text-anchor="end" font-size="8.5" fill="#6a7480">physically</text>
+
+      <line x1="313.6" y1="113.3" x2="150" y2="150" stroke="#6a7480" marker-end="url(#ld)"/>
+      <text x="145" y="148" text-anchor="end" font-weight="700">BUZZER</text>
+      <text x="145" y="160" text-anchor="end" font-size="8.5" fill="#6a7480">state tones and alarms</text>
+
+      <line x1="231.3" y1="215" x2="150" y2="215" stroke="#6a7480" marker-end="url(#ld)"/>
+      <text x="145" y="206" text-anchor="end" font-weight="700">DISPLAY 480×320</text>
+      <text x="145" y="218" text-anchor="end" font-size="8.5" fill="#6a7480">channel grid, cyan cursor</text>
+      <text x="145" y="229" text-anchor="end" font-size="8.5" fill="#6a7480">on the selected channel</text>
+
+      <line x1="288.3" y1="344.4" x2="150" y2="330" stroke="#6a7480" marker-end="url(#ld)"/>
+      <text x="145" y="322" text-anchor="end" font-weight="700">8-PIXEL STRIP</text>
+      <text x="145" y="334" text-anchor="end" font-size="8.5" fill="#6a7480">one pixel per channel;</text>
+      <text x="145" y="345" text-anchor="end" font-size="8.5" fill="#6a7480">channel 8 at the left end</text>
+    </g>
+
+    <!-- ===== callouts, right ===== -->
+    <g font-size="10" fill="#16191d">
+      <line x1="472" y1="112.4" x2="700" y2="52" stroke="#6a7480" marker-end="url(#ld)"/>
+      <text x="705" y="44" font-weight="700">USB + COM PORTS</text>
+      <text x="705" y="56" font-size="8.5" fill="#6a7480">flashing and serial console;</text>
+      <text x="705" y="67" font-size="8.5" fill="#6a7480">not used in operation</text>
+
+      <line x1="628.2" y1="122.8" x2="700" y2="105" stroke="#6a7480" marker-end="url(#ld)"/>
+      <text x="705" y="100" font-weight="700">REMOTE ARM KEY</text>
+      <text x="705" y="112" font-size="8.5" fill="#6a7480">precondition only — never</text>
+      <text x="705" y="123" font-size="8.5" fill="#6a7480">arms anything by itself</text>
+
+      <line x1="650" y1="152.5" x2="700" y2="160" stroke="#6a7480" marker-end="url(#ld)"/>
+      <text x="705" y="157" font-weight="700">ARM LED</text>
+      <text x="705" y="169" font-size="8.5" fill="#6a7480">lit while the remote arm key is in ARMED</text>
+
+      <line x1="606" y1="214.1" x2="700" y2="208" stroke="#6a7480" marker-end="url(#ld)"/>
+      <text x="705" y="205" font-weight="700">ROTARY SELECTOR</text>
+      <text x="705" y="217" font-size="8.5" fill="#6a7480">turn = channel 1–8;</text>
+      <text x="705" y="228" font-size="8.5" fill="#6a7480">hold 500 ms = ARM</text>
+
+      <line x1="625" y1="302.9" x2="700" y2="292" stroke="#6a7480" marker-end="url(#ld)"/>
+      <text x="705" y="286" font-weight="700">FIRE BUTTON</text>
+      <text x="705" y="298" font-size="8.5" fill="#6a7480">dead-man — press and hold.</text>
+      <text x="705" y="309" font-size="8.5" fill="#6a7480">Ring GREEN when inert, RED</text>
+      <text x="705" y="320" font-size="8.5" fill="#6a7480">only once the base confirms</text>
+      <text x="705" y="331" font-size="8.5" fill="#6a7480">the same channel armed</text>
+    </g>
+
+    <!-- scale bar -->
+    <g stroke="#6a7480" stroke-width="1.2" font-size="8.5" fill="#6a7480">
+      <line x1="210" y1="392" x2="684.6" y2="392"/>
+      <line x1="210" y1="388" x2="210" y2="396"/>
+      <line x1="684.6" y1="388" x2="684.6" y2="396"/>
+      <text x="447" y="389" text-anchor="middle" stroke="none">200 mm</text>
     </g>
   </svg>
-  <figcaption><b>Figure 2</b> Remote unit controls and indicators. Control
-  positions on your build may differ; the functions do not.</figcaption>
+  <figcaption><b>Figure 2</b> Remote unit front panel, 200 × 135 mm, drawn to the
+  as-built layout. The display and its status strip occupy the left half; the
+  three controls the operator touches during a sequence — arm key, selector, fire
+  button — run down the right-hand edge in the order they are used.</figcaption>
 </figure>
 
 <table>
@@ -775,8 +844,8 @@ link. There is no wire between the firing point and the pad.</p>
   <tbody>
     <tr><td><strong>Rotary encoder</strong></td>
         <td>Turn to select the channel, 1–8, wrapping at both ends. Press and hold for <strong>500 ms</strong> (about ⅔ of a second including debounce) to send the ARM command. A short press only shows a “Hold to ARM” prompt. Pressing while armed disarms. <em>Turning it while armed disarms immediately</em> — a channel change and a live pad are never allowed to coexist.</td></tr>
-    <tr><td><strong>Arm key switch</strong></td>
-        <td>A physical key switch. Moving it to ARMED is a <em>precondition only</em> and never arms anything by itself. Moving it to SAFE at any time triggers an immediate disarm. The adjacent red LED shows the switch position. The key lives on the LCO’s lanyard and is removed after use.</td></tr>
+    <tr><td><strong>Remote arm key switch</strong></td>
+        <td>A physical key switch on the remote. Moving it to ARMED is a <em>precondition only</em> and never arms anything by itself. Moving it to SAFE at any time triggers an immediate disarm. The adjacent red LED shows the switch position. The key lives on the LCO’s lanyard and is removed after use.</td></tr>
     <tr><td><strong>Fire button</strong></td>
         <td>Dead-man. Ignition happens only while it is held. Wired so that a broken wire or unplugged connector reads as “released”. Releases are detected faster than presses (20 ms against 80 ms) — deliberately biased towards cutting current.</td></tr>
     <tr><td><strong>Fire button ring LED</strong></td>
@@ -803,14 +872,14 @@ link. There is no wire between the firing point and the pad.</p>
 <table>
   <thead><tr><th style="width:26%">Control / indicator</th><th>Function</th></tr></thead>
   <tbody>
-    <tr><td><strong>Key switch</strong></td>
+    <tr><td><strong>Base arm key switch</strong></td>
         <td>An SPDT key switch wired in series with the arm relay coil. In SAFE it physically breaks the coil circuit, so the arm relay cannot energise no matter what the firmware does. This is the LCO’s control, and the key lives on the lanyard, not in the switch.</td></tr>
     <tr><td><strong>Green arm key LED “SAFE”</strong></td>
-        <td>Lit when the key is in SAFE. <strong>Powered directly from the battery through the switch contacts</strong> — it works with the ESP32 crashed, hung or unpowered.</td></tr>
+        <td>Lit when the base arm key is in SAFE. <strong>Powered directly from the battery through the switch contacts</strong> — it works with the ESP32 crashed, hung or unpowered.</td></tr>
     <tr><td><strong>Red arm key LED “KEY ARM”</strong></td>
-        <td>Lit when the key is in ARM. Also passive.</td></tr>
+        <td>Lit when the base arm key is in ARM. Also passive.</td></tr>
     <tr><td><strong>Red LED “ARM RELAY LIVE”</strong></td>
-        <td>Wired across the arm relay coil. Lit only when the key <em>and</em> the firmware are both driving the relay — i.e. when battery voltage is on the fire bus. Also passive. <strong>Treat this LED as the definitive statement that the pad is live.</strong></td></tr>
+        <td>Wired across the arm relay coil. Lit only when the base arm key <em>and</em> the firmware are both driving the relay — i.e. when battery voltage is on the fire bus. Also passive. <strong>Treat this LED as the definitive statement that the pad is live.</strong></td></tr>
     <tr><td><strong>Siren</strong></td>
         <td>Sounds continuously from arming through the end of the fire pulse. Short patterns signal link loss (4 × 500 ms), an error state (3 × 200 ms) and a continuity-loss disarm (3 × 200 ms).</td></tr>
     <tr><td><strong>LED strip</strong></td>
@@ -866,13 +935,13 @@ this manual.</p>
     <g font-size="11" font-weight="700">
       <rect x="0" y="4"   width="230" height="26" fill="#1f7a4d"/>
       <text x="115" y="22" text-anchor="middle" fill="#fff">SAFE</text>
-      <text x="244" y="16" fill="#16191d" font-size="10">Base key SAFE and remote arm switch off —</text>
+      <text x="244" y="16" fill="#16191d" font-size="10">Base arm key SAFE and remote arm key SAFE —</text>
       <text x="244" y="28" fill="#6a7480" font-size="10" font-weight="400">positively confirmed by a fresh report from the base.</text>
 
       <rect x="0" y="38"  width="230" height="26" fill="#c9a227"/>
       <text x="115" y="56" text-anchor="middle" fill="#fff">BASE KEY ARMED / REMOTE ARMED</text>
-      <text x="244" y="50" fill="#16191d" font-size="10">One of the two keys is turned.</text>
-      <text x="244" y="62" fill="#6a7480" font-size="10" font-weight="400">The arming sequence cannot proceed on one key alone.</text>
+      <text x="244" y="50" fill="#16191d" font-size="10">One of the two arm keys is turned.</text>
+      <text x="244" y="62" fill="#6a7480" font-size="10" font-weight="400">The arming sequence cannot proceed on one arm key alone.</text>
 
       <rect x="0" y="72"  width="230" height="26" fill="#d97a06"/>
       <text x="115" y="90" text-anchor="middle" fill="#fff">READY TO ARM</text>
@@ -978,7 +1047,7 @@ that distance. Lay the site out so that:</p>
 <h3><span class="num">4.2</span> Powering up the base</h3>
 
 <ol class="steps">
-  <li><span class="title">Confirm the key switch is in SAFE and remove the key.</span>
+  <li><span class="title">Confirm the base arm key switch is in SAFE and remove the key.</span>
     Do this before connecting the battery, every time.
     <span class="expect"><b>Expect</b> Green SAFE LED off (no power yet).</span></li>
   <li><span class="title">Confirm no igniters are connected.</span>
@@ -987,7 +1056,7 @@ that distance. Lay the site out so that:</p>
     Nothing should come alive yet — the on/off switch is still off.</li>
   <li><span class="title">Flip the on/off switch to ON.</span>
     <span class="expect"><b>Expect</b> Green SAFE LED lights immediately and stays lit. The strip runs a cyan chase, then settles into the channel map once the first continuity sweep completes.</span>
-    <span class="expect stop"><b>Stop if</b> the ARM RELAY LIVE LED lights at any point with the key in SAFE. That is a wiring fault in the fire path. Disconnect the battery and do not use the unit.</span></li>
+    <span class="expect stop"><b>Stop if</b> the ARM RELAY LIVE LED lights at any point with the base arm key in SAFE. That is a wiring fault in the fire path. Disconnect the battery and do not use the unit.</span></li>
   <li><span class="title">Let the boot self-tests complete.</span>
     The base runs twelve self-test suites at boot — struct packing, CRC vectors, ADC calibration, radio setup. A failure puts it straight into ERROR with three siren blasts.
     <span class="expect"><b>Expect</b> No siren, no red triple-flash on the strip.</span></li>
@@ -1020,8 +1089,8 @@ distance.</p>
   <tbody>
     <tr><td class="num">1</td><td>Firmware versions match</td><td>No mismatch screen; both units link.</td></tr>
     <tr><td class="num">2</td><td>Battery states</td><td>Base comfortably above 10.5 V, remote above 7.0 V. Below those thresholds the system refuses to arm — find that out now, not at the pad.</td></tr>
-    <tr><td class="num">3</td><td>Status band tracks the keys</td><td>Turn the base key to ARM: band goes yellow. Turn the remote arm key to ARMED: band goes orange <span class="band" style="background:#d97a06">READY TO ARM</span>. Return both to safe: band returns green. Never grey while linked.</td></tr>
-    <tr><td class="num">4</td><td>Passive LEDs are honest</td><td>Key SAFE → green only. Key ARM → red KEY LED only. <strong>ARM RELAY LIVE must stay dark in both positions</strong> while nothing is armed.</td></tr>
+    <tr><td class="num">3</td><td>Status band tracks both arm keys</td><td>Turn the base arm key to ARM: band goes yellow. Turn the remote arm key to ARMED: band goes orange <span class="band" style="background:#d97a06">READY TO ARM</span>. Return both to safe: band returns green. Never grey while linked.</td></tr>
+    <tr><td class="num">4</td><td>Passive LEDs are honest</td><td>Base arm key SAFE → green only. Base arm key ARM → red KEY LED only. <strong>ARM RELAY LIVE must stay dark in both positions</strong> while nothing is armed.</td></tr>
     <tr><td class="num">5</td><td>Fire button ring</td><td>Green in idle. It must not go red for a press in IDLE.</td></tr>
     <tr><td class="num">6</td><td>Continuity reads OPEN</td><td>All eight channels ○ OPEN with nothing connected. A channel reading CONNECTED with no igniter on it is a short in the harness.</td></tr>
     <tr><td class="num">7</td><td>Siren audibility</td><td>Confirm the siren is heard clearly across the whole pad area, and again from the remote firing point.</td></tr>
@@ -1033,10 +1102,10 @@ distance.</p>
 
 <div class="box danger">
   <span class="label">Danger</span>
-  <p><strong>The base key switch is in SAFE, and the key is out of the switch and
+  <p><strong>The base arm key switch is in SAFE, and the key is out of the switch and
   around the LCO’s neck, before anyone touches an igniter lead.</strong> Both keys
   are carried on a lanyard by the LCO at all times; nobody else ever holds them.
-  There is no step in this manual where an igniter is connected while the key is
+  There is no step in this manual where an igniter is connected while the base arm key is
   in ARM.</p>
 </div>
 
@@ -1081,7 +1150,7 @@ the system’s behaviour predictable in the field, including its refusals.</p>
     <tr><td><strong>No single fault fires an igniter</strong></td>
         <td>Defence in depth. The fire path crosses two independent relay breaks, and the first of those cannot even be commanded unless a physical key is turned. No software bug, and no single failed component, is sufficient on its own.</td></tr>
     <tr><td><strong>Deliberate, multi-step human action</strong></td>
-        <td>Ignition requires a key turned at the pad, a second key turned on the remote, a deliberate half-second button hold, and then a fire button held continuously — four separate acts, and the first is performed at the pad while the last is performed at the firing point. There is no single control that fires anything.</td></tr>
+        <td>Ignition requires the base arm key turned at the pad, the remote arm key turned at the firing point, a deliberate half-second button hold, and then a fire button held continuously — four separate acts, and the first is performed at the pad while the last is performed at the firing point. There is no single control that fires anything.</td></tr>
     <tr><td><strong>Fail safe, fail loud</strong></td>
         <td>Every anomaly — link loss, low battery, a lead falling off, an invalid message — results in disarming, not in continuing. Inputs are wired active-low, so a broken wire reads as “safe”, “disarmed”, “button released”. And every refusal makes a noise <em>and</em> puts a message on screen; a refusal you cannot perceive is indistinguishable from an input that never registered, and the natural response to that is to try again.</td></tr>
     <tr><td><strong>Do not self-heal</strong></td>
@@ -1095,8 +1164,8 @@ the system’s behaviour predictable in the field, including its refusals.</p>
 at the same time: the arm relay and the selected channel’s relay. Neither one alone
 can complete the circuit.</p>
 
-<p>The arm key switch is <strong>not</strong> in the fire path itself. It sits in the arm
-relay’s <em>coil drive</em> path, in series with a firmware-driven MOSFET, so it
+<p>The base arm key switch is <strong>not</strong> in the fire path itself. It sits in
+the arm relay’s <em>coil drive</em> path, in series with a firmware-driven MOSFET, so it
 governs whether the arm relay may close at all. That is a different kind of
 protection from a contact in the fire path, and a stronger one: with the key in
 SAFE the arm relay cannot be energised by any software fault whatsoever, because
@@ -1204,14 +1273,14 @@ the coil has no current available to it.</p>
 
 <div class="box good">
   <span class="label">The hardware AND gate</span>
-  <p>The arm relay’s coil is fed through the key switch and returned through a
+  <p>The arm relay’s coil is fed through the base arm key switch and returned through a
   firmware-driven MOSFET. <strong>Both</strong> must be active for the relay to pull
   in. A software fault that drives the MOSFET continuously achieves nothing with
-  the key in SAFE; a key left in ARM achieves nothing without the firmware. This
+  the base arm key in SAFE; the key left in ARM achieves nothing without the firmware. This
   has been verified electrically at the arm-sense node, not merely inferred from
   the indicator LEDs.</p>
   <p>This is why the fire path counts <strong>two</strong> breaks rather than three,
-  and why that is not a weakening. The key does not merely add another contact in
+  and why that is not a weakening. The base arm key does not merely add another contact in
   series — it removes the <em>possibility</em> of the first break moving at all.</p>
 </div>
 
@@ -1221,7 +1290,7 @@ the coil has no current available to it.</p>
   <thead><tr><th style="width:30%">Feature</th><th>What it protects against</th></tr></thead>
   <tbody>
     <tr><td><strong>Two independent breaks in the fire path</strong></td><td>Any single closed contact, stuck output or software fault. Both are relays, and they are commanded by different parts of the firmware at different times — the arm relay at arming, the channel relay only during the pulse itself.</td></tr>
-    <tr><td><strong>Hardware AND gate on the arm relay coil</strong></td><td>Firmware energising the fire bus on its own, or a key left in ARM doing so on its own. The key switch and the MOSFET are in series in the coil path, so <em>both</em> are required before the first break in the fire path can even move.</td></tr>
+    <tr><td><strong>Hardware AND gate on the arm relay coil</strong></td><td>Firmware energising the fire bus on its own, or the base arm key left in ARM doing so on its own. The base arm key switch and the MOSFET are in series in the coil path, so <em>both</em> are required before the first break in the fire path can even move.</td></tr>
     <tr><td><strong>Fail-safe relay defaults</strong></td><td>Boot, brown-out and crash. All relays rest de-energised; 10 kΩ gate pull-downs hold every MOSFET off while the ESP32’s pins are still high-impedance, before a single instruction of firmware has run.</td></tr>
     <tr><td><strong>Relay outputs configured first at boot</strong></td><td>A crash during later initialisation. Relay GPIOs are driven safe before any other peripheral is touched.</td></tr>
     <tr><td><strong>Passive, battery-powered status LEDs</strong></td><td>A dead, crashed or unpowered microcontroller. The SAFE / KEY ARM / ARM RELAY LIVE lamps run from the battery through the switch and relay contacts and require no GPIO at all.</td></tr>
@@ -1245,7 +1314,7 @@ refusal.</p>
 <table class="compact">
   <thead><tr><th class="num" style="width:5%">#</th><th style="width:32%">Guard</th><th>Refused because</th></tr></thead>
   <tbody>
-    <tr><td class="num">1</td><td>Key switch physically in ARM</td><td>Read from a dedicated sense line, not assumed. The key’s position is verified independently of the relay it controls.</td></tr>
+    <tr><td class="num">1</td><td>Base arm key switch physically in ARM</td><td>Read from a dedicated sense line, not assumed. The key’s position is verified independently of the relay it controls.</td></tr>
     <tr><td class="num">2</td><td>Selected channel has continuity</td><td>An OPEN circuit will not fire; arming it only creates a live bus with nothing to consume it.</td></tr>
     <tr><td class="num">3</td><td>Channel number in range 1–8</td><td>A corrupt or malicious channel field cannot address anything.</td></tr>
     <tr><td class="num">4</td><td>No other channel already armed</td><td>Single-channel arming. Two live channels is a fault, not a feature.</td></tr>
@@ -1324,7 +1393,7 @@ variation on “de-energise everything and say so”.</p>
 <table>
   <thead><tr><th style="width:40%">Condition</th><th>System response</th></tr></thead>
   <tbody>
-    <tr><td>Power applied to either unit</td><td>All relays de-energised, no channel armed, key position read but not acted on.</td></tr>
+    <tr><td>Power applied to either unit</td><td>All relays de-energised, no channel armed, both arm key positions read but not acted on.</td></tr>
     <tr><td>Base key switch turned to SAFE</td><td>Arm relay coil current is physically broken. The relay drops out regardless of what the software wants. Fire path dead for every channel.</td></tr>
     <tr><td>Remote arm key to SAFE</td><td>Immediate DISARM ALL sent; remote disarms locally whether or not the message gets through.</td></tr>
     <tr><td>Fire button released</td><td>CEASE FIRE sent immediately; the base cuts current at the next 500 ms dead-man check at the latest.</td></tr>
@@ -1492,7 +1561,7 @@ controller’s procedure is unchanged; the surroundings are not.</p>
     Site it where its siren carries and its three status lamps are visible on approach, and where exhaust cannot reach it.</li>
   <li><span class="title">Run the §4.4 acceptance checks, then place instrumentation.</span>
     Route data cabling away from the igniter leads. Confirm the recorders are running <em>before</em> the igniter is fitted, so nobody needs to return to the stand afterwards.</li>
-  <li class="hz"><span class="title">Fit the igniter last, with the key in SAFE and out of the switch.</span>
+  <li class="hz"><span class="title">Fit the igniter last, with the base arm key in SAFE and out of the switch.</span>
     Confirm the remote reads a green <span class="band" style="background:#1f7a4d">SAFE</span> band before you approach. Verify the channel steps to ● CONNECTED as you connect.</li>
   <li><span class="title">Withdraw everyone to the firing point.</span>
     Beyond the RSO’s distance for a case failure, off the thrust axis, with a clear view of the stand.</li>
