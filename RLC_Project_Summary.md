@@ -44,8 +44,8 @@ This is the part I'd most like your feedback on. The system was designed so that
 
 ### Hardware Interlocks
 
-- **Three independent break points** in the fire path: the physical key switch, the arm relay contacts, and the per-channel relay. All three must be closed for current to reach the igniter.
-- **Hardware AND gate on the arm relay**: the arm relay requires *both* the physical key switch AND a software-controlled MOSFET to energize. Either one alone does nothing.
+- **Two independent break points** in the fire path: the arm relay contacts and the per-channel relay contacts. Both must be closed for current to reach the igniter.
+- **Hardware AND gate on the arm relay**: the physical key switch is *not* in the fire path itself — it sits in the arm relay's **coil drive** path, in series with a software-controlled MOSFET. Both must be active for the arm relay to energize, and either one alone does nothing. This is a stronger position than a third contact in series would be: with the key in SAFE there is no coil current available at all, so no software fault can close the first break of the fire path.
 - **Fail-safe defaults**: all relays are de-energised by default (NC position). 10 kΩ pulldown resistors on MOSFET gates ensure relays stay off until the firmware explicitly turns them on — even during boot, before software starts running.
 - **Passive status LEDs**: three LEDs at the base unit run directly from battery power (no microcontroller involved), so you can always see whether the key is in SAFE or ARM position, and whether the arm relay is energized — even if the ESP32 is completely crashed or unpowered.
 - **Current-limited continuity sensing**: igniter continuity is checked with a very small current (~1 mA, through two resistors in series), so checking continuity cannot accidentally fire an igniter.

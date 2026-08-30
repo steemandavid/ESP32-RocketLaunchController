@@ -39,9 +39,13 @@ at any point cuts current to the igniter — it is a dead-man switch, not a latc
 No single hardware or software fault should be able to cause ignition. The full
 argument lives in the functional specification (§7, §9, §13); in summary:
 
-**Hardware** — three independent break points in the fire path (key switch, arm
-relay, channel relay); a hardware AND gate so the arm relay needs *both* the key
-switch and a firmware-driven MOSFET; fail-safe relay defaults with gate
+**Hardware** — two independent break points in the fire path (the arm relay and
+the channel relay), both of which must close for current to reach an igniter.
+The arm key switch is *not* one of them: it sits in the arm relay's **coil
+drive** path, in series with a firmware-driven MOSFET, forming a hardware AND
+gate. That is a stronger position than a third contact in series would be —
+with the key in SAFE there is no coil current available, so no software fault
+can close the first break at all. Plus fail-safe relay defaults with gate
 pulldowns that hold during boot; passive battery-powered status LEDs that work
 even with the ESP32 dead; ~1 mA current-limited continuity sensing; active-low
 inputs so a broken wire reads as "safe".
