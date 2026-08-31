@@ -1,5 +1,46 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-08-31 — Q&A: 2.4 GHz interference risk from another rocket's telemetry
+
+Analysis-only session, no code or documentation changes. Prompted by news that a
+rocket at the next launch day will carry 2.4 GHz telemetry.
+
+### Findings
+
+- **Interference consequence is a no-go, not a misfire.** Congestion on the
+  ESP-NOW channel shows up as packet loss → `ERR_COMM_DEGRADED` (>30 % ping
+  loss, refuses arming) → `LINK_LOST` (3 consecutive misses). Repeated
+  `CMD_FIRE` at 200 ms plus the base dead-man timeout mean a jammed fire
+  attempt silently does not happen. MAC-bound peers + session token +
+  AES-128-CCM mean the other system cannot inject commands, only deafen us.
+- **Channel headroom is thin at max range.** Measured 200 m at −93 dBm against
+  ~−98 dBm sensitivity ⇒ ~5 dB of margin that interference eats directly.
+- **It cuts both ways** — the base's continuous ESP-NOW traffic near the pads
+  could degrade *their* rocket's telemetry reception at their ground station.
+
+### Mitigations (all operational — no firmware change warranted)
+
+1. Survey the field with a Wi-Fi analyser before the event (already mandated by
+   FSD §13.1); move off channel 11 if it is busy.
+2. Coordinate with the other team: channels and a "nobody keys up 2.4 GHz while
+   a rocket is on the pad or in the air" rule.
+3. Physically separate the two ground stations; raise both antennas (~30 dB at
+   1.5 m per the range test).
+
+### Channel reference (verified in code)
+
+| What | Where |
+|---|---|
+| `WIFI_CHANNEL` defined as **11** | `components/rlc_common/include/rlc_config.h:228` |
+| Applied via `esp_wifi_set_channel()` | `components/rlc_common/src/rlc_espnow.c:160` |
+| Peer registration pinned to same channel | `components/rlc_common/src/rlc_espnow.c:198` |
+
+**Gotcha:** despite FSD §13.1's "adjusted via `WIFI_CHANNEL`" wording, the
+channel is a compile-time `#define`, not runtime/Kconfig. Changing it means
+edit → rebuild → reflash **both** units with a version bump; there is no
+field-retune. If on-site retuning is ever wanted, an NVS-backed channel setting
+is the clean future change.
+
 ## 2026-08-29/30 — Operations manual + field card (RLC-OPS-001/002), fire-path correction, fw 1.2.1
 
 Documentation session. Two operator-facing documents written from scratch, then
