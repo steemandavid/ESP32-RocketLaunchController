@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.47
-**Date:** 2026-08-28
+**Version:** 1.52
+**Date:** 2026-09-01
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -65,6 +65,7 @@
 | 1.49 | 2026-08-28 | **On-target closure of the MAJ-01/CRIT-01 review items and the bug #29 regression; two new defects found and fixed (firmware 1.1.30 → 1.1.35).** **MAJ-01 verified** with a new base injection key `r` (a real `EVT_ARM_SENSE_FAULT`, unlike `e` which falsifies state): injected 13 ms into a live pulse, the base latched ERROR mid-FIRING with truthful flags and the remote left FIRING 16 ms later showing "BASE ERROR: RELAY FAULT" — no "IGNITION ACTIVE" over a dead pulse. **CRIT-01 critical-error half verified, both injection keys audible from ARMED** — and the `b` run exposed a real gap: the remote's battery-critical path from ARMED entered ERROR *without disarming the base*, which ran its full 10 s ARM TIMEOUT while the remote sat terminal and unable to command it safe (the display-fault handler sends `CMD_DISARM` for exactly this reason; the battery path never had it). **Fixed in fw 1.1.35**, §9.1's "battery critical … if armed, disarm" row now conformed to; re-verified armed → safe in 26 ms. **T-A16/T-A17 regression PASS** (10 ms base disarm; toast 110 ms end-to-end), and the T-A17 retest found the second defect: the NACK answering a fire repeat beat the cause-carrying status by 7 ms and the remote toasted raw "WRONG STATE" — **§8.4 now forbids showing the raw reason for a repeat NACK** and prescribes the latch-and-settle behaviour (fw 1.1.34). **T-A18 PASS** the same day (68 Ω on ch2 pulled while ch1 armed — base ran its full 10 s ARM TIMEOUT, RM-07 rightly silent for a non-armed channel), completing the bug #29 regression suite. Also in 1.1.33: the first-shot-of-a-power-cycle `gptimer_stop` false ERROR log silenced without weakening BF-01. |
 | 1.50 | 2026-08-28 | **Release: firmware 1.2.0 (FINAL, Phase 5).** Version-only bump over 1.1.35 — no code delta; the release marks the close of the Phase 5 review round and both on-target campaigns. Accompanying final-build audit, recorded so it is verifiable later rather than asserted: both fault-injection consoles compile to nothing in a stock build (Kconfig options default n, absent from every sdkconfig in the tree, **zero injection symbols in both stock ELFs by `nm`**); the display-profile harness was removed at 1.1.11; `CONT_TRACE_INTERVAL_MS` is 0 for field builds; the `rlc-hw-test-*` bring-up projects are outside the main build. Deferred past release and tracked in Development_Progress: T-S12/S13 and T-S18 (need physical access), T-C06 replay tool, range 10–100 m and power-consumption measurements (field work), remote FSM host harness, CI runner. |
 | 1.51 | 2026-08-30 | **§10.2.1 fault-injection boot banner; firmware 1.2.1.** A remote built with `CONFIG_RLC_REMOTE_FAULT_INJECTION` announced itself four ways — a compile `#warning`, a boot banner, a flash-time warning, and a build failure if the option did not reach the built config — every one of which lands on a developer's terminal. None was visible to an operator picking the remote up at a firing point, which is the person a build that lies about its own state must not mislead. The splash screen now carries a red frame and a red `!! FAULT INJECTION BUILD / NOT SAFE FOR LIVE USE !!` block in place of the club credit. Display-only, no protocol change; version bumped because a changed binary sharing a version number is what the strict check exists to prevent. **Known gap:** a *base* built with `CONFIG_RLC_FAULT_INJECTION` cannot be signalled this way — the remote knows only its own build, and the base does not advertise its fault-injection state on the wire. Closing that needs a protocol field and an explicit decision. Also in this revision: operations manual RLC-OPS-001 and field card RLC-OPS-002 issued (`docs/`), and the "three independent break points in the fire path" claim corrected to two in `README.md` and `RLC_Project_Summary.md` — the arm key switch is in the arm relay's coil drive path, as §5.4.4 has always described, not in series with igniter current. |
+| 1.52 | 2026-09-01 | **§10.2.2 legend row removed, status band enlarged on the main screen; firmware 1.2.2.** The continuity legend under the channel grid ("● = good ▲ = marginal ○ = open ◆ = short" — itself stale, still naming the retired SHORT band) restated what every grid cell already shows: each cell draws the glyph *and* the band's name in the band's colour. The row carried no information the grid did not, and it occupied 22 px of the system status band, whose whole purpose is legibility from across a launch site. On the main screen only, the band now starts at the legend's former row — 90 px tall against 68 px on every other screen, whose centre box is pinned immediately above the standard band top by a compile-time assert and cannot move without shrinking. The main screen's two status rows are re-centred within the taller band. Remote-only, display-only, no protocol change; version bumped because a changed binary sharing a version number is what the strict check exists to prevent. |
 
 ## Table of Contents
 
@@ -2520,7 +2521,6 @@ provenance is verified at the bench, not at the pad.
 │                  MARGINAL                        │
 │   5 ○ ── 6 ○ ── 7 ● ── 8 ◆                     │
 │                            SHORT                 │
-│   ● = good  ▲ = marginal  ○ = open  ◆ = short   │
 │                                                  │
 │  SEL CH 1   BASE SAFE   REMOTE ARMED             │
 │                                                  │
@@ -2533,6 +2533,17 @@ Key elements:
 - **Channel grid:** all 8 channels displayed with continuity band indicators. Filled circle (●) = CONNECTED. Triangle (▲) = MARGINAL (with label). Empty circle (○) = OPEN. The selected channel is highlighted with a `►[ CH N ]◄` cursor. Shape carries the meaning as well as colour, so the grid stays readable regardless of colour vision. **Three bands since 2026-08-21** — the diamond (◆) that marked SHORT is retired with that band (§5.4.2). As-built colours are dark green / light green / yellow, not the blue-based palette above; see the §10.2.0 deviation note.
 - **Status area:** base key switch state (§5.4.3b), arm relay feedback (§5.4.3), remote arm switch state.
 - **Instruction text:** context-sensitive prompt guiding the operator.
+
+**Legend row removed, status band enlarged (v1.52, firmware 1.2.2).** This screen
+previously carried a legend line under the channel grid repeating each continuity
+glyph and its name. That restated what every grid cell already shows — each cell
+draws the glyph *and* the band's name in the band's colour — so the row carried
+no information the grid did not, while occupying 22 px of the status band, the
+one element whose purpose is to be legible from across a launch site. The legend
+is removed and the band takes its space: on this screen only, the band starts at
+the legend's former row (90 px tall against 68 px on every other screen; the
+others cannot follow because their centre box is pinned immediately above the
+standard band top). The two status rows are re-centred within the taller band.
 
 Colour coding:
 - Continuity GOOD: blue (colour-blind accessible — avoids red-green ambiguity).

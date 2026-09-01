@@ -1,5 +1,53 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-01 — fw 1.2.2: main-screen continuity legend removed, status band enlarged
+
+Operator-requested display change, remote-only. The main status screen carried a
+legend line under the channel grid ("CONNECTED / MARGINAL / OPEN" with their
+glyphs) that restated what every grid cell already shows — each cell draws the
+glyph **and** the band's name in the band's colour. The row is gone; the system
+status band takes its space.
+
+### Change
+
+| What | Before | After |
+|---|---|---|
+| Legend row (y 230–246) | glyphs + names, grey | removed |
+| Main-screen band top | `BAND_Y` 252 | `MAIN_BAND_Y` 230 (the legend's row) |
+| Main-screen band height | 68 px | **90 px** |
+| Status rows (`SEL CH…`, instruction/error line) | 2/20/14 px margins, hugging band bottom | re-centred, 19/20/19 px |
+| Other screens (ARMED / FIRING / FIRE COMPLETE / ERROR) | band top 252 | **unchanged** — their centre box ends at y=250, pinned by the `BOX_Y+BOX_H <= BAND_Y` `_Static_assert`; moving the band up there would shrink the box the operator watches during a live sequence |
+
+Mechanics: `draw_status_band()` gained a `y` (top-edge) parameter; callers pass
+`MAIN_BAND_Y` (main) or `BAND_Y` (everything else). `draw_legend()` deleted.
+
+### Verification
+
+- Remote and base both build clean (`-Werror`); host suites 467 checks,
+  0 failures (via the flash script's build).
+- **Both units flashed 1.2.2 and link verified**: base UART capture shows
+  `state=1 armed=0 rssi=-33 … err=0x00` — RSSI proves the pair linked, which a
+  version-mismatched pair refuses to do.
+
+### Files
+
+- `components/rlc_remote/src/rlc_display.c` — the change itself
+- `components/rlc_common/include/rlc_version.h` — 1.2.1 → 1.2.2 + entry
+- `RLC_Functional_Specification_v1_14.md` — **v1.52**: §10.2.2 diagram's legend
+  line removed (it was stale anyway — still named the retired SHORT band), note
+  added, revision row 1.52. Header version fixed 1.47 → 1.52 (it had been left
+  at 1.47 while the history reached 1.51).
+- `README.md`, `Development_Progress.md` — fw-version sync
+
+### Flashing notes
+
+- Base flashed over its COM by-id `usb-1a86_USB_Single_Serial_5B5E042156-if00`
+  after `read_mac` confirmed `44:1B:F6:81:F1:70` (base chip #4). First plug-in
+  presented the base's native-USB JTAG port instead of the COM adapter, and it
+  disappeared again on probe — the replug brought up the COM adapter. Prefer
+  the COM by-id per the standing rule.
+- Remote flashed over `usb-1a86_USB_Single_Serial_5B5E043219-if00` as usual.
+
 ## 2026-08-31 — Q&A: 2.4 GHz interference risk from another rocket's telemetry
 
 Analysis-only session, no code or documentation changes. Prompted by news that a

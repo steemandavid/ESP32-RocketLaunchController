@@ -822,17 +822,20 @@ static uint32_t band_fg(uint32_t bg)
     return (luma >= 110) ? C_BLACK : C_WHITE;
 }
 
-/* Band geometry. `inset` is the thickness of any full-screen frame the screen
- * draws, so the band stops short of it instead of painting over it. */
+/* Band geometry. `y` is the band's top edge — BAND_Y on every screen except
+ * MAIN, where the band takes the space the continuity legend used to occupy
+ * (see MAIN_BAND_Y). `inset` is the thickness of any full-screen frame the
+ * screen draws, so the band stops short of it instead of painting over it. */
 static inline int band_x(int inset) { return inset; }
 static inline int band_w(int inset) { return DW - 2 * inset; }
-static inline int band_h(int inset) { return DH - BAND_Y - inset; }
+static inline int band_h(int y, int inset) { return DH - y - inset; }
 
 /* Fill the band. `with_word` draws the status in words for screens that have
  * no text of their own down there — colour alone is never the sole carrier of
  * meaning in this UI, the same reason the continuity grid pairs colour with
  * shapes. Returns the background colour so callers can draw onto it. */
-static uint32_t draw_status_band(const disp_data_t *d, int inset, bool with_word)
+static uint32_t draw_status_band(const disp_data_t *d, int y, int inset,
+                                 bool with_word)
 {
     sys_status_t s  = system_status(d);
     uint32_t     bg = sys_status_colour(s);
@@ -848,11 +851,11 @@ static uint32_t draw_status_band(const disp_data_t *d, int inset, bool with_word
         ESP_LOGI(TAG, "status band -> %s", sys_status_word(s));
     }
 
-    fill_rect(band_x(inset), BAND_Y, band_w(inset), band_h(inset), bg);
+    fill_rect(band_x(inset), y, band_w(inset), band_h(y, inset), bg);
 
     if (with_word) {
-        int y = BAND_Y + (band_h(inset) - CHAR_H(3)) / 2;
-        draw_text_centred_bg_in(band_x(inset), band_w(inset), y,
+        int ty = y + (band_h(y, inset) - CHAR_H(3)) / 2;
+        draw_text_centred_bg_in(band_x(inset), band_w(inset), ty,
                                 sys_status_word(s), 3, band_fg(bg), bg);
     }
     return bg;
@@ -933,7 +936,7 @@ static void draw_top_bar_dynamic(const disp_data_t *d)
 
 /* Scale 2 (12x16 px per character) is the smallest font readable at arm's
  * length in daylight — nothing on any screen goes below it. The grid is sized
- * so the legend and two status rows all fit at that size. */
+ * so the two status rows on the band below it fit at that size. */
 #define GRID_Y      58
 /* DS-02: the grid must fit inside DW (480). The last column starts at
  * GRID_X + 3*(CELL_W+2) and is CELL_W wide, so the constraint is
@@ -953,29 +956,20 @@ static void cell_origin(int ch, int *x, int *y)
     *y = GRID_Y + (idx / 4) * (CELL_H + 4);
 }
 
-static void draw_legend(void)
-{
-    int y = GRID_Y + 2 * (CELL_H + 4) + 4;
-    fill_rect(0, y, DW, CHAR_H(2), C_BLACK);
-
-    struct { uint8_t band; const char *txt; } items[] = {
-        { CONT_CONNECTED, "CONNECTED" },
-        { CONT_MARGINAL,  "MARGINAL" },
-        { CONT_OPEN,      "OPEN" },
-    };
-    int x = 8;
-    for (int i = 0; i < 3; i++) {
-        draw_continuity_glyph(x + 6, y + 8, 6, items[i].band);
-        draw_text(x + 18, y, items[i].txt, 2, C_GREY);
-        x += 18 + text_width(items[i].txt, 2) + 18;
-    }
-}
+/* On the main screen only, the status band starts where a continuity legend
+ * row used to sit. That legend restated what every grid cell already shows —
+ * each cell draws the glyph AND the band's name in the band's colour — so it
+ * carried no information the grid did not. Its row went to the band instead:
+ * 90 px tall here against 68 on the other screens, which is the whole purpose
+ * of the band — legible from across a launch site. The other screens cannot
+ * follow: their centre box (ARMED / FIRING / FIRE COMPLETE) ends at y=250,
+ * pinned to BAND_Y by the _Static_assert at BOX_H. */
+#define MAIN_BAND_Y (GRID_Y + 2 * (CELL_H + 4) + 4)
 
 static void draw_main_static(void)
 {
     fill_rect(0, 0, DW, DH, C_BLACK);
     draw_top_bar_static();
-    draw_legend();
 }
 
 static void draw_channel_cell(int ch, const disp_data_t *d)
@@ -1052,10 +1046,13 @@ static void draw_main_dynamic(const disp_data_t *d)
      * second colour code. The words still say it for anyone who cannot rely
      * on the hue. */
     char buf[64];
-    uint32_t bg = draw_status_band(d, 0, false);
+    uint32_t bg = draw_status_band(d, MAIN_BAND_Y, 0, false);
     uint32_t fg = band_fg(bg);
 
-    int y = DH - 66;
+    /* Re-centred for the taller band: 19 px above the first row, 20 between
+     * rows, 19 below the last, instead of the old 2/20/14 against a band that
+     * started 22 px lower. */
+    int y = DH - 71;
     snprintf(buf, sizeof(buf), "SEL CH %u", d->selected);
     draw_field(6, y, 8 * CHAR_W(2), buf, 2, fg, bg);
 
@@ -1086,7 +1083,7 @@ static void draw_main_dynamic(const disp_data_t *d)
             snprintf(buf, sizeof(buf), "BASE ERROR 0x%02X: %s",
                      ef, rlc_error_flag_str(ef));
         }
-        draw_text_centred_bg_in(0, DW, DH - 30, buf, 2, fg, bg);
+        draw_text_centred_bg_in(0, DW, DH - 35, buf, 2, fg, bg);
     } else {
         /* Name the step that is actually outstanding. This used to test only
          * the remote arm switch, so with the remote armed and the base key
@@ -1108,7 +1105,7 @@ static void draw_main_dynamic(const disp_data_t *d)
                 snprintf(buf, sizeof(buf), "TURN ARM KEY TO ARM CH %u", d->selected);
                 break;
         }
-        draw_text_centred_bg_in(0, DW, DH - 30, buf, 2, fg, bg);
+        draw_text_centred_bg_in(0, DW, DH - 35, buf, 2, fg, bg);
     }
 }
 
@@ -1168,7 +1165,7 @@ static void draw_armed_dynamic(const disp_data_t *d, bool blink_on)
     snprintf(buf, sizeof(buf), "BASE ARM SENSE %s   REMOTE %s",
              sense_ok ? "OK" : (d->status_fresh ? "NOT OK" : "?"),
              d->remote_key_armed ? "ARMED" : "SAFE");
-    uint32_t bg = draw_status_band(d, 0, false);
+    uint32_t bg = draw_status_band(d, BAND_Y, 0, false);
     draw_text_centred_bg_in(0, DW, DH - 26, buf, 2, band_fg(bg), bg);
 }
 
@@ -1212,7 +1209,7 @@ static void draw_firing_dynamic(const disp_data_t *d, bool blink_on)
                             "RELEASE TO ABORT", 2,
                             C_WHITE, igniting ? C_ARMED_BG : C_BLACK);
 
-    draw_status_band(d, 0, true);
+    draw_status_band(d, BAND_Y, 0, true);
 }
 
 /* ── Screen: fire complete — FSD §10.2.4a ─────────────────────── */
@@ -1288,7 +1285,7 @@ static void draw_fire_complete_dynamic(const disp_data_t *d, uint8_t ch,
     draw_text_centred_bg_in(BOX_X + 6, BOX_W - 12, BOX_Y + 140, buf, 2,
                             C_GREY, C_BLACK);
 
-    draw_status_band(d, 0, true);
+    draw_status_band(d, BAND_Y, 0, true);
 }
 
 /* ── Screen: link lost — FSD §10.2.5 ──────────────────────────── */
@@ -1699,7 +1696,7 @@ static void display_task(void *arg)
              * inset. */
             case SCR_ERROR:
                 if (full) draw_error_screen(err_text);
-                draw_status_band(&d, 8, true);
+                draw_status_band(&d, BAND_Y, 8, true);
                 break;
             /* No band on FW_MISMATCH: the link never reaches LINKED, so
              * system_status() can only return SYS_UNKNOWN — always grey, no

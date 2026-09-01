@@ -7,7 +7,29 @@
 
 #pragma once
 
-/* 1.2.1 (2026-08-29): the remote's boot splash now carries an unmissable
+/* 1.2.2 (2026-09-01): the main screen's continuity legend is gone; the status
+ * band takes its space.
+ *
+ * Operator request: the legend row under the channel grid ("CONNECTED /
+ * MARGINAL / OPEN" with their glyphs) restated what every cell already shows —
+ * each cell draws the glyph AND the band's name in the band's colour. The row
+ * carried no information the grid did not, and it occupied 22 px of the one
+ * screen element whose whole purpose is to be legible from across a launch
+ * site. The row is removed; the band on the main screen now starts where the
+ * legend sat (y=230 instead of 252), 90 px tall against 68.
+ *
+ * Main screen only. Every other screen keeps BAND_Y=252 because its centre box
+ * (ARMED / FIRING / FIRE COMPLETE) ends at y=250 and is pinned there by a
+ * _Static_assert — moving the band up there would mean shrinking the box the
+ * operator stares at during a live sequence. The main screen's two status rows
+ * are re-centred in the taller band (19/20/19 px) instead of hugging its
+ * bottom edge.
+ *
+ * Remote-only, display-only, no protocol change. Version bumped anyway: the
+ * binary differs, and a changed binary sharing a version number is exactly
+ * what the strict version check exists to prevent. Flash both units together.
+ *
+ * 1.2.1 (2026-08-29): the remote's boot splash now carries an unmissable
  * FAULT INJECTION BUILD banner when CONFIG_RLC_REMOTE_FAULT_INJECTION is set —
  * a red frame around the whole screen and a red block displacing the club
  * credit. The build already announced itself four ways (compile #warning, boot
@@ -843,5 +865,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  1
-#define RLC_VERSION_STRING "1.2.1"
+#define RLC_VERSION_PATCH  2
+#define RLC_VERSION_STRING "1.2.2"
