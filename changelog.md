@@ -1,5 +1,91 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-01 — fw 1.2.3: base boot chirp; user docs redrawn from the final base front plate
+
+Two pieces of work in one session: an operator-requested firmware change (boot
+siren pulse), then a documentation conformance pass driven by a photograph of
+the finished base front plate (`RLC_base_front.png` on the fileshare; copy at
+`docs/reference/RLC_base_front.jpg`, 1600 px wide, ~288 KB).
+
+### 1. Firmware 1.2.3 — `SIREN_BOOT_TEST` (base only)
+
+Operator request: "when booting the base station, sound a brief siren pulse so
+we know the unit has booted and have tested the siren." Until now the siren's
+only sounds were fault and armed states — a dead siren driver could stay
+undetected until a pad warning was needed.
+
+- `siren_boot_pulse()` in `rlc_siren.c`: locks the pattern mutex, stops any
+  running timer, drives the siren ON and arms the 200 ms one-shot off-timer
+  (reuses `SIREN_ERROR_HALF_MS`); falls back to drive-off if the timer cannot
+  start. Non-blocking — the siren's own timer turns it off.
+- Called from `base_app_main()` **after** the "base ready" log, i.e. only once
+  every mandatory init step has passed. `boot_fail()` sounds `SIREN_ERROR`
+  (3 blasts) and never chirps, so a single chirp is a positive claim that boot
+  completed — the chirp never lies about a unit that halted mid-init.
+- One chirp is acoustically distinct from every operational pattern
+  (3 blasts / 4 long cycles / continuous).
+- §5.4.8's verified "silent at power-on" property (bug #27 retest) is amended,
+  not contradicted: that check verified no *uncommanded* sound during the
+  power-on transient; a commanded chirp after boot is a different thing.
+- **Both units flashed 1.2.3** (strict version check — any binary change means
+  both units reflash): base over `usb-1a86_USB_Single_Serial_5B5E042156-if00`,
+  remote over `usb-1a86_USB_Single_Serial_5B5E043219-if00`.
+- FSD **v1.53**: §12.2 `SIREN_BOOT_TEST` row, §9.13 boot-order note, §5.4.8
+  amendment, revision row.
+
+### 2. Documentation — manual redrawn from the as-built base plate
+
+The photograph was verified in detail (targeted crops, multiple passes) before
+any drawing: antenna is an **SMA bulkhead at the far left edge, mid-height**
+(angled black whip); battery on/off is a **silver toggle on a small red plate
+top right** (engraved ON/OFF); the arm key is a **brass-barrel key switch on
+the larger red plate lower right**, with the three §5.4.4 passive LEDs
+laser-engraved **SAFE** (green, upper left), **ARM** (red, upper right),
+**HOT** (red, lower left = arm relay live). Bottom row: **eight identical red
+modules, CH1→CH8 left to right**, each with CHn+IGN silkscreen, white dome
+lens, FIRE silkscreen, chrome-bezel lens, yellow XT60 in a white outline,
+2 screws — **no push buttons** (an analyzer claim to the contrary was
+disproven on crops). USB enters through a grommet top left into a socket
+behind the plate. **No COM port, charger connector, display window or LED
+strip on the plate** — siren, battery and strip are inside the case.
+
+Changes made to match:
+
+- **RLC-OPS-001 (`docs/RLC_Operations_Manual.html`)**: new **Figure 3** in
+  §3.2 — a full house-style SVG of the base panel drawn from the photo
+  (viewBox 960×400, callouts both sides, "three passive LEDs — copper, not
+  software" on the key plate). Old Figures 3/4 renumbered **4/5** (verified:
+  no in-text figure references anywhere). §3.2 controls table conformed:
+  key switch on the red plate lower right; SAFE/ARM/HOT lamp positions and
+  the "HOT is the definitive pad-live statement" wording; siren row gains the
+  200 ms boot chirp and "inside the case, behind the plate"; channel modules
+  row (renamed from "channel terminals") with **"CH1 is the leftmost module,
+  not the rightmost"** in bold; COM port and charger connector rows now say
+  **"not brought out on the as-built front plate"** (USB for serial/flashing;
+  charge by opening the case, unit off). §3.6 sounds table gains the boot
+  chirp row; §4.2 step 5 Expect updated to the chirp.
+  The rendered SVG was machine-verified clean (no overlaps, no callout
+  crossings, nothing clipped, all eight modules and key-plate legends
+  correct).
+- **RLC-OPS-002 (`docs/RLC_Field_Reference_Card.html`)**: base-lamps table
+  now cross-references the plate engravings (SAFE / ARM / **HOT = RELAY
+  LIVE, same lamp**); siren table gains the power-on chirp row.
+- **FSD v1.54**: §5.4.4 as-built plate note (engraved names, "ARM RELAY
+  LIVE" and "HOT" are the same lamp); revision row. Documentation-only.
+- **README.md**: Hardware section gains an as-built plate paragraph; docs
+  table updated (FSD "currently at v1.54", `docs/reference/` now lists the
+  base plate photo alongside the remote panel SVG).
+
+### Files
+
+- `components/rlc_base/src/rlc_siren.c`, `include/rlc_siren.h` —
+  `siren_boot_pulse()`
+- `components/rlc_base/src/rlc_base_main.c` — chirp call at end of boot
+- `components/rlc_common/include/rlc_version.h` — 1.2.2 → 1.2.3 + entry
+- `RLC_Functional_Specification_v1_14.md` — v1.53 (chirp) + v1.54 (plate)
+- `Development_Progress.md` — fw 1.2.3 row
+- `docs/RLC_Operations_Manual.html`, `docs/RLC_Field_Reference_Card.html`,
+  `README.md`, `docs/reference/RLC_base_front.jpg` (new)
 ## 2026-09-01 — fw 1.2.2: main-screen continuity legend removed, status band enlarged
 
 Operator-requested display change, remote-only. The main status screen carried a

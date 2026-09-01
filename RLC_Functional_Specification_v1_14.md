@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.52
+**Version:** 1.54
 **Date:** 2026-09-01
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -66,6 +66,8 @@
 | 1.50 | 2026-08-28 | **Release: firmware 1.2.0 (FINAL, Phase 5).** Version-only bump over 1.1.35 — no code delta; the release marks the close of the Phase 5 review round and both on-target campaigns. Accompanying final-build audit, recorded so it is verifiable later rather than asserted: both fault-injection consoles compile to nothing in a stock build (Kconfig options default n, absent from every sdkconfig in the tree, **zero injection symbols in both stock ELFs by `nm`**); the display-profile harness was removed at 1.1.11; `CONT_TRACE_INTERVAL_MS` is 0 for field builds; the `rlc-hw-test-*` bring-up projects are outside the main build. Deferred past release and tracked in Development_Progress: T-S12/S13 and T-S18 (need physical access), T-C06 replay tool, range 10–100 m and power-consumption measurements (field work), remote FSM host harness, CI runner. |
 | 1.51 | 2026-08-30 | **§10.2.1 fault-injection boot banner; firmware 1.2.1.** A remote built with `CONFIG_RLC_REMOTE_FAULT_INJECTION` announced itself four ways — a compile `#warning`, a boot banner, a flash-time warning, and a build failure if the option did not reach the built config — every one of which lands on a developer's terminal. None was visible to an operator picking the remote up at a firing point, which is the person a build that lies about its own state must not mislead. The splash screen now carries a red frame and a red `!! FAULT INJECTION BUILD / NOT SAFE FOR LIVE USE !!` block in place of the club credit. Display-only, no protocol change; version bumped because a changed binary sharing a version number is what the strict check exists to prevent. **Known gap:** a *base* built with `CONFIG_RLC_FAULT_INJECTION` cannot be signalled this way — the remote knows only its own build, and the base does not advertise its fault-injection state on the wire. Closing that needs a protocol field and an explicit decision. Also in this revision: operations manual RLC-OPS-001 and field card RLC-OPS-002 issued (`docs/`), and the "three independent break points in the fire path" claim corrected to two in `README.md` and `RLC_Project_Summary.md` — the arm key switch is in the arm relay's coil drive path, as §5.4.4 has always described, not in series with igniter current. |
 | 1.52 | 2026-09-01 | **§10.2.2 legend row removed, status band enlarged on the main screen; firmware 1.2.2.** The continuity legend under the channel grid ("● = good ▲ = marginal ○ = open ◆ = short" — itself stale, still naming the retired SHORT band) restated what every grid cell already shows: each cell draws the glyph *and* the band's name in the band's colour. The row carried no information the grid did not, and it occupied 22 px of the system status band, whose whole purpose is legibility from across a launch site. On the main screen only, the band now starts at the legend's former row — 90 px tall against 68 px on every other screen, whose centre box is pinned immediately above the standard band top by a compile-time assert and cannot move without shrinking. The main screen's two status rows are re-centred within the taller band. Remote-only, display-only, no protocol change; version bumped because a changed binary sharing a version number is what the strict check exists to prevent. |
+| 1.53 | 2026-09-01 | **§12.2 `SIREN_BOOT_TEST`; firmware 1.2.3.** By operator request, the base sounds a single 200 ms siren chirp at the end of a successful boot, so the operator at the pad hears that the unit is up and the siren itself has just been exercised — until now its only sounds were fault and armed states, so a dead siren driver could stay undetected until a pad warning was needed. Placement is the design: the chirp sounds only after every mandatory boot step passes, and a base that halts sounds `SIREN_ERROR` instead and never chirps, so one chirp is a positive claim that boot completed. §5.4.8's verified "silent at power-on" property (bug #27 retest) is amended, not contradicted: that check verified no *uncommanded* sound during the power-on transient — the gate pull-down's job — and a commanded chirp after boot is a different thing. §9.13 records the boot-order rule. Base-only, audible-only, no protocol change; version bumped because the binary differs. |
+| 1.54 | 2026-09-01 | **§5.4.4 as-built plate note; operations manual redrawn from the final base front plate.** The finished front plate was photographed (original on the fileshare, copy at `docs/reference/RLC_base_front.jpg`) and the user-facing diagrams conformed to it: RLC-OPS-001 §3.2 gains a new Figure 3 — the base panel drawn from the photograph — and the old Figure 3/4 renumber to 4/5. The §3.2 controls table now matches the plate as built: SMA antenna bulkhead at the far left at mid-height, USB service socket top left through a lid grommet, battery on/off toggle on a small red plate at top right, the brass-barrel key switch on the larger red plate at lower right with its three engraved passive-LED names (**SAFE / ARM / HOT** — recorded in §5.4.4 here), and eight red channel modules along the bottom with **CH1 leftmost**, each carrying two indicator lenses and a yellow XT60 igniter socket. The COM port and the charger connector are **not brought out on the as-built plate** (serial log and flashing via USB; charge by opening the case); the siren, battery and LED strip live inside the case behind the plate. Documentation-only; no firmware change (fw stays 1.2.3). |
 
 ## Table of Contents
 
@@ -817,6 +819,16 @@ All three LEDs are passive — they operate directly from VBAT through the switc
 > indicator rework**: key SAFE + GPIO 47 driven → relay out, ARM SENSE 0; key ON
 > + GPIO 47 low → relay out, ARM SENSE 0; key ON + GPIO 47 driven → relay in,
 > ARM SENSE 1.
+> 
+> **AS-BUILT PLATE (2026-09-01, final front plate photographed —** original on
+> the fileshare, copy at `docs/reference/RLC_base_front.jpg`**):** the three
+> passive LEDs are mounted on the red key plate around the brass key barrel,
+> laser-engraved with their own names — **SAFE** (green, upper left of the
+> barrel), **ARM** (red, upper right), **HOT** (red, lower left). The plate's
+> "HOT" is this table's third lamp — the coil-energised / arm-relay-live
+> indicator — under its field name; "ARM RELAY LIVE" and "HOT" are the same
+> lamp. The operations manual (RLC-OPS-001 §3.2, Figure 3) draws the plate
+> from this photograph.
 
 Both this switch AND the remote arm switch must be in the armed position for any channel to be armed.
 
@@ -1006,6 +1018,13 @@ available on this hardware.
 >    stuck-on mode needed the infinite ARMED pulse, which v1.35 removed, so the
 >    surviving risk lives in the still-periodic LINK_LOST and ERROR patterns.
 >    See `Development_Progress.md`, bug #27.
+>
+>    **"Silent at power-on" amended v1.53 (fw 1.2.3):** that check verified no
+>    *uncommanded* sound during the power-on transient — the gate pull-down's
+>    job, unchanged. Since fw 1.2.3 the base deliberately sounds one commanded
+>    200 ms chirp after a successful boot (`SIREN_BOOT_TEST`, §12.2), by
+>    operator request. The two are different things and both remain true: no
+>    sound the firmware did not order, and one sound it did.
 
 #### 5.4.9 Arm Relay Output (GPIO 47)
 
@@ -2418,6 +2437,13 @@ Subscribing `app_main` is deliberately **split out to step 11** rather than done
 
 Spawned tasks continue to self-register at task entry (§9.6). The two rules compose: **reconfigure first, then start tasks, and let each task add itself.**
 
+**Boot-complete chirp (v1.53, fw 1.2.3, base only).** After the final step, the
+base sounds `SIREN_BOOT_TEST` (§12.2): one 200 ms chirp. It is deliberately the
+*last* thing boot does — every mandatory step above must have passed first — so
+the chirp is a positive claim that the unit is up, and a base that halts sounds
+`SIREN_ERROR` instead and never chirps. Base only — the remote has no
+equivalent, its splash screen already evidencing boot.
+
 ---
 
 ## 10. Display Specification
@@ -2885,6 +2911,7 @@ what an alarm must do; `buzzer_stop()` remains the way to end one.
 | `SIREN_LINK_LOST` | 500 ms on, 500 ms off, 4 cycles | Link lost alert |
 | `SIREN_ERROR` | 200 ms on, 200 ms off, 3 cycles, then silence | ERROR state entry — audible pad alert |
 | `SIREN_CONTINUITY_LOST` | 200 ms on, 200 ms off, 3 cycles, then silence | Continuity-loss disarm — distinctive alert |
+| `SIREN_BOOT_TEST` | Single 200 ms chirp, then silence | Base boot completed (added v1.53, fw 1.2.3) — confirms the unit is up and exercises the siren. Sounded only after every init step passes; a failed boot sounds `SIREN_ERROR` instead and never chirps, and one chirp is distinct from every operational pattern (3 blasts / 4 long cycles / continuous). |
 
 ### 12.3 Implementation
 

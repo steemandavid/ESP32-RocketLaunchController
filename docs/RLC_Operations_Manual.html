@@ -889,33 +889,173 @@ link. There is no wire between the firing point and the pad.</p>
 
 <h3><span class="num">3.2</span> Base unit</h3>
 
+<figure>
+  <svg viewBox="0 0 960 400" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+    <defs>
+      <marker id="ld2" markerWidth="7" markerHeight="7" refX="6" refY="2.4" orient="auto">
+        <path d="M0,0 L6,2.4 L0,4.8 z" fill="#6a7480"/>
+      </marker>
+    </defs>
+
+    <!-- ===== brushed-aluminium plate in the case lid ===== -->
+    <rect x="150" y="110" width="660" height="220" rx="6" fill="#d8dde2" stroke="#16191d" stroke-width="2.2"/>
+
+    <!-- countersunk screws along the top edge -->
+    <g fill="#aab4bd" stroke="#6a7480" stroke-width="1">
+      <circle cx="250" cy="122" r="3.5"/><circle cx="340" cy="122" r="3.5"/><circle cx="430" cy="122" r="3.5"/>
+      <circle cx="520" cy="122" r="3.5"/><circle cx="610" cy="122" r="3.5"/><circle cx="690" cy="122" r="3.5"/>
+    </g>
+
+    <!-- ===== USB service port, top left: cable through a grommet ===== -->
+    <circle cx="212" cy="130" r="7" fill="#2a2e33" stroke="#8b98a5" stroke-width="1.4"/>
+    <path d="M212,130 C192,96 158,82 120,70" fill="none" stroke="#9aa2aa" stroke-width="5" stroke-linecap="round"/>
+    <rect x="226" y="121" width="26" height="15" rx="2" fill="#c9ced4" stroke="#16191d" stroke-width="1.2"/>
+
+    <!-- ===== SMA antenna, far left at mid-height, angled outward ===== -->
+    <line x1="172" y1="225" x2="108" y2="213" stroke="#2a2e33" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="108" cy="213" r="3" fill="#2a2e33"/>
+    <circle cx="172" cy="225" r="13" fill="#e8ecf0" stroke="#16191d" stroke-width="1.8"/>
+    <circle cx="172" cy="225" r="7.5" fill="#f7f9fa" stroke="#8b98a5" stroke-width="1.2"/>
+    <circle cx="172" cy="225" r="2.2" fill="#c9a227"/>
+
+    <!-- ===== on/off toggle, top right, small red plate ===== -->
+    <rect x="700" y="128" width="62" height="36" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+    <text x="731" y="140" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">ON</text>
+    <text x="731" y="160" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">OFF</text>
+    <circle cx="731" cy="150" r="5" fill="#c9ced4" stroke="#16191d" stroke-width="1.4"/>
+    <line x1="731" y1="150" x2="731" y2="141" stroke="#16191d" stroke-width="3" stroke-linecap="round"/>
+
+    <!-- ===== key plate, lower right: SAFE / ARM / HOT lamps + brass barrel ===== -->
+    <rect x="688" y="176" width="116" height="72" rx="4" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+    <text x="702" y="190" font-size="6.5" font-weight="700" fill="#fff">SAFE</text>
+    <circle cx="707" cy="197" r="3" fill="#3fa06b" stroke="#16191d" stroke-width="1"/>
+    <text x="790" y="190" text-anchor="end" font-size="6.5" font-weight="700" fill="#fff">ARM</text>
+    <circle cx="785" cy="197" r="3" fill="#d9435c" stroke="#16191d" stroke-width="1"/>
+    <text x="702" y="241" font-size="6.5" font-weight="700" fill="#fff">HOT</text>
+    <circle cx="707" cy="231" r="3" fill="#d9435c" stroke="#16191d" stroke-width="1"/>
+    <circle cx="746" cy="214" r="15" fill="#c9a227" stroke="#8a6d12" stroke-width="1.8"/>
+    <circle cx="746" cy="214" r="10" fill="#b8901d"/>
+    <line x1="746" y1="214" x2="756" y2="222" stroke="#4a3a06" stroke-width="3" stroke-linecap="round"/>
+
+    <!-- ===== eight channel modules, CH1..CH8 left to right ===== -->
+    <g>
+      <!-- module template repeated at x = 192 + 73*i -->
+      <rect x="192" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="265" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="338" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="411" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="484" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="557" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="630" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="703" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+    </g>
+    <g font-size="7" font-weight="700" fill="#fff" text-anchor="middle">
+      <text x="224" y="262">CH1</text><text x="297" y="262">CH2</text><text x="370" y="262">CH3</text><text x="443" y="262">CH4</text>
+      <text x="516" y="262">CH5</text><text x="589" y="262">CH6</text><text x="662" y="262">CH7</text><text x="735" y="262">CH8</text>
+    </g>
+    <g font-size="5.5" fill="#f2c7ce" text-anchor="middle">
+      <text x="224" y="271">IGN</text><text x="297" y="271">IGN</text><text x="370" y="271">IGN</text><text x="443" y="271">IGN</text>
+      <text x="516" y="271">IGN</text><text x="589" y="271">IGN</text><text x="662" y="271">IGN</text><text x="735" y="271">IGN</text>
+    </g>
+    <g fill="#f0f3f6" stroke="#16191d" stroke-width="1.2">
+      <circle cx="224" cy="281" r="4.5"/><circle cx="297" cy="281" r="4.5"/><circle cx="370" cy="281" r="4.5"/><circle cx="443" cy="281" r="4.5"/>
+      <circle cx="516" cy="281" r="4.5"/><circle cx="589" cy="281" r="4.5"/><circle cx="662" cy="281" r="4.5"/><circle cx="735" cy="281" r="4.5"/>
+    </g>
+    <g font-size="5.5" fill="#f2c7ce" text-anchor="middle">
+      <text x="224" y="297">FIRE</text><text x="297" y="297">FIRE</text><text x="370" y="297">FIRE</text><text x="443" y="297">FIRE</text>
+      <text x="516" y="297">FIRE</text><text x="589" y="297">FIRE</text><text x="662" y="297">FIRE</text><text x="735" y="297">FIRE</text>
+    </g>
+    <g fill="#c9ced4" stroke="#6a7480" stroke-width="1.6">
+      <circle cx="224" cy="306" r="5"/><circle cx="297" cy="306" r="5"/><circle cx="370" cy="306" r="5"/><circle cx="443" cy="306" r="5"/>
+      <circle cx="516" cy="306" r="5"/><circle cx="589" cy="306" r="5"/><circle cx="662" cy="306" r="5"/><circle cx="735" cy="306" r="5"/>
+    </g>
+    <g fill="#e8b93b" stroke="#a07d14" stroke-width="1.2">
+      <rect x="215" y="314" width="18" height="9" rx="1.5"/><rect x="288" y="314" width="18" height="9" rx="1.5"/>
+      <rect x="361" y="314" width="18" height="9" rx="1.5"/><rect x="434" y="314" width="18" height="9" rx="1.5"/>
+      <rect x="507" y="314" width="18" height="9" rx="1.5"/><rect x="580" y="314" width="18" height="9" rx="1.5"/>
+      <rect x="653" y="314" width="18" height="9" rx="1.5"/><rect x="726" y="314" width="18" height="9" rx="1.5"/>
+    </g>
+
+    <!-- ===== callouts, left ===== -->
+    <g font-size="10" fill="#16191d">
+      <line x1="230" y1="118" x2="212" y2="76" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="215" y="44" text-anchor="end" font-weight="700">USB SERVICE PORT</text>
+      <text x="215" y="56" text-anchor="end" font-size="8.5" fill="#6a7480">flashing and serial console,</text>
+      <text x="215" y="67" text-anchor="end" font-size="8.5" fill="#6a7480">cable through a grommet</text>
+
+      <line x1="128" y1="211" x2="146" y2="158" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="140" y="140" text-anchor="end" font-weight="700">SMA ANTENNA</text>
+      <text x="140" y="152" text-anchor="end" font-size="8.5" fill="#6a7480">far left, mid-height — never</text>
+      <text x="140" y="163" text-anchor="end" font-size="8.5" fill="#6a7480">power up without it</text>
+
+      <line x1="196" y1="260" x2="146" y2="322" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="140" y="314" text-anchor="end" font-weight="700">CH1–CH8 MODULES</text>
+      <text x="140" y="326" text-anchor="end" font-size="8.5" fill="#6a7480">one per igniter circuit,</text>
+      <text x="140" y="337" text-anchor="end" font-size="8.5" fill="#6a7480">CH1 leftmost on the plate</text>
+    </g>
+
+    <!-- ===== callouts, right ===== -->
+    <g font-size="10" fill="#16191d">
+      <line x1="742" y1="140" x2="815" y2="106" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="820" y="100" font-weight="700">ON/OFF SWITCH</text>
+      <text x="820" y="112" font-size="8.5" fill="#6a7480">silver toggle, red plate —</text>
+      <text x="820" y="123" font-size="8.5" fill="#6a7480">cuts pack power physically</text>
+
+      <line x1="760" y1="200" x2="815" y2="158" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="820" y="152" font-weight="700">BASE ARM KEY</text>
+      <text x="820" y="164" font-size="8.5" fill="#6a7480">SPDT in the arm relay’s</text>
+      <text x="820" y="175" font-size="8.5" fill="#6a7480">coil drive path</text>
+
+      <line x1="786" y1="210" x2="815" y2="218" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="820" y="212" font-weight="700">SAFE / ARM / HOT LAMPS</text>
+      <text x="820" y="224" font-size="8.5" fill="#6a7480">three passive LEDs — copper,</text>
+      <text x="820" y="235" font-size="8.5" fill="#6a7480">not software; believe these</text>
+
+      <line x1="740" y1="281" x2="815" y2="268" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="820" y="262" font-weight="700">TWO LENSES PER MODULE</text>
+      <text x="820" y="274" font-size="8.5" fill="#6a7480">at the IGN and FIRE markings</text>
+
+      <line x1="768" y1="316" x2="815" y2="320" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="820" y="314" font-weight="700">XT60 IGNITER OUTPUT</text>
+      <text x="820" y="326" font-size="8.5" fill="#6a7480">where the igniter clips connect</text>
+    </g>
+  </svg>
+  <figcaption><b>Figure 3</b> Base unit front plate, drawn from the as-built
+  photograph (<span class="pill">docs/reference/RLC_base_front.jpg</span>; original
+  on the fileshare). The antenna sits at the far left at mid-height; the USB service
+  port is top left behind a grommet; the on/off toggle and the SAFE/ARM/HOT key
+  plate occupy the right; and the eight igniter channels run along the bottom,
+  CH1 leftmost. The siren, battery and LED strip live inside the case, behind the
+  plate.</figcaption>
+</figure>
+
 <table>
   <thead><tr><th style="width:26%">Control / indicator</th><th>Function</th></tr></thead>
   <tbody>
     <tr><td><strong>Base arm key switch</strong></td>
-        <td>An SPDT key switch wired in series with the arm relay coil. In SAFE it physically breaks the coil circuit, so the arm relay cannot energise no matter what the firmware does. This is the LCO’s control, and the key lives on the lanyard, not in the switch.</td></tr>
-    <tr><td><strong>Green arm key LED “SAFE”</strong></td>
-        <td>Lit when the base arm key is in SAFE. <strong>Powered directly from the battery through the switch contacts</strong> — it works with the ESP32 crashed, hung or unpowered.</td></tr>
-    <tr><td><strong>Red arm key LED “KEY ARM”</strong></td>
-        <td>Lit when the base arm key is in ARM. Also passive.</td></tr>
-    <tr><td><strong>Red LED “ARM RELAY LIVE”</strong></td>
-        <td>Wired across the arm relay coil. Lit only when the base arm key <em>and</em> the firmware are both driving the relay — i.e. when battery voltage is on the fire bus. Also passive. <strong>Treat this LED as the definitive statement that the pad is live.</strong></td></tr>
+        <td>The brass-barrel key switch on the red plate, lower right of the panel. An SPDT key switch wired in series with the arm relay coil. In SAFE it physically breaks the coil circuit, so the arm relay cannot energise no matter what the firmware does. This is the LCO’s control, and the key lives on the lanyard, not in the switch.</td></tr>
+    <tr><td><strong>Green lamp “SAFE”</strong></td>
+        <td>On the key plate, engraved <span class="pill">SAFE</span> at the upper left of the barrel. Lit when the base arm key is in SAFE. <strong>Powered directly from the battery through the switch contacts</strong> — it works with the ESP32 crashed, hung or unpowered.</td></tr>
+    <tr><td><strong>Red lamp “ARM”</strong></td>
+        <td>On the key plate, engraved <span class="pill">ARM</span> at the upper right of the barrel. Lit when the base arm key is in ARM. Also passive.</td></tr>
+    <tr><td><strong>Red lamp “HOT” (arm relay live)</strong></td>
+        <td>On the key plate, engraved <span class="pill">HOT</span> at the lower left of the barrel. Wired across the arm relay coil. Lit only when the base arm key <em>and</em> the firmware are both driving the relay — i.e. when battery voltage is on the fire bus. Also passive. <strong>Treat this lamp as the definitive statement that the pad is live.</strong></td></tr>
     <tr><td><strong>Siren</strong></td>
-        <td>Sounds continuously from arming through the end of the fire pulse. Short patterns signal link loss (4 × 500 ms), an error state (3 × 200 ms) and a continuity-loss disarm (3 × 200 ms).</td></tr>
+        <td>Mounted inside the case, behind the plate — you hear it, you don’t see it. Sounds continuously from arming through the end of the fire pulse. Short patterns signal link loss (4 × 500 ms), an error state (3 × 200 ms) and a continuity-loss disarm (3 × 200 ms). A single 200 ms chirp at the end of boot says the unit came up healthy and the siren itself has just been proven.</td></tr>
     <tr><td><strong>LED strip</strong></td>
-        <td>Eight pixels, one per channel, showing live locally-measured continuity. Channel 1 is at the data-in end on the base.</td></tr>
-    <tr><td><strong>Channel terminals</strong></td>
-        <td>Eight igniter circuits. When idle, each channel’s relay rests on its NC contact, which routes the igniter to the continuity sense circuit rather than the fire bus.</td></tr>
+        <td>Eight pixels, one per channel, showing live locally-measured continuity. Inside the case, behind the plate. Channel 1 is at the data-in end on the base.</td></tr>
+    <tr><td><strong>Channel modules CH1–CH8</strong></td>
+        <td>Eight identical red modules along the bottom of the plate, numbered CH1–CH8 from the left. Each carries two indicator lenses at the <span class="pill">IGN</span> and <span class="pill">FIRE</span> markings and a yellow XT60 socket for the igniter clips — <strong>CH1 is the leftmost module, not the rightmost</strong>. When idle, each channel’s relay rests on its NC contact, which routes the igniter to the continuity sense circuit rather than the fire bus.</td></tr>
     <tr><td><strong>On/off switch</strong></td>
-        <td>Wired inline with the battery. It <strong>physically cuts pack power</strong> when off. This is the switch to reach for when a base unit must be killed — see the danger note in §5.11.</td></tr>
+        <td>The silver toggle on the small red plate at the top right, engraved <span class="pill">ON</span> above and <span class="pill">OFF</span> below. Wired inline with the battery. It <strong>physically cuts pack power</strong> when off. This is the switch to reach for when a base unit must be killed — see the danger note in §5.11.</td></tr>
     <tr><td><strong>SMA antenna connector</strong></td>
-        <td>External antenna for the 2.4 GHz link. <strong>Never power the unit up without the antenna fitted.</strong> Antenna height and clear line of sight do far more for range than anything in the firmware.</td></tr>
+        <td>External antenna for the 2.4 GHz link, on a bulkhead at the far left of the plate at mid-height. <strong>Never power the unit up without the antenna fitted.</strong> Antenna height and clear line of sight do far more for range than anything in the firmware.</td></tr>
     <tr><td><strong>USB port</strong></td>
-        <td>The ESP32-S3’s native USB, brought out to the front panel. Firmware flashing and the serial console. Not used in normal operation.</td></tr>
+        <td>The ESP32-S3’s native USB, on a socket at the top left of the plate; the service cable passes through a grommet in the case lid. Firmware flashing and the serial console. Not used in normal operation.</td></tr>
     <tr><td><strong>COM port</strong></td>
-        <td>The ESP32-S3’s UART bridge, brought out to the front panel. Serial log output and flashing. Not used in normal operation.</td></tr>
-    <tr><td><strong>Charger connector (4-pin)</strong></td>
-        <td>Balance connector for the 3S pack, brought out to the panel so the pack can be charged without opening the unit. <strong>Switch the unit off before charging.</strong></td></tr>
+        <td>The ESP32-S3’s UART bridge. <strong>Not brought out on the as-built front plate</strong> — use the USB port for serial log output and flashing.</td></tr>
+    <tr><td><strong>Charger connector</strong></td>
+        <td>Balance connector for the 3S pack. <strong>Not brought out on the as-built front plate</strong> — charge the pack by opening the case, and switch the unit off before charging.</td></tr>
   </tbody>
 </table>
 
@@ -994,7 +1134,7 @@ this manual.</p>
       </pattern>
     </defs>
   </svg>
-  <figcaption><b>Figure 3</b> The system status band. <strong>Grey is not
+  <figcaption><b>Figure 4</b> The system status band. <strong>Grey is not
   green.</strong> The band shows green only as a positive claim that the pad is
   safe; anything unknown falls back to grey, because a dead link is not evidence
   of safety.</figcaption>
@@ -1039,6 +1179,7 @@ things matter: <strong>tempo separates states from faults</strong>, and
     <tr><td>Remote</td><td>Three 200 ms beeps</td><td>Continuity lost on the armed channel — pad disarmed itself</td></tr>
     <tr><td>Remote</td><td>Continuous 200/200 alarm</td><td>Link lost</td></tr>
     <tr><td>Remote</td><td>Continuous 100/100 alarm</td><td>Critical fault</td></tr>
+    <tr><td>Base siren</td><td>Single 200 ms chirp</td><td>Boot completed healthy — and the siren has just been proven to sound (fw 1.2.3)</td></tr>
     <tr><td>Base siren</td><td>Continuous</td><td>Armed, counting down, or firing. <strong>Pad is live.</strong></td></tr>
     <tr><td>Base siren</td><td>4 × 500 ms</td><td>Link to the remote lost; the base has disarmed</td></tr>
     <tr><td>Base siren</td><td>3 × 200 ms</td><td>Error state, or a continuity-loss disarm</td></tr>
@@ -1079,7 +1220,7 @@ that distance. Lay the site out so that:</p>
     <span class="expect stop"><b>Stop if</b> the ARM RELAY LIVE LED lights at any point with the base arm key in SAFE. That is a wiring fault in the fire path. Disconnect the battery and do not use the unit.</span></li>
   <li><span class="title">Let the boot self-tests complete.</span>
     The base runs twelve self-test suites at boot — struct packing, CRC vectors, ADC calibration, radio setup. A failure puts it straight into ERROR with three siren blasts.
-    <span class="expect"><b>Expect</b> No siren, no red triple-flash on the strip.</span></li>
+    <span class="expect"><b>Expect</b> A single short chirp once boot completes — the “I’m alive and the siren works” pulse — and no red triple-flash on the strip. Three blasts instead of the chirp means boot failed.</span></li>
 </ol>
 
 <h3><span class="num">4.3</span> Powering up the remote and linking</h3>
@@ -1283,7 +1424,7 @@ the coil has no current available to it.</p>
     <text x="604" y="294" text-anchor="middle" font-size="8" fill="#6a7480">Key AND firmware, in series.</text>
     <text x="604" y="305" text-anchor="middle" font-size="8" fill="#6a7480">Either alone does nothing.</text>
   </svg>
-  <figcaption><b>Figure 4</b> The fire path (top) and the arm relay’s coil drive
+  <figcaption><b>Figure 5</b> The fire path (top) and the arm relay’s coil drive
   (bottom). Both breaks must close for current to reach an igniter. The arm key
   switch is <em>not</em> in the fire path — it gates the coil that operates break 1,
   in series with a firmware-driven MOSFET. The channel relay rests on its NC

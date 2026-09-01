@@ -7,7 +7,29 @@
 
 #pragma once
 
-/* 1.2.2 (2026-09-01): the main screen's continuity legend is gone; the status
+/* 1.2.3 (2026-09-01): the base chirps its siren once at the end of a
+ * successful boot.
+ *
+ * Operator request: a single 200 ms blast, so the operator at the pad hears
+ * that the unit came up AND knows the siren itself has just been exercised —
+ * its only previous sounds were fault and armed states, so a dead siren driver
+ * could otherwise stay undetected until the moment a pad warning was needed.
+ *
+ * Placement is the whole design: the chirp sounds only after every init step
+ * has passed. boot_fail() already sounds SIREN_ERROR (3 blasts) — so the
+ * outcomes stay unambiguous: one chirp = booted, three blasts = halted, plus
+ * the error LED either way. A single chirp is distinct from every operational
+ * pattern (ERROR/CONTINUITY_LOST are 3 blasts, LINK_LOST is 4 long ones).
+ *
+ * This amends the bug #27 retest property "silent at power-on": that check
+ * verified no UNCOMMANDED sound during the power-on transient (the gate
+ * pull-down's job, untouched). A deliberate, firmware-commanded chirp after
+ * boot is a different thing and is now specified in FSD v1.53 §12.2.
+ *
+ * Base-only, audible-only, no protocol change. Version bumped anyway: the
+ * binary differs. Flash both units together.
+ *
+ * 1.2.2 (2026-09-01): the main screen's continuity legend is gone; the status
  * band takes its space.
  *
  * Operator request: the legend row under the channel grid ("CONNECTED /
@@ -865,5 +887,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  2
-#define RLC_VERSION_STRING "1.2.2"
+#define RLC_VERSION_PATCH  3
+#define RLC_VERSION_STRING "1.2.3"

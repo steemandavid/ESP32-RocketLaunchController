@@ -267,6 +267,15 @@ void base_app_main(void)
 
     ESP_LOGI(TAG, "base ready — Phase 3 FSM active, waiting for commands");
 
+    /* SIREN_BOOT_TEST (fw 1.2.3, operator request): one short blast now that
+     * every init step has passed, so the operator hears that the unit booted
+     * and the siren has just been proven to sound. Deliberately at the END of
+     * boot, not after siren_init(): boot_fail() sounds SIREN_ERROR (3 blasts)
+     * and no chirp, so a single chirp is a positive claim that boot completed
+     * — the chirp never lies about a unit that halted mid-init. Non-blocking:
+     * the siren's own timer turns it off 200 ms later. */
+    siren_boot_pulse();
+
     /* N3: subscribe app_main only now, once the slow init (NVS/Wi-Fi
      * bring-up, peer registration retries) is behind us. */
     rlc_watchdog_register_self();

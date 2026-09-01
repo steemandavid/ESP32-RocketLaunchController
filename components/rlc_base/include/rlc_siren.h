@@ -49,3 +49,15 @@ void siren_start_error(void);
  * (which is silent).
  */
 void siren_start_continuity_lost(void);
+
+/**
+ * One short blast (200 ms on, then silence) — FSD §12.2 SIREN_BOOT_TEST.
+ *
+ * Sounded once at the end of a successful boot, so the operator knows the
+ * unit is up and the siren itself has just been exercised. A single chirp is
+ * deliberately distinct from every alert pattern: SIREN_ERROR and
+ * SIREN_CONTINUITY_LOST are three blasts, SIREN_LINK_LOST is four long ones.
+ * A base that fails to boot sounds SIREN_ERROR instead and never chirps, so
+ * the chirp is a positive claim that boot completed.
+ */
+void siren_boot_pulse(void);

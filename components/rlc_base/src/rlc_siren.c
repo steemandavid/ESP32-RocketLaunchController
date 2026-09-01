@@ -246,3 +246,22 @@ void siren_start_continuity_lost(void)
     }
     siren_unlock();
 }
+
+/* SIREN_BOOT_TEST: one 200 ms blast. Starting the timer with the cycle count
+ * already at 0 makes the first tick take the "pattern finished" branch in
+ * siren_timer_cb() — drive OFF, stop, done — which is exactly a single
+ * half-period of sound with no pattern bookkeeping left over. */
+void siren_boot_pulse(void)
+{
+    siren_lock();
+    siren_timer_stop();
+    s_pulse_count = 0;
+    siren_drive(true);
+    if (siren_timer_run(SIREN_ERROR_HALF_MS)) {
+        s_timer_active = true;
+    } else {
+        siren_drive(false);   /* see siren_start_link_lost() */
+        s_timer_active = false;
+    }
+    siren_unlock();
+}
