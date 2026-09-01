@@ -376,9 +376,10 @@ footer.doc {
         <g fill="#aab4bd">
           <circle cx="60" cy="10" r="2.5"/><circle cx="95" cy="10" r="2.5"/><circle cx="175" cy="10" r="2.5"/>
         </g>
-        <!-- USB service port + grommet, top left -->
+        <!-- USB service sockets (COM + JTAG) + grommet, top left -->
         <circle cx="24" cy="14" r="3.5" fill="#2a2e33" stroke="#8b98a5"/>
-        <rect x="32" y="9" width="15" height="9" rx="1.5" fill="#c9ced4" stroke="#16191d" stroke-width="0.8"/>
+        <rect x="32" y="9" width="13" height="9" rx="1.5" fill="#c9ced4" stroke="#16191d" stroke-width="0.8"/>
+        <rect x="48" y="9" width="13" height="9" rx="1.5" fill="#c9ced4" stroke="#16191d" stroke-width="0.8"/>
         <!-- SMA antenna, far left at mid-height -->
         <line x1="22" y1="80" x2="4" y2="72" stroke="#2a2e33" stroke-width="2.4" stroke-linecap="round"/>
         <circle cx="22" cy="80" r="8" fill="#e8ecf0" stroke="#16191d" stroke-width="1.2"/>
@@ -386,7 +387,7 @@ footer.doc {
         <circle cx="22" cy="80" r="1.4" fill="#c9a227"/>
         <!-- interior note -->
         <text x="78" y="52" text-anchor="middle" font-size="7" fill="#6a7480">8 IGNITER CHANNELS</text>
-        <text x="88" y="64" text-anchor="middle" font-size="7" fill="#6a7480">CONTINUITY · SIREN · LiPo INSIDE</text>
+        <text x="78" y="64" text-anchor="middle" font-size="7" fill="#6a7480">SIREN · LiPo INSIDE</text>
         <!-- on/off toggle plate, directly above the key plate -->
         <rect x="124" y="16" width="38" height="20" rx="2.5" fill="#b0192f" stroke="#7a0f20" stroke-width="1"/>
         <circle cx="143" cy="26" r="3.2" fill="#c9ced4" stroke="#16191d" stroke-width="0.9"/>
@@ -935,10 +936,11 @@ link. There is no wire between the firing point and the pad.</p>
       <circle cx="520" cy="122" r="3.5"/><circle cx="610" cy="122" r="3.5"/><circle cx="690" cy="122" r="3.5"/>
     </g>
 
-    <!-- ===== USB service port, top left: cable through a grommet ===== -->
+    <!-- ===== USB service sockets, top left: COM + JTAG, cables through a grommet ===== -->
     <circle cx="212" cy="130" r="7" fill="#2a2e33" stroke="#8b98a5" stroke-width="1.4"/>
     <path d="M212,130 C192,96 158,82 120,70" fill="none" stroke="#9aa2aa" stroke-width="5" stroke-linecap="round"/>
-    <rect x="226" y="121" width="26" height="15" rx="2" fill="#c9ced4" stroke="#16191d" stroke-width="1.2"/>
+    <rect x="220" y="122" width="24" height="14" rx="2" fill="#c9ced4" stroke="#16191d" stroke-width="1.2"/>
+    <rect x="250" y="122" width="24" height="14" rx="2" fill="#c9ced4" stroke="#16191d" stroke-width="1.2"/>
 
     <!-- ===== SMA antenna, far left at mid-height, angled outward ===== -->
     <line x1="172" y1="225" x2="108" y2="213" stroke="#2a2e33" stroke-width="4" stroke-linecap="round"/>
@@ -1009,9 +1011,9 @@ link. There is no wire between the firing point and the pad.</p>
     <!-- ===== callouts, left ===== -->
     <g font-size="10" fill="#16191d">
       <line x1="230" y1="118" x2="212" y2="76" stroke="#6a7480" marker-end="url(#ld2)"/>
-      <text x="215" y="44" text-anchor="end" font-weight="700">USB SERVICE PORT</text>
-      <text x="215" y="56" text-anchor="end" font-size="8.5" fill="#6a7480">flashing and serial console,</text>
-      <text x="215" y="67" text-anchor="end" font-size="8.5" fill="#6a7480">cable through a grommet</text>
+      <text x="215" y="44" text-anchor="end" font-weight="700">USB SERVICE SOCKETS</text>
+      <text x="215" y="56" text-anchor="end" font-size="8.5" fill="#6a7480">COM (serial console) and JTAG —</text>
+      <text x="215" y="67" text-anchor="end" font-size="8.5" fill="#6a7480">cables through a grommet</text>
 
       <line x1="128" y1="211" x2="146" y2="158" stroke="#6a7480" marker-end="url(#ld2)"/>
       <text x="140" y="140" text-anchor="end" font-weight="700">SMA ANTENNA</text>
@@ -1020,10 +1022,12 @@ link. There is no wire between the firing point and the pad.</p>
 
       <line x1="180" y1="253" x2="146" y2="300" stroke="#6a7480" marker-end="url(#ld2)"/>
       <text x="140" y="294" text-anchor="end" font-weight="700">CH1–CH8 MODULES</text>
-      <text x="140" y="306" text-anchor="end" font-size="8.5" fill="#6a7480">one per igniter circuit, CH1 leftmost;</text>
-      <text x="140" y="317" text-anchor="end" font-size="8.5" fill="#6a7480">two lenses each — IGN (continuity),</text>
-      <text x="140" y="328" text-anchor="end" font-size="8.5" fill="#6a7480">FIRE (relay) — and a yellow XT60</text>
-      <text x="140" y="339" text-anchor="end" font-size="8.5" fill="#6a7480">igniter socket where the clips connect</text>
+      <text x="140" y="306" text-anchor="end" font-size="8.5" fill="#6a7480">one per igniter circuit,</text>
+      <text x="140" y="317" text-anchor="end" font-size="8.5" fill="#6a7480">CH1 leftmost; the IGN lens is</text>
+      <text x="140" y="328" text-anchor="end" font-size="8.5" fill="#6a7480">that channel's NeoPixel —</text>
+      <text x="140" y="339" text-anchor="end" font-size="8.5" fill="#6a7480">continuity colours per §3.5;</text>
+      <text x="140" y="350" text-anchor="end" font-size="8.5" fill="#6a7480">FIRE lens is the relay's;</text>
+      <text x="140" y="361" text-anchor="end" font-size="8.5" fill="#6a7480">yellow XT60 igniter socket</text>
     </g>
 
     <!-- ===== callouts, right ===== -->
@@ -1046,11 +1050,12 @@ link. There is no wire between the firing point and the pad.</p>
   </svg>
   <figcaption><b>Figure 3</b> Base unit front plate, drawn from the as-built
   photograph (<span class="pill">docs/reference/RLC_base_front.jpg</span>; original
-  on the fileshare). The antenna sits at the far left at mid-height; the USB service
-  port is top left behind a grommet; and the bottom row runs CH1…CH8 left to right,
-  ending at the SAFE/ARM/HOT key plate — with the on/off toggle on its small red
-  plate directly above the key plate. The siren, battery and LED strip live inside
-  the case, behind the plate.</figcaption>
+  on the fileshare). The antenna sits at the far left at mid-height; the two USB
+  service sockets — COM and JTAG — are top left behind a grommet; and the bottom
+  row runs CH1…CH8 left to right, ending at the SAFE/ARM/HOT key plate — with the
+  on/off toggle on its small red plate directly above the key plate. The siren and
+  battery live inside the case, behind the plate; the LED strip does not — its
+  eight pixels are the IGN lenses on the channel modules.</figcaption>
 </figure>
 
 <table>
@@ -1067,17 +1072,17 @@ link. There is no wire between the firing point and the pad.</p>
     <tr><td><strong>Siren</strong></td>
         <td>Mounted inside the case, behind the plate — you hear it, you don’t see it. Sounds continuously from arming through the end of the fire pulse. Short patterns signal link loss (4 × 500 ms), an error state (3 × 200 ms) and a continuity-loss disarm (3 × 200 ms). A single 200 ms chirp at the end of boot says the unit came up healthy and the siren itself has just been proven.</td></tr>
     <tr><td><strong>LED strip</strong></td>
-        <td>Eight pixels, one per channel, showing live locally-measured continuity. Inside the case, behind the plate. Channel 1 is at the data-in end on the base.</td></tr>
+        <td>Eight pixels, one per channel, showing live locally-measured continuity. Mounted on the plate: each channel's <strong>IGN lens is its pixel</strong> (the FIRE lens beside it is separate). Channel 1 is at the data-in end on the base.</td></tr>
     <tr><td><strong>Channel modules CH1–CH8</strong></td>
-        <td>Eight identical red modules along the bottom of the plate, numbered CH1–CH8 from the left. Each carries two indicator lenses at the <span class="pill">IGN</span> and <span class="pill">FIRE</span> markings and a yellow XT60 socket for the igniter clips — <strong>CH1 is the leftmost module, not the rightmost</strong>. When idle, each channel’s relay rests on its NC contact, which routes the igniter to the continuity sense circuit rather than the fire bus.</td></tr>
+        <td>Eight identical red modules along the bottom of the plate, numbered CH1–CH8 from the left. Each carries indicator lenses at the <span class="pill">IGN</span> and <span class="pill">FIRE</span> markings and a yellow XT60 socket for the igniter clips — the IGN lens is that channel's NeoPixel pixel and shows the continuity colours of §3.5, the FIRE lens is the relay indicator — and <strong>CH1 is the leftmost module, not the rightmost</strong>. When idle, each channel’s relay rests on its NC contact, which routes the igniter to the continuity sense circuit rather than the fire bus.</td></tr>
     <tr><td><strong>On/off switch</strong></td>
         <td>The silver toggle on the small red plate directly above the key plate, engraved <span class="pill">ON</span> above and <span class="pill">OFF</span> below. Wired inline with the battery. It <strong>physically cuts pack power</strong> when off. This is the switch to reach for when a base unit must be killed — see the danger note in §5.11.</td></tr>
     <tr><td><strong>SMA antenna connector</strong></td>
         <td>External antenna for the 2.4 GHz link, on a bulkhead at the far left of the plate at mid-height. <strong>Never power the unit up without the antenna fitted.</strong> Antenna height and clear line of sight do far more for range than anything in the firmware.</td></tr>
     <tr><td><strong>USB port</strong></td>
-        <td>The ESP32-S3’s native USB, on a socket at the top left of the plate; the service cable passes through a grommet in the case lid. Firmware flashing and the serial console. Not used in normal operation.</td></tr>
+        <td>The ESP32-S3’s native USB, on the JTAG socket at the top left of the plate; the service cables pass through a grommet in the case lid. Firmware flashing and the serial console. Not used in normal operation.</td></tr>
     <tr><td><strong>COM port</strong></td>
-        <td>The ESP32-S3’s UART bridge. <strong>Not brought out on the as-built front plate</strong> — use the USB port for serial log output and flashing.</td></tr>
+        <td>The ESP32-S3’s UART bridge, on the COM socket at the top left of the plate, beside the JTAG socket. Either socket serves the serial console and flashing; not used in normal operation.</td></tr>
     <tr><td><strong>Charger connector</strong></td>
         <td>Balance connector for the 3S pack. <strong>Not brought out on the as-built front plate</strong> — charge the pack by opening the case, and switch the unit off before charging.</td></tr>
   </tbody>

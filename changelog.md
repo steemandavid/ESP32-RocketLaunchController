@@ -108,6 +108,38 @@ Re-checked against a fresh crop of the photograph, then:
   directly above it in both). Documentation-only; fw stays 1.2.3 — no
   reflash.
 
+### 4. Whole-panel Visio drawing — two more as-built corrections (FSD v1.56)
+
+The user supplied an annotated Visio drawing of the whole base front panel
+(`Base front panel layout.svg`, 10.4 MB — annotates a photo of the whole open
+case; note it was only updated on `/mnt/netwerkdrive/Rocketry/ESP32 Rocket
+Launch Controller/`, the `/storage/fileshare` copy stayed stale — sync gap
+recorded in memory). It confirmed the corrected geometry end-to-end (module
+row ending at the key plate, on/off above it, antenna far left, siren /
+battery / XT60 battery connector inside the case) and surfaced two facts the
+photo alone couldn't settle:
+
+- **Two USB sockets on the plate, not one** — COM (UART bridge) and JTAG
+  (native USB), side by side top left behind the grommet. The photo showed
+  one because only a single plug was inserted (into COM). v1.54's "the COM
+  port … is not brought out on the as-built plate" withdrawn; the charger
+  connector remains inside.
+- **The 8-pixel WS2812 strip is mounted on the plate as the IGN lenses** of
+  the channel modules (user: "the 8 IGN RGB LEDs are in fact the Neopixel
+  strip, but widened through soldered connections"). The IGN lens is that
+  channel's continuity pixel (§3.5 colours); the FIRE lens beside it is a
+  separate plain LED. "Strip lives inside the case" corrected everywhere.
+
+Changes: FSD **v1.56** (revision row; §5.4.4 plate note gains the USB socket
+pair; §5.4.11 gains an as-built mounting note); manual Figure 3 (two sockets
+drawn, USB callout reworded, IGN-lens callout, caption), §3.2 table (LED
+strip, channel modules, USB and COM rows), cover diagram (two sockets,
+interior note now "SIREN · LiPo INSIDE"); README as-built paragraph. Both
+SVGs machine-verified clean — pixel-measured the CH1–CH8 callout after the
+analyzer flagged clipping, found line 1 genuinely touching the left edge
+(vb-x ≈ 4), rebalanced to six shorter lines (now min vb-x ≈ 31).
+Documentation-only; fw stays 1.2.3 — no reflash.
+
 ### Files
 
 - `components/rlc_base/src/rlc_siren.c`, `include/rlc_siren.h` —
@@ -115,7 +147,8 @@ Re-checked against a fresh crop of the photograph, then:
 - `components/rlc_base/src/rlc_base_main.c` — chirp call at end of boot
 - `components/rlc_common/include/rlc_version.h` — 1.2.2 → 1.2.3 + entry
 - `RLC_Functional_Specification_v1_14.md` — v1.53 (chirp) + v1.54 (plate)
-  + v1.55 (position correction)
+  + v1.55 (position correction) + v1.56 (Visio reconciliation: two USB
+  sockets, strip = IGN lenses)
 - `Development_Progress.md` — fw 1.2.3 row
 - `docs/RLC_Operations_Manual.html`, `docs/RLC_Field_Reference_Card.html`,
   `README.md`, `docs/reference/RLC_base_front.jpg` (new)

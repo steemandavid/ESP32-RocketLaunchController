@@ -420,7 +420,7 @@ Known open items before any field use:
 
 | Document | Contents |
 |---|---|
-| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.55 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
+| `RLC_Functional_Specification_v1_14.md` | The specification of record (currently at v1.56 internally — the filename lags) — hardware, protocol, state machines, display, test requirements |
 | `Development_Progress.md` | Per-phase task and test tracking, hardware reference, bug history |
 | `RLC_Project_Summary.md` | Plain-language overview written for club members |
 | `docs/RLC_Operations_Manual.html` | **RLC-OPS-001** — operations manual: setup, controls, the safety case in full (interlocks, fail-safe matrix, residual risks), and the safe-ignition procedures for launches and static motor tests. A4 print stylesheet; open in a browser and print to PDF |
@@ -443,14 +443,16 @@ buzzer, ILI9488 480×320 SPI display, 8-pixel status strip. Pin assignments are 
 `components/rlc_common/include/pin_config.h` and FSD §5.
 
 The base's front plate as built (see the manual §3.2, Figure 3): SMA antenna
-bulkhead far left, USB service socket top left, and a bottom row of eight red
-channel modules — **CH1 leftmost**, each with an igniter continuity lens, a
-fire-relay lens and a yellow XT60 igniter socket — ending at the red key plate
+bulkhead far left, the two USB service sockets (COM and JTAG) top left, and a
+bottom row of eight red channel modules — **CH1 leftmost**, each with a
+NeoPixel continuity lens (the IGN lens — the base's 8-pixel strip is mounted
+on the plate as those lenses), a fire-relay lens and a yellow XT60 igniter
+socket — ending at the red key plate
 with the brass-barrel arm key and its three engraved passive lamps, **SAFE /
 ARM / HOT** (HOT = arm relay live, the pad-is-live lamp that works even with
 the ESP32 crashed). The battery on/off toggle sits on a small red plate
-directly above the key plate. Siren, battery and status strip live inside the
-case.
+directly above the key plate. Siren and battery live inside the case; the
+status strip does not — its pixels are the IGN lenses on the plate.
 
 ## License
 
