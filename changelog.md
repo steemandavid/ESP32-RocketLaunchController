@@ -37,12 +37,14 @@ undetected until a pad warning was needed.
 
 The photograph was verified in detail (targeted crops, multiple passes) before
 any drawing: antenna is an **SMA bulkhead at the far left edge, mid-height**
-(angled black whip); battery on/off is a **silver toggle on a small red plate
-top right** (engraved ON/OFF); the arm key is a **brass-barrel key switch on
-the larger red plate lower right**, with the three §5.4.4 passive LEDs
-laser-engraved **SAFE** (green, upper left), **ARM** (red, upper right),
-**HOT** (red, lower left = arm relay live). Bottom row: **eight identical red
-modules, CH1→CH8 left to right**, each with CHn+IGN silkscreen, white dome
+(angled black whip); the bottom row is **eight identical red modules, CH1→CH8
+left to right, ending at the red key plate** — the key plate is the
+right-hand end of that row, vertically in line with the modules and slightly
+taller — carrying the **brass-barrel key switch** with the three §5.4.4
+passive LEDs laser-engraved **SAFE** (green, upper left), **ARM** (red,
+upper right), **HOT** (red, lower left = arm relay live). Battery on/off is
+a **silver toggle on a small red plate directly above the key plate**
+(engraved ON/OFF). Each module has CHn+IGN silkscreen, white dome
 lens, FIRE silkscreen, chrome-bezel lens, yellow XT60 in a white outline,
 2 screws — **no push buttons** (an analyzer claim to the contrary was
 disproven on crops). USB enters through a grommet top left into a socket
@@ -56,7 +58,8 @@ Changes made to match:
   (viewBox 960×400, callouts both sides, "three passive LEDs — copper, not
   software" on the key plate). Old Figures 3/4 renumbered **4/5** (verified:
   no in-text figure references anywhere). §3.2 controls table conformed:
-  key switch on the red plate lower right; SAFE/ARM/HOT lamp positions and
+  key switch on the red plate at the right-hand end of the channel row;
+  SAFE/ARM/HOT lamp positions and
   the "HOT is the definitive pad-live statement" wording; siren row gains the
   200 ms boot chirp and "inside the case, behind the plate"; channel modules
   row (renamed from "channel terminals") with **"CH1 is the leftmost module,
@@ -76,6 +79,35 @@ Changes made to match:
   table updated (FSD "currently at v1.54", `docs/reference/` now lists the
   base plate photo alongside the remote panel SVG).
 
+### 3. Correction — operator-spotted layout errors in the first pass
+
+The first Figure 3 drew the key plate at lower right *above* the channel row
+and the on/off plate at the top-right corner. The operator corrected both —
+"the base arm key elements are to the right in line with the channels, and
+the on/off switch is on top of the arm key elements" — and noted the
+manual's cover system-overview diagram hadn't been adapted at all.
+Re-checked against a fresh crop of the photograph, then:
+
+- **Figure 3 re-laid-out**: modules re-spaced to make room for the key plate
+  **in** the bottom row (right of CH8, slightly taller); ON/OFF plate moved
+  to directly above the key plate. The former TWO LENSES and XT60 callouts
+  were folded into the left CH1–CH8 callout (their arrows would have crossed
+  the relocated key plate); the right side now has three callouts — ON/OFF
+  SWITCH, BASE ARM KEY, SAFE/ARM/HOT LAMPS. Figcaption and the §3.2 key
+  switch / on-off table rows reworded to the corrected geometry.
+- **Cover diagram conformed**: the BASE half of the cover overview SVG was
+  still the old generic drawing (ARM KEY circle top-left, LED strip); redrawn
+  as a mini version of the as-built plate — antenna far left, USB top left,
+  8 modules + key plate in one bottom row, ON/OFF plate above the key plate.
+- **FSD v1.55**: correction row fixing v1.54's "top right / lower right"
+  wording; §5.4.4 as-built note extended with the plate positions.
+- **README.md**: as-built paragraph reworded (key plate right end of the
+  channel row, on/off directly above it); docs table bumped to v1.55.
+- Both re-rendered SVGs machine-verified clean (no overlaps, crossings or
+  clipping; key plate confirmed in line with the module row and ON/OFF
+  directly above it in both). Documentation-only; fw stays 1.2.3 — no
+  reflash.
+
 ### Files
 
 - `components/rlc_base/src/rlc_siren.c`, `include/rlc_siren.h` —
@@ -83,6 +115,7 @@ Changes made to match:
 - `components/rlc_base/src/rlc_base_main.c` — chirp call at end of boot
 - `components/rlc_common/include/rlc_version.h` — 1.2.2 → 1.2.3 + entry
 - `RLC_Functional_Specification_v1_14.md` — v1.53 (chirp) + v1.54 (plate)
+  + v1.55 (position correction)
 - `Development_Progress.md` — fw 1.2.3 row
 - `docs/RLC_Operations_Manual.html`, `docs/RLC_Field_Reference_Card.html`,
   `README.md`, `docs/reference/RLC_base_front.jpg` (new)

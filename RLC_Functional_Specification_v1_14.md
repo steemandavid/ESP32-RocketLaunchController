@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.54
+**Version:** 1.55
 **Date:** 2026-09-01
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -68,6 +68,7 @@
 | 1.52 | 2026-09-01 | **§10.2.2 legend row removed, status band enlarged on the main screen; firmware 1.2.2.** The continuity legend under the channel grid ("● = good ▲ = marginal ○ = open ◆ = short" — itself stale, still naming the retired SHORT band) restated what every grid cell already shows: each cell draws the glyph *and* the band's name in the band's colour. The row carried no information the grid did not, and it occupied 22 px of the system status band, whose whole purpose is legibility from across a launch site. On the main screen only, the band now starts at the legend's former row — 90 px tall against 68 px on every other screen, whose centre box is pinned immediately above the standard band top by a compile-time assert and cannot move without shrinking. The main screen's two status rows are re-centred within the taller band. Remote-only, display-only, no protocol change; version bumped because a changed binary sharing a version number is what the strict check exists to prevent. |
 | 1.53 | 2026-09-01 | **§12.2 `SIREN_BOOT_TEST`; firmware 1.2.3.** By operator request, the base sounds a single 200 ms siren chirp at the end of a successful boot, so the operator at the pad hears that the unit is up and the siren itself has just been exercised — until now its only sounds were fault and armed states, so a dead siren driver could stay undetected until a pad warning was needed. Placement is the design: the chirp sounds only after every mandatory boot step passes, and a base that halts sounds `SIREN_ERROR` instead and never chirps, so one chirp is a positive claim that boot completed. §5.4.8's verified "silent at power-on" property (bug #27 retest) is amended, not contradicted: that check verified no *uncommanded* sound during the power-on transient — the gate pull-down's job — and a commanded chirp after boot is a different thing. §9.13 records the boot-order rule. Base-only, audible-only, no protocol change; version bumped because the binary differs. |
 | 1.54 | 2026-09-01 | **§5.4.4 as-built plate note; operations manual redrawn from the final base front plate.** The finished front plate was photographed (original on the fileshare, copy at `docs/reference/RLC_base_front.jpg`) and the user-facing diagrams conformed to it: RLC-OPS-001 §3.2 gains a new Figure 3 — the base panel drawn from the photograph — and the old Figure 3/4 renumber to 4/5. The §3.2 controls table now matches the plate as built: SMA antenna bulkhead at the far left at mid-height, USB service socket top left through a lid grommet, battery on/off toggle on a small red plate at top right, the brass-barrel key switch on the larger red plate at lower right with its three engraved passive-LED names (**SAFE / ARM / HOT** — recorded in §5.4.4 here), and eight red channel modules along the bottom with **CH1 leftmost**, each carrying two indicator lenses and a yellow XT60 igniter socket. The COM port and the charger connector are **not brought out on the as-built plate** (serial log and flashing via USB; charge by opening the case); the siren, battery and LED strip live inside the case behind the plate. Documentation-only; no firmware change (fw stays 1.2.3). |
+| 1.55 | 2026-09-01 | **Position correction to v1.54 (operator-spotted).** v1.54 placed the key plate "at lower right" and the on/off plate "at top right"; on the as-built plate the **key plate is the right-hand end of the bottom channel row** — vertically in line with the CH modules, slightly taller than them — and the **battery on/off toggle sits on a small red plate directly above the key plate**. RLC-OPS-001 Figure 3 and §3.2 table redrawn to the corrected geometry, the manual's cover system-overview diagram conformed to the as-built plate as well (v1.54 had left it generic), README as-built paragraph reworded, and §5.4.4's as-built note extended with the plate positions. Documentation-only; no firmware change (fw stays 1.2.3). |
 
 ## Table of Contents
 
@@ -828,7 +829,10 @@ All three LEDs are passive — they operate directly from VBAT through the switc
 > "HOT" is this table's third lamp — the coil-energised / arm-relay-live
 > indicator — under its field name; "ARM RELAY LIVE" and "HOT" are the same
 > lamp. The operations manual (RLC-OPS-001 §3.2, Figure 3) draws the plate
-> from this photograph.
+> from this photograph. On the as-built plate this key plate is the
+> **right-hand end of the bottom channel row** (vertically in line with the
+> CH modules, slightly taller than them), and the **battery on/off toggle
+> sits on a small red plate directly above the key plate**.
 
 Both this switch AND the remote arm switch must be in the armed position for any channel to be armed.
 

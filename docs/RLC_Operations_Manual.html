@@ -368,30 +368,59 @@ footer.doc {
         <text x="310" y="150" text-anchor="middle" font-size="9" fill="#6a7480">commands ⇄ status, 2 Hz heartbeat</text>
       </g>
 
-      <!-- BASE -->
+      <!-- BASE — as-built front plate: antenna far left, USB top left, on/off
+           above the key plate, key plate at the right end of the channel row -->
       <g transform="translate(430,58)">
-        <rect x="0" y="0" width="150" height="147" rx="7" fill="#fff" stroke="#16191d" stroke-width="2"/>
-        <circle cx="30" cy="30" r="13" fill="#f5f7f9" stroke="#16191d" stroke-width="2"/>
-        <line x1="30" y1="30" x2="30" y2="20" stroke="#16191d" stroke-width="3"/>
-        <text x="30" y="56" text-anchor="middle" font-size="8" fill="#6a7480">ARM KEY</text>
-        <circle cx="72" cy="24" r="5" fill="#1f7a4d"/><text x="84" y="27" font-size="8" fill="#6a7480">SAFE</text>
-        <circle cx="72" cy="40" r="5" fill="#e8e8e8" stroke="#c9ced4"/><text x="84" y="43" font-size="8" fill="#6a7480">KEY ARM</text>
-        <circle cx="72" cy="56" r="5" fill="#e8e8e8" stroke="#c9ced4"/><text x="84" y="59" font-size="8" fill="#6a7480">RELAY LIVE</text>
-        <g transform="translate(14,78)">
-          <rect x="0" y="0" width="122" height="20" rx="3" fill="#16191d"/>
-          <g fill="#4fae7d">
-            <circle cx="12" cy="10" r="4"/><circle cx="27" cy="10" r="4"/>
-            <circle cx="42" cy="10" r="4" fill="#d9d24a"/><circle cx="57" cy="10" r="4" fill="#c9ced4"/>
-            <circle cx="72" cy="10" r="4" fill="#c9ced4"/><circle cx="87" cy="10" r="4"/>
-            <circle cx="102" cy="10" r="4"/><circle cx="117" cy="10" r="4"/>
-          </g>
+        <rect x="0" y="0" width="180" height="147" rx="7" fill="#d8dde2" stroke="#16191d" stroke-width="2"/>
+        <!-- countersunk screws -->
+        <g fill="#aab4bd">
+          <circle cx="60" cy="10" r="2.5"/><circle cx="95" cy="10" r="2.5"/><circle cx="175" cy="10" r="2.5"/>
         </g>
-        <text x="75" y="112" text-anchor="middle" font-size="8" fill="#6a7480">8 CHANNELS · CONTINUITY</text>
-        <path d="M18 122 h114" stroke="#6a7480" stroke-width="1.2"/>
-        <text x="75" y="136" text-anchor="middle" font-size="8" fill="#6a7480">SIREN · 3S LiPo</text>
+        <!-- USB service port + grommet, top left -->
+        <circle cx="24" cy="14" r="3.5" fill="#2a2e33" stroke="#8b98a5"/>
+        <rect x="32" y="9" width="15" height="9" rx="1.5" fill="#c9ced4" stroke="#16191d" stroke-width="0.8"/>
+        <!-- SMA antenna, far left at mid-height -->
+        <line x1="22" y1="80" x2="4" y2="72" stroke="#2a2e33" stroke-width="2.4" stroke-linecap="round"/>
+        <circle cx="22" cy="80" r="8" fill="#e8ecf0" stroke="#16191d" stroke-width="1.2"/>
+        <circle cx="22" cy="80" r="4.5" fill="#f7f9fa" stroke="#8b98a5" stroke-width="0.8"/>
+        <circle cx="22" cy="80" r="1.4" fill="#c9a227"/>
+        <!-- interior note -->
+        <text x="78" y="52" text-anchor="middle" font-size="7" fill="#6a7480">8 IGNITER CHANNELS</text>
+        <text x="88" y="64" text-anchor="middle" font-size="7" fill="#6a7480">CONTINUITY · SIREN · LiPo INSIDE</text>
+        <!-- on/off toggle plate, directly above the key plate -->
+        <rect x="124" y="16" width="38" height="20" rx="2.5" fill="#b0192f" stroke="#7a0f20" stroke-width="1"/>
+        <circle cx="143" cy="26" r="3.2" fill="#c9ced4" stroke="#16191d" stroke-width="0.9"/>
+        <line x1="143" y1="26" x2="143" y2="20.5" stroke="#16191d" stroke-width="1.8" stroke-linecap="round"/>
+        <text x="143" y="48" text-anchor="middle" font-size="6.5" fill="#6a7480">ON/OFF</text>
+        <!-- eight channel modules, CH1..CH8 left to right -->
+        <g fill="#b0192f" stroke="#7a0f20" stroke-width="0.8">
+          <rect x="8" y="96" width="14.5" height="38" rx="2"/><rect x="24.5" y="96" width="14.5" height="38" rx="2"/>
+          <rect x="41" y="96" width="14.5" height="38" rx="2"/><rect x="57.5" y="96" width="14.5" height="38" rx="2"/>
+          <rect x="74" y="96" width="14.5" height="38" rx="2"/><rect x="90.5" y="96" width="14.5" height="38" rx="2"/>
+          <rect x="107" y="96" width="14.5" height="38" rx="2"/><rect x="123.5" y="96" width="14.5" height="38" rx="2"/>
+        </g>
+        <g fill="#f0f3f6" stroke="#16191d" stroke-width="0.7">
+          <circle cx="15.25" cy="107" r="2"/><circle cx="31.75" cy="107" r="2"/><circle cx="48.25" cy="107" r="2"/><circle cx="64.75" cy="107" r="2"/>
+          <circle cx="81.25" cy="107" r="2"/><circle cx="97.75" cy="107" r="2"/><circle cx="114.25" cy="107" r="2"/><circle cx="130.75" cy="107" r="2"/>
+        </g>
+        <g fill="#e8b93b" stroke="#a07d14" stroke-width="0.6">
+          <rect x="11" y="123" width="8" height="5"/><rect x="27.5" y="123" width="8" height="5"/>
+          <rect x="44" y="123" width="8" height="5"/><rect x="60.5" y="123" width="8" height="5"/>
+          <rect x="77" y="123" width="8" height="5"/><rect x="93.5" y="123" width="8" height="5"/>
+          <rect x="110" y="123" width="8" height="5"/><rect x="126.5" y="123" width="8" height="5"/>
+        </g>
+        <!-- key plate, right-hand end of the channel row, slightly taller -->
+        <rect x="143" y="88" width="32" height="46" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1"/>
+        <circle cx="149" cy="96" r="2" fill="#3fa06b" stroke="#16191d" stroke-width="0.6"/>
+        <circle cx="169" cy="96" r="2" fill="#d9435c" stroke="#16191d" stroke-width="0.6"/>
+        <circle cx="149" cy="127" r="2" fill="#d9435c" stroke="#16191d" stroke-width="0.6"/>
+        <circle cx="159" cy="112" r="7" fill="#c9a227" stroke="#8a6d12" stroke-width="1.1"/>
+        <circle cx="159" cy="112" r="4.5" fill="#b8901d"/>
+        <line x1="159" y1="112" x2="164" y2="117" stroke="#4a3a06" stroke-width="1.8" stroke-linecap="round"/>
+        <text x="140" y="90" text-anchor="end" font-size="6.5" fill="#6a7480">ARM KEY →</text>
       </g>
-      <text x="505" y="228" text-anchor="middle" font-size="11" font-weight="700" fill="#16191d">BASE UNIT</text>
-      <text x="505" y="242" text-anchor="middle" font-size="9" fill="#6a7480">at the pad, wired to igniters</text>
+      <text x="520" y="228" text-anchor="middle" font-size="11" font-weight="700" fill="#16191d">BASE UNIT</text>
+      <text x="520" y="242" text-anchor="middle" font-size="9" fill="#6a7480">at the pad, wired to igniters</text>
 
       <!-- pad -->
       <g transform="translate(600,120)">
@@ -918,63 +947,64 @@ link. There is no wire between the firing point and the pad.</p>
     <circle cx="172" cy="225" r="7.5" fill="#f7f9fa" stroke="#8b98a5" stroke-width="1.2"/>
     <circle cx="172" cy="225" r="2.2" fill="#c9a227"/>
 
-    <!-- ===== on/off toggle, top right, small red plate ===== -->
-    <rect x="700" y="128" width="62" height="36" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
-    <text x="731" y="140" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">ON</text>
-    <text x="731" y="160" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">OFF</text>
-    <circle cx="731" cy="150" r="5" fill="#c9ced4" stroke="#16191d" stroke-width="1.4"/>
-    <line x1="731" y1="150" x2="731" y2="141" stroke="#16191d" stroke-width="3" stroke-linecap="round"/>
-
-    <!-- ===== key plate, lower right: SAFE / ARM / HOT lamps + brass barrel ===== -->
-    <rect x="688" y="176" width="116" height="72" rx="4" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
-    <text x="702" y="190" font-size="6.5" font-weight="700" fill="#fff">SAFE</text>
-    <circle cx="707" cy="197" r="3" fill="#3fa06b" stroke="#16191d" stroke-width="1"/>
-    <text x="790" y="190" text-anchor="end" font-size="6.5" font-weight="700" fill="#fff">ARM</text>
-    <circle cx="785" cy="197" r="3" fill="#d9435c" stroke="#16191d" stroke-width="1"/>
-    <text x="702" y="241" font-size="6.5" font-weight="700" fill="#fff">HOT</text>
-    <circle cx="707" cy="231" r="3" fill="#d9435c" stroke="#16191d" stroke-width="1"/>
-    <circle cx="746" cy="214" r="15" fill="#c9a227" stroke="#8a6d12" stroke-width="1.8"/>
-    <circle cx="746" cy="214" r="10" fill="#b8901d"/>
-    <line x1="746" y1="214" x2="756" y2="222" stroke="#4a3a06" stroke-width="3" stroke-linecap="round"/>
+    <!-- ===== on/off toggle, small red plate directly above the key plate ===== -->
+    <rect x="724" y="192" width="62" height="36" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+    <text x="755" y="201" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">ON</text>
+    <text x="755" y="225" text-anchor="middle" font-size="7" font-weight="700" fill="#fff">OFF</text>
+    <circle cx="755" cy="214" r="5" fill="#c9ced4" stroke="#16191d" stroke-width="1.4"/>
+    <line x1="755" y1="214" x2="755" y2="205" stroke="#16191d" stroke-width="3" stroke-linecap="round"/>
 
     <!-- ===== eight channel modules, CH1..CH8 left to right ===== -->
     <g>
-      <!-- module template repeated at x = 192 + 73*i -->
-      <rect x="192" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
-      <rect x="265" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
-      <rect x="338" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
-      <rect x="411" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
-      <rect x="484" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
-      <rect x="557" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
-      <rect x="630" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
-      <rect x="703" y="250" width="64" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <!-- module template repeated at x = 168 + 69*i -->
+      <rect x="168" y="250" width="62" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="237" y="250" width="62" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="306" y="250" width="62" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="375" y="250" width="62" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="444" y="250" width="62" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="513" y="250" width="62" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="582" y="250" width="62" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+      <rect x="651" y="250" width="62" height="78" rx="3" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
     </g>
     <g font-size="7" font-weight="700" fill="#fff" text-anchor="middle">
-      <text x="224" y="262">CH1</text><text x="297" y="262">CH2</text><text x="370" y="262">CH3</text><text x="443" y="262">CH4</text>
-      <text x="516" y="262">CH5</text><text x="589" y="262">CH6</text><text x="662" y="262">CH7</text><text x="735" y="262">CH8</text>
+      <text x="199" y="262">CH1</text><text x="268" y="262">CH2</text><text x="337" y="262">CH3</text><text x="406" y="262">CH4</text>
+      <text x="475" y="262">CH5</text><text x="544" y="262">CH6</text><text x="613" y="262">CH7</text><text x="682" y="262">CH8</text>
     </g>
     <g font-size="5.5" fill="#f2c7ce" text-anchor="middle">
-      <text x="224" y="271">IGN</text><text x="297" y="271">IGN</text><text x="370" y="271">IGN</text><text x="443" y="271">IGN</text>
-      <text x="516" y="271">IGN</text><text x="589" y="271">IGN</text><text x="662" y="271">IGN</text><text x="735" y="271">IGN</text>
+      <text x="199" y="271">IGN</text><text x="268" y="271">IGN</text><text x="337" y="271">IGN</text><text x="406" y="271">IGN</text>
+      <text x="475" y="271">IGN</text><text x="544" y="271">IGN</text><text x="613" y="271">IGN</text><text x="682" y="271">IGN</text>
     </g>
     <g fill="#f0f3f6" stroke="#16191d" stroke-width="1.2">
-      <circle cx="224" cy="281" r="4.5"/><circle cx="297" cy="281" r="4.5"/><circle cx="370" cy="281" r="4.5"/><circle cx="443" cy="281" r="4.5"/>
-      <circle cx="516" cy="281" r="4.5"/><circle cx="589" cy="281" r="4.5"/><circle cx="662" cy="281" r="4.5"/><circle cx="735" cy="281" r="4.5"/>
+      <circle cx="199" cy="281" r="4.5"/><circle cx="268" cy="281" r="4.5"/><circle cx="337" cy="281" r="4.5"/><circle cx="406" cy="281" r="4.5"/>
+      <circle cx="475" cy="281" r="4.5"/><circle cx="544" cy="281" r="4.5"/><circle cx="613" cy="281" r="4.5"/><circle cx="682" cy="281" r="4.5"/>
     </g>
     <g font-size="5.5" fill="#f2c7ce" text-anchor="middle">
-      <text x="224" y="297">FIRE</text><text x="297" y="297">FIRE</text><text x="370" y="297">FIRE</text><text x="443" y="297">FIRE</text>
-      <text x="516" y="297">FIRE</text><text x="589" y="297">FIRE</text><text x="662" y="297">FIRE</text><text x="735" y="297">FIRE</text>
+      <text x="199" y="297">FIRE</text><text x="268" y="297">FIRE</text><text x="337" y="297">FIRE</text><text x="406" y="297">FIRE</text>
+      <text x="475" y="297">FIRE</text><text x="544" y="297">FIRE</text><text x="613" y="297">FIRE</text><text x="682" y="297">FIRE</text>
     </g>
     <g fill="#c9ced4" stroke="#6a7480" stroke-width="1.6">
-      <circle cx="224" cy="306" r="5"/><circle cx="297" cy="306" r="5"/><circle cx="370" cy="306" r="5"/><circle cx="443" cy="306" r="5"/>
-      <circle cx="516" cy="306" r="5"/><circle cx="589" cy="306" r="5"/><circle cx="662" cy="306" r="5"/><circle cx="735" cy="306" r="5"/>
+      <circle cx="199" cy="306" r="5"/><circle cx="268" cy="306" r="5"/><circle cx="337" cy="306" r="5"/><circle cx="406" cy="306" r="5"/>
+      <circle cx="475" cy="306" r="5"/><circle cx="544" cy="306" r="5"/><circle cx="613" cy="306" r="5"/><circle cx="682" cy="306" r="5"/>
     </g>
     <g fill="#e8b93b" stroke="#a07d14" stroke-width="1.2">
-      <rect x="215" y="314" width="18" height="9" rx="1.5"/><rect x="288" y="314" width="18" height="9" rx="1.5"/>
-      <rect x="361" y="314" width="18" height="9" rx="1.5"/><rect x="434" y="314" width="18" height="9" rx="1.5"/>
-      <rect x="507" y="314" width="18" height="9" rx="1.5"/><rect x="580" y="314" width="18" height="9" rx="1.5"/>
-      <rect x="653" y="314" width="18" height="9" rx="1.5"/><rect x="726" y="314" width="18" height="9" rx="1.5"/>
+      <rect x="190" y="314" width="18" height="9" rx="1.5"/><rect x="259" y="314" width="18" height="9" rx="1.5"/>
+      <rect x="328" y="314" width="18" height="9" rx="1.5"/><rect x="397" y="314" width="18" height="9" rx="1.5"/>
+      <rect x="466" y="314" width="18" height="9" rx="1.5"/><rect x="535" y="314" width="18" height="9" rx="1.5"/>
+      <rect x="604" y="314" width="18" height="9" rx="1.5"/><rect x="673" y="314" width="18" height="9" rx="1.5"/>
     </g>
+
+    <!-- ===== key plate, right-hand end of the channel row: SAFE / ARM / HOT
+         lamps + brass barrel — slightly taller than the channel modules ===== -->
+    <rect x="721" y="238" width="80" height="90" rx="4" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+    <text x="733" y="254" font-size="6.5" font-weight="700" fill="#fff">SAFE</text>
+    <circle cx="738" cy="261" r="3" fill="#3fa06b" stroke="#16191d" stroke-width="1"/>
+    <text x="789" y="254" text-anchor="end" font-size="6.5" font-weight="700" fill="#fff">ARM</text>
+    <circle cx="784" cy="261" r="3" fill="#d9435c" stroke="#16191d" stroke-width="1"/>
+    <text x="733" y="320" font-size="6.5" font-weight="700" fill="#fff">HOT</text>
+    <circle cx="738" cy="309" r="3" fill="#d9435c" stroke="#16191d" stroke-width="1"/>
+    <circle cx="760" cy="283" r="15" fill="#c9a227" stroke="#8a6d12" stroke-width="1.8"/>
+    <circle cx="760" cy="283" r="10" fill="#b8901d"/>
+    <line x1="760" y1="283" x2="770" y2="291" stroke="#4a3a06" stroke-width="3" stroke-linecap="round"/>
 
     <!-- ===== callouts, left ===== -->
     <g font-size="10" fill="#16191d">
@@ -988,52 +1018,46 @@ link. There is no wire between the firing point and the pad.</p>
       <text x="140" y="152" text-anchor="end" font-size="8.5" fill="#6a7480">far left, mid-height — never</text>
       <text x="140" y="163" text-anchor="end" font-size="8.5" fill="#6a7480">power up without it</text>
 
-      <line x1="196" y1="260" x2="146" y2="322" stroke="#6a7480" marker-end="url(#ld2)"/>
-      <text x="140" y="314" text-anchor="end" font-weight="700">CH1–CH8 MODULES</text>
-      <text x="140" y="326" text-anchor="end" font-size="8.5" fill="#6a7480">one per igniter circuit,</text>
-      <text x="140" y="337" text-anchor="end" font-size="8.5" fill="#6a7480">CH1 leftmost on the plate</text>
+      <line x1="180" y1="253" x2="146" y2="300" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="140" y="294" text-anchor="end" font-weight="700">CH1–CH8 MODULES</text>
+      <text x="140" y="306" text-anchor="end" font-size="8.5" fill="#6a7480">one per igniter circuit, CH1 leftmost;</text>
+      <text x="140" y="317" text-anchor="end" font-size="8.5" fill="#6a7480">two lenses each — IGN (continuity),</text>
+      <text x="140" y="328" text-anchor="end" font-size="8.5" fill="#6a7480">FIRE (relay) — and a yellow XT60</text>
+      <text x="140" y="339" text-anchor="end" font-size="8.5" fill="#6a7480">igniter socket where the clips connect</text>
     </g>
 
     <!-- ===== callouts, right ===== -->
     <g font-size="10" fill="#16191d">
-      <line x1="742" y1="140" x2="815" y2="106" stroke="#6a7480" marker-end="url(#ld2)"/>
-      <text x="820" y="100" font-weight="700">ON/OFF SWITCH</text>
-      <text x="820" y="112" font-size="8.5" fill="#6a7480">silver toggle, red plate —</text>
-      <text x="820" y="123" font-size="8.5" fill="#6a7480">cuts pack power physically</text>
+      <line x1="788" y1="206" x2="815" y2="178" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="820" y="172" font-weight="700">ON/OFF SWITCH</text>
+      <text x="820" y="184" font-size="8.5" fill="#6a7480">silver toggle, red plate —</text>
+      <text x="820" y="195" font-size="8.5" fill="#6a7480">cuts pack power physically</text>
 
-      <line x1="760" y1="200" x2="815" y2="158" stroke="#6a7480" marker-end="url(#ld2)"/>
-      <text x="820" y="152" font-weight="700">BASE ARM KEY</text>
-      <text x="820" y="164" font-size="8.5" fill="#6a7480">SPDT in the arm relay’s</text>
-      <text x="820" y="175" font-size="8.5" fill="#6a7480">coil drive path</text>
+      <line x1="771" y1="273" x2="815" y2="222" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="820" y="216" font-weight="700">BASE ARM KEY</text>
+      <text x="820" y="228" font-size="8.5" fill="#6a7480">SPDT in the arm relay’s</text>
+      <text x="820" y="239" font-size="8.5" fill="#6a7480">coil drive path</text>
 
-      <line x1="786" y1="210" x2="815" y2="218" stroke="#6a7480" marker-end="url(#ld2)"/>
-      <text x="820" y="212" font-weight="700">SAFE / ARM / HOT LAMPS</text>
-      <text x="820" y="224" font-size="8.5" fill="#6a7480">three passive LEDs — copper,</text>
-      <text x="820" y="235" font-size="8.5" fill="#6a7480">not software; believe these</text>
-
-      <line x1="740" y1="281" x2="815" y2="268" stroke="#6a7480" marker-end="url(#ld2)"/>
-      <text x="820" y="262" font-weight="700">TWO LENSES PER MODULE</text>
-      <text x="820" y="274" font-size="8.5" fill="#6a7480">at the IGN and FIRE markings</text>
-
-      <line x1="768" y1="316" x2="815" y2="320" stroke="#6a7480" marker-end="url(#ld2)"/>
-      <text x="820" y="314" font-weight="700">XT60 IGNITER OUTPUT</text>
-      <text x="820" y="326" font-size="8.5" fill="#6a7480">where the igniter clips connect</text>
+      <line x1="787" y1="262" x2="815" y2="258" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="820" y="252" font-weight="700">SAFE / ARM / HOT LAMPS</text>
+      <text x="820" y="264" font-size="8.5" fill="#6a7480">three passive LEDs — copper,</text>
+      <text x="820" y="275" font-size="8.5" fill="#6a7480">not software; believe these</text>
     </g>
   </svg>
   <figcaption><b>Figure 3</b> Base unit front plate, drawn from the as-built
   photograph (<span class="pill">docs/reference/RLC_base_front.jpg</span>; original
   on the fileshare). The antenna sits at the far left at mid-height; the USB service
-  port is top left behind a grommet; the on/off toggle and the SAFE/ARM/HOT key
-  plate occupy the right; and the eight igniter channels run along the bottom,
-  CH1 leftmost. The siren, battery and LED strip live inside the case, behind the
-  plate.</figcaption>
+  port is top left behind a grommet; and the bottom row runs CH1…CH8 left to right,
+  ending at the SAFE/ARM/HOT key plate — with the on/off toggle on its small red
+  plate directly above the key plate. The siren, battery and LED strip live inside
+  the case, behind the plate.</figcaption>
 </figure>
 
 <table>
   <thead><tr><th style="width:26%">Control / indicator</th><th>Function</th></tr></thead>
   <tbody>
     <tr><td><strong>Base arm key switch</strong></td>
-        <td>The brass-barrel key switch on the red plate, lower right of the panel. An SPDT key switch wired in series with the arm relay coil. In SAFE it physically breaks the coil circuit, so the arm relay cannot energise no matter what the firmware does. This is the LCO’s control, and the key lives on the lanyard, not in the switch.</td></tr>
+        <td>The brass-barrel key switch on the red plate at the right-hand end of the channel row — the on/off toggle plate sits directly above it. An SPDT key switch wired in series with the arm relay coil. In SAFE it physically breaks the coil circuit, so the arm relay cannot energise no matter what the firmware does. This is the LCO’s control, and the key lives on the lanyard, not in the switch.</td></tr>
     <tr><td><strong>Green lamp “SAFE”</strong></td>
         <td>On the key plate, engraved <span class="pill">SAFE</span> at the upper left of the barrel. Lit when the base arm key is in SAFE. <strong>Powered directly from the battery through the switch contacts</strong> — it works with the ESP32 crashed, hung or unpowered.</td></tr>
     <tr><td><strong>Red lamp “ARM”</strong></td>
@@ -1047,7 +1071,7 @@ link. There is no wire between the firing point and the pad.</p>
     <tr><td><strong>Channel modules CH1–CH8</strong></td>
         <td>Eight identical red modules along the bottom of the plate, numbered CH1–CH8 from the left. Each carries two indicator lenses at the <span class="pill">IGN</span> and <span class="pill">FIRE</span> markings and a yellow XT60 socket for the igniter clips — <strong>CH1 is the leftmost module, not the rightmost</strong>. When idle, each channel’s relay rests on its NC contact, which routes the igniter to the continuity sense circuit rather than the fire bus.</td></tr>
     <tr><td><strong>On/off switch</strong></td>
-        <td>The silver toggle on the small red plate at the top right, engraved <span class="pill">ON</span> above and <span class="pill">OFF</span> below. Wired inline with the battery. It <strong>physically cuts pack power</strong> when off. This is the switch to reach for when a base unit must be killed — see the danger note in §5.11.</td></tr>
+        <td>The silver toggle on the small red plate directly above the key plate, engraved <span class="pill">ON</span> above and <span class="pill">OFF</span> below. Wired inline with the battery. It <strong>physically cuts pack power</strong> when off. This is the switch to reach for when a base unit must be killed — see the danger note in §5.11.</td></tr>
     <tr><td><strong>SMA antenna connector</strong></td>
         <td>External antenna for the 2.4 GHz link, on a bulkhead at the far left of the plate at mid-height. <strong>Never power the unit up without the antenna fitted.</strong> Antenna height and clear line of sight do far more for range than anything in the firmware.</td></tr>
     <tr><td><strong>USB port</strong></td>
