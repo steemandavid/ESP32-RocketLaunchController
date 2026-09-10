@@ -1036,9 +1036,11 @@ available on this hardware.
 >    200 ms chirp after a successful boot (`SIREN_BOOT_TEST`, §12.2), by
 >    operator request. The two are different things and both remain true: no
 >    sound the firmware did not order, and one sound it did. Since fw 1.2.4 the
->    base also blips for 100 ms each time an igniter is connected
->    (`SIREN_IGNITER_CONNECTED`, §12.2) — again commanded, again by operator
->    request, and again leaving the power-on property untouched.
+>    base also blips for 100 ms each time an igniter is connected —
+>    `SIREN_IGNITER_CONNECTED` (one blip) or, since fw 1.2.5,
+>    `SIREN_IGNITER_MARGINAL` (two) for a high-resistance connection, §12.2 —
+>    again commanded, again by operator request, and again leaving the
+>    power-on property untouched.
 
 #### 5.4.9 Arm Relay Output (GPIO 47)
 
@@ -2961,6 +2963,25 @@ Siren control is managed directly by the base state machine. The siren SHALL be 
 > - The siren flyback diode (§5.4.8) now switches once per sequence instead of once per second, which removes the repetitive-avalanche concern the 1 Hz pattern raised.
 >
 > LINK_LOST and ERROR remain **patterned** (500/500 × 4 cycles, and 3 × 200 ms blasts). Those patterns carry meaning — they distinguish a fault from an armed pad — and they are short enough that the modulation interference does not matter.
+
+**One-shot blips (added v1.53, extended v1.57/v1.58).** `SIREN_BOOT_TEST`,
+`SIREN_IGNITER_CONNECTED` and `SIREN_IGNITER_MARGINAL` are one-shots rather
+than repeating patterns: the siren is driven ON and the same `esp_timer`
+callback that runs the patterns drives it OFF after the required number of
+half-periods. The two connection blips differ from every other siren entry
+point in one respect that is safety-relevant and SHALL be preserved: they are
+the only sounds triggered by an *external event* (somebody connecting an
+igniter) rather than by a state transition, so they are the only ones that can
+arrive at an arbitrary moment. The driver SHALL therefore **decline** a
+connection blip whenever the siren is already sounding — a continuous
+ARMED/PRE_FIRE/FIRING tone or a running LINK_LOST/ERROR/CONTINUITY_LOST
+pattern — instead of taking the output over as the other entry points do.
+Taking it over would end by driving the siren OFF at the blip's first tick,
+cutting an alert short or silencing the pad's continuous fire-path-live
+warning. This guard is required **in addition to** the FSM's BOOT/IDLE state
+gate (§7.3.1 step 5): the gate alone makes the property depend on one switch
+statement staying correct, and the cost of it being wrong is a silent armed
+pad.
 
 **Pattern cancellation (added v1.31, review finding N2).** The pulsing patterns run on an `esp_timer` callback while every pattern change is made from task context. `esp_timer_stop()` does **not** cancel a callback that has already been dispatched — only `esp_timer_delete()` waits, and that cannot be called from a path holding the lock the callback wants. Serialising the pattern state under a mutex is therefore **not sufficient**: a callback can be parked on the lock while a task reconfigures the pattern underneath it, and then act on the new state as if it were the old one.
 

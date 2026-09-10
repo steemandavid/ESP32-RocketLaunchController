@@ -167,6 +167,21 @@ operations manual (the connection procedure now reads one blip / two blips /
 silence, with a "two short blips are not the three-blast alarm" caution), field
 reference card, `Development_Progress.md`, `README.md`, project summary.
 
+Closing pass over the two places that still described only the 1.2.4 half:
+
+- **§5.4.8** — the "silent at power-on" amendment now names both connection
+  blips, not just the single one.
+- **§12.3** — a new *One-shot blips* paragraph, placed immediately before the
+  v1.31 N2 pattern-cancellation note because it is the same hazard seen from
+  the other side. It states as a requirement the thing that is easy to lose in
+  a later refactor: the connection blips are the only siren sounds triggered by
+  an **external event** rather than a state transition, so they are the only
+  ones that can arrive at an arbitrary moment, and the driver must **decline**
+  rather than take the output over — otherwise the blip's own drive-off ends an
+  alert early or silences the continuous armed warning. The driver guard is
+  required *in addition to* the FSM state gate, because the gate alone makes a
+  silent armed pad depend on one switch statement staying correct.
+
 
 ## 2026-09-01 — fw 1.2.3: base boot chirp; user docs redrawn from the final base front plate
 
