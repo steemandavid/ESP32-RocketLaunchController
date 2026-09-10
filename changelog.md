@@ -74,20 +74,42 @@ FSD §12.2).
 - **`README.md`**, **`RLC_Project_Summary.md`** — version status, and a
   plain-language paragraph on what the blip means and what stays silent.
 
+### Flashed and verified on target — T-A21 PASS
+
+Both units flashed 1.2.4 and linked. Identity confirmed by `read_mac` before
+flashing, per the standing rule that ports are addressed by stable by-id:
+
+| Unit | Port (by-id) | MAC |
+|---|---|---|
+| Base | `usb-1a86_USB_Single_Serial_5B5E042156-if00` | `44:1b:f6:81:f1:70` |
+| Remote | `usb-1a86_USB_Single_Serial_5B5E043219-if00` | `ac:a7:04:e2:f2:8c` |
+
+Base boot: `=== RLC Base Unit v1.2.4 ===`, 12/12 self-test suites PASS,
+`LINK_REQUEST from remote fw 1.2.4` → `BOOT -> IDLE`, rssi −33/−34, vbat
+12.16 V, `err=0x00`. The strict three-component version check passing is itself
+the confirmation that the remote took 1.2.4.
+
+**T-A21 PASS** — the blip and all six suppression cases:
+
+- **100 ms is right.** Judged by ear at the pad: an audible tone rather than a
+  click, and not punishing at arm's length. `SIREN_CONNECT_CHIRP_MS` stands as
+  specified — the one open question from the design discussion is closed.
+- **Case (e), the safety-relevant one, passed**: with a channel ARMED,
+  connecting an igniter on another channel neither blipped nor interrupted the
+  continuous tone.
+- **Case (b) is also in the boot log** — a load was already on ch1 at power-on
+  and `I (1275) rlc_cont: ch1: band 0 -> 1 (205000 uV)` produced no chirp line.
+  Both defences were in force at that instant (the `initial` flag, and the 2 s
+  post-init inhibit running to ~3265 ms), so the log cannot attribute the
+  suppression to one or the other; T-FSM10 separates them.
+
 ### Still to do
 
-- **Flash both units** (strict version check covers all three components).
-  Nothing was flashed this session — no `/dev/serial/by-id/` on the build
-  machine, i.e. neither unit was plugged in. Both are still on 1.2.3.
-- **T-A21 on target**: blip length by ear first (`SIREN_CONNECT_CHIRP_MS` is
-  the knob — 100 ms is an estimate between "punishing at arm's length" and "a
-  click, because the sweep never starts"), then the six suppression cases, of
-  which case (e) is the safety-relevant one: with a channel ARMED, connecting
-  an igniter elsewhere must neither blip nor interrupt the continuous tone.
-- **Decide on MARGINAL** once the blip has been heard in the field. A distinct
-  pattern for a bad crimp is arguably the more useful half of the feature; it
-  needs to stay distinguishable from the 3-blast ERROR and CONTINUITY_LOST
-  alerts.
+- **Decide on MARGINAL.** A distinct pattern for a bad crimp is arguably the
+  more useful half of the feature — it would tell the operator about a poor
+  connection without walking back — and it was deferred precisely until the
+  CONNECTED blip had been heard in the field, which it now has. It needs to
+  stay distinguishable from the 3-blast ERROR and CONTINUITY_LOST alerts.
 
 ## 2026-09-01 — fw 1.2.3: base boot chirp; user docs redrawn from the final base front plate
 
