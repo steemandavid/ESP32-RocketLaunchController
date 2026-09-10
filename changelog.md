@@ -15,10 +15,19 @@ side by side behind the grommet"*. The photograph shows the panel's top edge as
 unbroken brushed aluminium and mounting screws, from the antenna at the left to
 the on/off plate at the right. There is no socket on it.
 
-The ESP32's two ports are on the board **inside** the case; a service cable is
-routed in over the panel's top edge. v1.54's original position — service access
-by opening the case, charger not brought out — is reinstated and extended to
-both ports.
+**Where the claim came from, and why it was wrong.** v1.56 cited the whole-panel
+Visio drawing, and that drawing really does carry annotations reading
+`Usb com connector` and `Usb jtag connector` — so this was a misreading, not an
+invention. Extracting the labelled shapes shows those two sit in the drawing's
+**interior** group, alongside `battery`, `siren` and `XT60 battery connector`,
+not with the panel items (`On/off switch`, the key-plate LEDs, `antenna`). They
+annotate the **ESP32 board's own two ports inside the case**, which is exactly
+what the photograph shows. v1.56 read an interior annotation as a panel feature.
+
+The ESP32's two ports are therefore on the board **inside** the case; a service
+cable is routed in over the panel's top edge. v1.54's original position — service
+access by opening the case, charger not brought out — is reinstated and extended
+to both ports.
 
 ### 2. The key-plate engraving does not name the lamps, except HOT (v1.54 withdrawn)
 
@@ -33,10 +42,13 @@ As built:
   must be identified **by position**: HOT left, SAFE lower centre, ARM lower
   right.
 
-The mapping is not a guess. The photograph was taken with the base idle and the
-key at ARM (`arm=0 key=1` in the console): lower-right lit red, lower-centre
-dark, HOT dark. That is exactly what the two-break design predicts — the key
-alone does not make the pad live — so the state corroborates the positions.
+The mapping is not a guess, and it has two independent confirmations. The
+photograph was taken with the base idle and the key at ARM (`arm=0 key=1` in the
+console): lower-right lit red, lower-centre dark, HOT dark — exactly what the
+two-break design predicts, since the key alone does not make the pad live. And
+the Visio drawing names the lamps itself (`SAFE LED`, `ARM LED` / `ARMED LED`,
+`HOT`) and places SAFE and ARM at the same height with SAFE to the left of ARM,
+and HOT higher and further left — the same geometry.
 
 ### Also corrected
 
@@ -67,6 +79,19 @@ resting display, and end-to-end proof the strip and its per-channel mapping work
   link loss 1.5 s, 30 % ping-loss threshold, ~200 m. All correct.
 - Figure 3 was rendered to PNG and inspected, not just hand-edited; both HTML
   documents re-parsed for tag balance.
+
+### Memory corrected
+
+The fileshare memory said Rocketry assets live under
+`/storage/fileshare/Rocketry/ESP32 Rocket Launch Controller/`. That folder did
+not exist today, and `baseunit.jpg` was dropped in the fileshare **root** — so
+the memory now says to search the root rather than assume a subfolder. It also
+now records what settled the USB question: the full-size panel drawings live on
+`/mnt/netwerkdrive`, which is *not* in sync with `/storage/fileshare` (the
+fileshare copy of "Base front panel layout.svg" is a stale 6.7 KB
+single-module detail — a different drawing under the same name), and that the
+Visio SVG's labelled shapes group by location, which is how the interior-vs-panel
+distinction was resolved.
 
 ### Recorded as outstanding, not fixed
 
