@@ -1,5 +1,48 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-10 — second range test: 430 m at −91 dBm; d⁴ prediction retired
+
+David flew a second range test in the same geometry class as the 2026-08-25
+run: base on the ground, external antennas on both units. Result:
+**430 m holding at −91 dBm** — more than double the earlier distance at a
+*stronger* reported RSSI, with 5–8 dB of margin left against the −96 to
+−99 dBm drop-out window.
+
+### What this does to the v1.33 model claim
+
+The 200 m @ −93 dBm point matched the two-ray (d⁴) model to 0.5 dB, and v1.33
+extrapolated from it that the geometry "runs out at ~250–260 m". The new
+measurement beats that extrapolation by ~15 dB (d⁴ predicts ~−106 dBm at
+430 m). The model fitted one point but underestimated the real link — remote
+height above ground and ground conditions evidently depart from the ideal
+two-ray case. FSD §6.1 now records d⁴ as a **pessimistic bound, not a
+prediction**; the v1.33 height guidance (raising both ends to ~1.5 m ≈ +30 dB)
+stands. Both RSSI figures are flagged as not strictly comparable across
+sessions (uncalibrated, compressed in the high −90s).
+
+### Files changed (documentation only; fw stays 1.2.7)
+
+| File | Change |
+|---|---|
+| `RLC_Functional_Specification_v1_14.md` | v1.61 → **v1.62**: new revision row; §6.1 Range rewritten around both measurements |
+| `README.md` | Headline range now "measured 430 m at −91 dBm" |
+
+### Blog posts updated and redeployed (steeman.be)
+
+Both controller posts were updated with the new measurement and now
+cross-link each other (the announcement previously only *promised* the
+deep-dive; that promise is now a link):
+
+- `esp32-wireless-rocket-launch-controller` — intro + range-testing section
+  rewritten (both tests, margin, the pessimistic-model story, RSSI caveat)
+- `esp32-rocket-launch-controller-deep-dive` — radio-protocol section updated
+  the same way
+
+Deployed with `hugo --gc --minify` + lftp mirror; both post URLs verified 200
+live, new figures and both cross-links present in the served HTML. Website
+changelog `changelogs/2026-09-10-esp32-rocket-launch-controller-blog-post.md`
+appended.
+
 ## 2026-09-10 — as-built panel re-verified from a new photo; docs production pass
 
 New photograph of the open base case (`baseunit.jpg` on the fileshare →

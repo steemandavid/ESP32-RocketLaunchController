@@ -3,7 +3,7 @@
 A two-unit wireless launch controller for model rocketry, built on the ESP32-S3.
 A **base unit** sits at the pad wired to up to 8 igniter channels; a handheld
 **remote unit** controls it over an encrypted ESP-NOW link from a safe distance
-(~200 m design target; measured 200 m at −93 dBm with external antennas, base on the ground — see FSD §6.1, where range near the ground is d⁴-limited and height matters far more than radio).
+(~200 m design target; measured 430 m at −91 dBm with external antennas, base on the ground — see FSD §6.1 for both range tests: near the ground the d⁴ model is a pessimistic bound, and antenna height matters far more than radio power).
 
 Developed for use with **VRO — Vlaamse Raket Organisatie**.
 
