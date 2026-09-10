@@ -442,17 +442,22 @@ status strip. Remote: 2S 2200 mAh LiPo, rotary encoder, arm switch, fire button,
 buzzer, ILI9488 480×320 SPI display, 8-pixel status strip. Pin assignments are in
 `components/rlc_common/include/pin_config.h` and FSD §5.
 
-The base's front plate as built (see the manual §3.2, Figure 3): SMA antenna
-bulkhead far left, the two USB service sockets (COM and JTAG) top left, and a
-bottom row of eight red channel modules — **CH1 leftmost**, each with a
-NeoPixel continuity lens (the IGN lens — the base's 8-pixel strip is mounted
-on the plate as those lenses), a fire-relay lens and a yellow XT60 igniter
-socket — ending at the red key plate
-with the brass-barrel arm key and its three engraved passive lamps, **SAFE /
-ARM / HOT** (HOT = arm relay live, the pad-is-live lamp that works even with
-the ESP32 crashed). The battery on/off toggle sits on a small red plate
-directly above the key plate. Siren and battery live inside the case; the
-status strip does not — its pixels are the IGN lenses on the plate.
+The base's front panel as built (see the manual §3.2, Figure 3; photograph at
+`docs/reference/RLC_base_open_case.jpg`): the panel spans the lower half of the
+**case base**, with an SMA antenna bulkhead far left at mid-height and a bottom
+row of eight red channel modules — **CH1 leftmost**, each reading top to bottom
+CHn / `IGN` / IGN lens / `FIRE` / FIRE lens / yellow XT60 socket. The IGN lens
+is that channel's NeoPixel, so the base's 8-pixel strip is mounted on the panel
+as those eight lenses; the FIRE lens below it is a plain relay indicator. The
+row ends at the red key plate carrying the barrel arm key — a chrome barrel with
+a white face, not brass as v1.54 described it. On that plate
+**SAFE and ARM are engraved across the top as the two key positions**, not as
+lamp names; the three passive lamps sit lower and are identified by position —
+**HOT** under its own engraving at the left (arm relay live: the pad-is-live
+lamp that works even with the ESP32 crashed), **SAFE** lower centre, **ARM**
+lower right. The battery on/off toggle sits on a small red plate directly above
+the key plate. **The panel carries no USB socket** — the siren, battery, charger
+and the ESP32's two service ports are all inside the case.
 
 ## License
 

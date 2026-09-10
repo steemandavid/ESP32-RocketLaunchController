@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.60
+**Version:** 1.61
 **Date:** 2026-09-10
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -74,6 +74,7 @@
 | 1.58 | 2026-09-10 | **§12.2 `SIREN_IGNITER_MARGINAL`; firmware 1.2.5.** The other half of v1.57's feature, deferred there until the single blip had been heard at the pad (**T-A21 PASS**, same day). A channel reaching **MARGINAL** now sounds **two** 100 ms blips against CONNECTED's one: a high-resistance crimp is the fault the operator most wants told about while still standing at the motor, and until now MARGINAL was the one band that made no sound, so a bad connection was indistinguishable from no connection by ear. Two rather than three, and 100 ms rather than 200 ms, so it cannot be heard as `SIREN_ERROR` or `SIREN_CONTINUITY_LOST` — both three 200 ms blasts, both meaning *stop* — while the shared pitch and length make the pair read as two values of one message. OPEN stays silent. **The rate limit is now per channel and per band**: a repeat of the same signal inside the window is still suppressed as chatter, but a *change* of signal always sounds, because "two blips → re-seat the crimp → one blip" is the loop the feature exists to close and a shared window would have swallowed the confirming blip. The cost is accepted deliberately: a connection oscillating across the CONNECTED/MARGINAL boundary can blip on each change, capped at one change per ~800 ms per channel by the round-robin sampler — and a connection that cannot decide which band it is in is itself something the operator needs to hear. Every v1.57 gate and suppression applies unchanged to both patterns. §7.3.1 step 5 rewritten, §14.1 note, T-A22 added. Base-only, audible-only, no protocol change. |
 | 1.59 | 2026-09-10 | **The remote's arm key switch is an SPDT, and its NC contact is on GPIO 2. Firmware 1.2.6.** Reported by the operator against the pinout this document had given them: the key's common is at ground, NO to GPIO 7, **NC to GPIO 2** — and only the NO leg had ever been recorded. **C.2 listed GPIO 2 among the remote's spare pins, "available for future expansion".** It was not spare: the NC contact hard-shorts it to ground for as long as the key sits at SAFE, so anyone accepting that documented invitation and assigning GPIO 2 as an output would have driven it into a dead short on every turn of the key. Nothing ever did — the pin was never configured — but the document was pointing at the one spare pin with a wire on it. Three corrections: **(1)** the pin is claimed, `arm_switch_init()` configuring it as a pulled-up input so it is safe in both key positions and cannot be reassigned by accident; **(2)** §5.5.2 now describes the switch as the SPDT it physically is, and C.2 lists the NC input and drops it from the spare list (**6 spare, not 7**); **(3)** the contacts are cross-checked — a healthy SPDT closes exactly one per position, so the debounced inputs are complementary, and a disagreement persisting beyond the new `ARM_SWITCH_DISAGREE_MS` (1000 ms, comfortably clear of the break-before-make gap while turning the key) raises **ARM KEY SWITCH FAULT** on the log, the buzzer and the display. That last point buys a real diagnosis: with the NO leg alone, a broken wire or a contact that no longer closes reads exactly like "key at SAFE", so the remote refuses every long-press with TURN ARM KEY FIRST while the operator looks at a key they have already turned, with nothing anywhere saying why. Deliberately **not an interlock** — `arm_switch_is_armed()` still follows the NO contact alone even while the fault is raised, because the NC joint has never been exercised and letting it veto arming would trade a silent diagnostic gap for a marginal solder joint disabling the remote at a launch. The remote's key is not in the fire path (§5.4.4), so none of this touches the fire-path safety argument. New test T-A23. Remote-only, no protocol change. |
 | 1.60 | 2026-09-10 | **The arm-key fault becomes visible where it is needed; §10.2.7a. Firmware 1.2.7.** v1.59 announced ARM KEY SWITCH FAULT with a triple beep and a 3 s toast, fired once on the edge — a transient announcement for a condition that persists until the switch is serviced, landing at the wrong moment. The sequence that exposed it: the operator turns the key, looks at the pad rather than the screen, long-presses to arm and is refused — and under v1.59 that refusal read **"TURN ARM KEY FIRST"**, telling them to turn a key they are looking at, already turned, at the exact moment they are asking why it will not arm, with the toast that would have explained it already expired. Two changes. **(1) The refusals are state-aware**: the §8.2.3 ARM guard and the §8.2.4 FIRE key-off guard now say "ARM KEY FAULT - CHECK SWITCH" / "ARM KEY FAULT - FIRE REFUSED" while the contacts disagree. The refusals themselves are unchanged and remain correct — a NO contact that fails open SHOULD read as SAFE and fail safe — only the explanation improves. **(2) The indication persists**: the status band's REMOTE field reads **KEY FAULT** instead of ARMED/SAFE for as long as the fault stands, on both the main and ARMED screens, and the main screen's prompt line reads ARM KEY FAULT - CHECK SWITCH. The field change is the important half — that field's job is to report the key position, and while the two contacts disagree the remote cannot honestly claim one. The prompt line ranks it **below** a base error (that one is about the fire path) and **above** the next-step prompt, which is exactly what this fault makes untrustworthy; the REMOTE field keeps it visible even when a base error owns the line. Deliberately **not** the §10.2.6 latched error screen: that holds until reboot, which for a maintenance warning off the fire path would be more disruptive than the fault. New §10.2.7a; §5.5.2 and T-A23 extended. Remote-only, display and wording, no protocol change. |
+| 1.61 | 2026-09-10 | **As-built panel re-verified against a new photograph of the open case; two v1.54/v1.56 claims withdrawn.** New reference photo `baseunit.jpg` (fileshare) → `docs/reference/RLC_base_open_case.jpg`, cross-checked against the existing `RLC_base_front.jpg`, which agrees on every point. **(1) The panel carries no USB socket.** v1.56's "two USB sockets at top left, side by side behind the lid grommet: COM and JTAG" is **withdrawn** — the photograph shows the panel's top edge as unbroken brushed aluminium and mounting screws from the antenna at the left to the on/off plate at the right. The ESP32's two ports are on the board inside the case; a service cable is routed in over the panel's top edge. v1.54's original position (service access by opening the case) is reinstated and extended to both ports. **(2) The key-plate engraving does not name the lamps, except HOT.** v1.54's "SAFE (green, upper left of the barrel), ARM (red, upper right), HOT (red, lower left)" is **withdrawn**: `SAFE` and `ARM` are engraved across the *top* of the plate flanking the barrel and mark the two **key positions**. Only `HOT` labels a lamp. All three lamps are **clear-lens** LEDs sitting lower on the plate and must be identified **by position** — HOT under its engraving at the left, SAFE lower centre, ARM lower right. The mapping is evidenced by the photograph taken with the base idle and the key at ARM (`arm=0 key=1`): lower-right lit red, lower-centre dark, HOT dark — the key alone does not make the pad live. Also corrected: the panel is mounted in the **case base**, not the lid (the lid hinges away empty); the key barrel is **chrome with a white face**, not brass; and each channel module's **FIRE lens is directly below the IGN lens**, not "beside" it (v1.56) — the `IGN` and `FIRE` engravings each sit immediately above their own lens. §5.4.4 and §5.4.11 as-built notes rewritten, RLC-OPS-001 Figure 3 and the cover diagram redrawn, §3.2 controls table and README conformed. §5.5 gains an **as-built verification-status note**: the remote panel has never been checked against the built unit — Figure 2 is drawn from the design file — and given that this revision withdrew a USB-socket claim on the base and v1.59 found an undocumented contact on a pin C.2 advertised as spare, the same reconciliation is outstanding for the remote. Incidental confirmation: all eight IGN lenses read amber with nothing connected — `RLC_COLOR_CONT_OPEN` on all eight, the expected resting display. Documentation-only; no firmware change (fw stays 1.2.7). |
 
 ## Table of Contents
 
@@ -827,22 +828,57 @@ All three LEDs are passive — they operate directly from VBAT through the switc
 > + GPIO 47 low → relay out, ARM SENSE 0; key ON + GPIO 47 driven → relay in,
 > ARM SENSE 1.
 > 
-> **AS-BUILT PLATE (2026-09-01, final front plate photographed —** original on
-> the fileshare, copy at `docs/reference/RLC_base_front.jpg`**):** the three
-> passive LEDs are mounted on the red key plate around the brass key barrel,
-> laser-engraved with their own names — **SAFE** (green, upper left of the
-> barrel), **ARM** (red, upper right), **HOT** (red, lower left). The plate's
-> "HOT" is this table's third lamp — the coil-energised / arm-relay-live
-> indicator — under its field name; "ARM RELAY LIVE" and "HOT" are the same
-> lamp. The operations manual (RLC-OPS-001 §3.2, Figure 3) draws the plate
-> from this photograph. On the as-built plate this key plate is the
-> **right-hand end of the bottom channel row** (vertically in line with the
-> CH modules, slightly taller than them), and the **battery on/off toggle
-> sits on a small red plate directly above the key plate**. The plate carries
-> **two USB sockets at top left, side by side behind the lid grommet: COM**
-> (the ESP32-S3's UART bridge) **and JTAG** (native USB) — either serves the
-> serial console and flashing; only the charger connector is left inside the
-> case (v1.56, confirmed against the whole-panel Visio drawing).
+> **AS-BUILT PLATE (revised 2026-09-10 from a photograph of the open case —**
+> original `baseunit.jpg` on the fileshare, copy at
+> `docs/reference/RLC_base_open_case.jpg`; the earlier
+> `docs/reference/RLC_base_front.jpg` agrees on every point below**):**
+>
+> The panel is mounted across the **lower half of the case base** — the lid
+> hinges away empty behind it, and the siren, battery and spares occupy the
+> rest of the base above the panel.
+>
+> The key plate is the **right-hand end of the bottom channel row**, level with
+> the CH modules and about the same height, and the **battery on/off toggle
+> sits on a small red plate directly above it**.
+>
+> **The engraving does not name the lamps, except for HOT.** **SAFE** and
+> **ARM** are engraved across the *top* of the key plate, flanking the barrel:
+> they mark the two **key positions**. **HOT** is engraved at the left with its
+> lamp directly beneath it. The three lamps sit lower on the plate and are all
+> **clear-lens** LEDs, so they must be identified **by position, not by lens
+> colour**:
+>
+> | Lamp | Position on the key plate | Lit when |
+> |---|---|---|
+> | HOT (this table's third lamp — "ARM RELAY LIVE" and "HOT" are the same lamp) | left, directly under the `HOT` engraving | the arm relay coil is energised, i.e. the fire bus is live |
+> | SAFE (green) | lower centre | key at SAFE |
+> | ARM (red) | lower right | key at ARM |
+>
+> The mapping is evidenced by the photograph taken with the base **idle and the
+> key at ARM** (base log `arm=0 key=1`, state IDLE): the lower-right lamp is lit
+> red, the lower-centre lamp is dark, and HOT is dark — the key alone does not
+> make the pad live, which is the two-break design working as specified.
+>
+> **v1.54's "SAFE (green, upper left of the barrel), ARM (red, upper right),
+> HOT (red, lower left)" was wrong** and is withdrawn: it read the key-position
+> engravings as lamp labels.
+>
+> **THE PANEL CARRIES NO USB SOCKET. v1.56's "two USB sockets at top left,
+> side by side behind the lid grommet" is withdrawn** — the photograph shows
+> the panel's top edge as unbroken brushed aluminium and mounting screws from
+> the antenna at the left to the on/off plate at the right. The ESP32-S3's two
+> ports (the UART bridge used as COM, and native USB) are on the board *inside*
+> the case; a service cable is routed in over the top edge of the panel. v1.54's
+> original position — service access by opening the case, charger not brought
+> out — is reinstated and extended to both ports.
+>
+> Each channel module reads, top to bottom: **CHn**, `IGN`, the **IGN lens**,
+> `FIRE`, the **FIRE lens**, then the **XT60 socket**. The FIRE lens is
+> *below* the IGN lens, not beside it (v1.56 said "beside").
+>
+> Cosmetic correction: the key barrel is **chrome with a white face**, not brass
+> (v1.54's "brass-barrel" wording, carried into RLC-OPS-001 and README, is
+> corrected in both).
 
 Both this switch AND the remote arm switch must be in the armed position for any channel to be armed.
 
@@ -1133,16 +1169,44 @@ GPIO      (10k)│
 | Driver | ESP32-S3 RMT peripheral |
 | Function | Igniter continuity display with status modulation (see §11) |
 
-> **AS-BUILT MOUNTING (2026-09-01, whole-panel Visio drawing):** the "8 external
-> pixels" are not a strip inside the case — they are mounted **on the front plate as
+> **AS-BUILT MOUNTING (2026-09-01, whole-panel Visio drawing; confirmed
+> 2026-09-10 against `docs/reference/RLC_base_open_case.jpg`):** the "8 external
+> pixels" are not a strip inside the case — they are mounted **on the front panel as
 > the IGN lenses of the eight channel modules**, each NeoPixel widened into its lens
 > through soldered connections. The IGN lens of channel N is that channel's pixel;
-> the FIRE lens beside it is a separate plain LED, not part of the strip. Electrically
+> the FIRE lens **directly below it** is a separate plain LED, not part of the strip
+> (v1.56 said "beside it" — the two lenses are stacked vertically, with the `IGN`
+> and `FIRE` engravings each sitting immediately above their own lens). Electrically
 > nothing changes — GPIO 48, one pixel per channel, data-in at the channel-1 end,
 > colours per §11 — only the physical realisation was previously recorded wrong
 > ("the LED strip live[s] inside the case", v1.54/1.55).
+>
+> The 2026-09-10 photograph shows all eight IGN lenses lit amber with nothing
+> connected, which is `RLC_COLOR_CONT_OPEN` on all eight channels — the expected
+> resting display, and incidental confirmation that the strip and its per-channel
+> mapping are working end to end.
 
 ### 5.5 Remote Unit I/O
+
+> **AS-BUILT VERIFICATION STATUS (2026-09-10): the remote panel has NOT been
+> verified against the built unit.** The base panel has now been photographed
+> twice and reconciled line by line (§5.4.4). The remote has not: RLC-OPS-001
+> Figure 2 and the layout in `docs/reference/ESP32-RLC-front-remote.svg` are
+> drawn from the **design**, not from the hardware.
+>
+> Two findings on 2026-09-10 make this worth stating rather than assuming:
+> the base panel documentation claimed two USB sockets that do not exist and
+> mislabelled all three key-plate lamps (§5.4.4, v1.61), and the remote's arm
+> key turned out to have a **second, entirely undocumented contact** on GPIO 2
+> — a pin this document was simultaneously advertising as spare (§5.5.2,
+> v1.59). Both were found by the operator looking at the hardware, neither by
+> review of the documents.
+>
+> **Action before the documentation is treated as production-final:** photograph
+> the remote panel as built and reconcile Figure 2, the §3.3 controls table and
+> Appendix C.2 against it — in particular whether the USB/COM service ports are
+> genuinely brought out to the panel, which is the same claim that proved false
+> on the base.
 
 #### 5.5.1 Rotary Encoder (Channel Selector)
 

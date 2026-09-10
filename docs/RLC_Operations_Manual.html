@@ -368,18 +368,15 @@ footer.doc {
         <text x="310" y="150" text-anchor="middle" font-size="9" fill="#6a7480">commands ⇄ status, 2 Hz heartbeat</text>
       </g>
 
-      <!-- BASE — as-built front plate: antenna far left, USB top left, on/off
-           above the key plate, key plate at the right end of the channel row -->
+      <!-- BASE — as-built front panel: antenna far left, on/off above the key
+           plate, key plate at the right end of the channel row. No USB socket
+           on the panel (2026-09-10 photograph). -->
       <g transform="translate(430,58)">
         <rect x="0" y="0" width="180" height="147" rx="7" fill="#d8dde2" stroke="#16191d" stroke-width="2"/>
         <!-- countersunk screws -->
         <g fill="#aab4bd">
           <circle cx="60" cy="10" r="2.5"/><circle cx="95" cy="10" r="2.5"/><circle cx="175" cy="10" r="2.5"/>
         </g>
-        <!-- USB service sockets (COM + JTAG) + grommet, top left -->
-        <circle cx="24" cy="14" r="3.5" fill="#2a2e33" stroke="#8b98a5"/>
-        <rect x="32" y="9" width="13" height="9" rx="1.5" fill="#c9ced4" stroke="#16191d" stroke-width="0.8"/>
-        <rect x="48" y="9" width="13" height="9" rx="1.5" fill="#c9ced4" stroke="#16191d" stroke-width="0.8"/>
         <!-- SMA antenna, far left at mid-height -->
         <line x1="22" y1="80" x2="4" y2="72" stroke="#2a2e33" stroke-width="2.4" stroke-linecap="round"/>
         <circle cx="22" cy="80" r="8" fill="#e8ecf0" stroke="#16191d" stroke-width="1.2"/>
@@ -387,7 +384,7 @@ footer.doc {
         <circle cx="22" cy="80" r="1.4" fill="#c9a227"/>
         <!-- interior note -->
         <text x="78" y="52" text-anchor="middle" font-size="7" fill="#6a7480">8 IGNITER CHANNELS</text>
-        <text x="78" y="64" text-anchor="middle" font-size="7" fill="#6a7480">SIREN · LiPo INSIDE</text>
+        <text x="78" y="64" text-anchor="middle" font-size="7" fill="#6a7480">SIREN · LiPo · USB INSIDE</text>
         <!-- on/off toggle plate, directly above the key plate -->
         <rect x="124" y="16" width="38" height="20" rx="2.5" fill="#b0192f" stroke="#7a0f20" stroke-width="1"/>
         <circle cx="143" cy="26" r="3.2" fill="#c9ced4" stroke="#16191d" stroke-width="0.9"/>
@@ -449,7 +446,7 @@ footer.doc {
 
   <dl class="cover-meta">
     <div><dt>Document</dt><dd>RLC-OPS-001 · Operations Manual</dd></div>
-    <div><dt>Applies to firmware</dt><dd>1.2.1 (both units, byte-identical)</dd></div>
+    <div><dt>Applies to firmware</dt><dd>1.2.7 (both units, byte-identical)</dd></div>
     <div><dt>Specification of record</dt><dd>RLC Functional Specification v1.47</dd></div>
     <div><dt>Issued</dt><dd>2026-08-29</dd></div>
     <div><dt>Operating organisation</dt><dd>VRO — Vlaamse Raket Organisatie</dd></div>
@@ -569,7 +566,7 @@ person depending on your club’s practice:</p>
 
 <h3><span class="num">1.3</span> Applicability and version matching</h3>
 
-<p>This manual documents <strong>firmware 1.2.1</strong>. Both units run one
+<p>This manual documents <strong>firmware 1.2.7</strong>. Both units run one
 codebase and check each other’s version at link-up; a mismatch in any digit of
 <code>MAJOR.MINOR.PATCH</code> refuses the link outright and the remote shows a
 <strong>FIRMWARE MISMATCH</strong> screen. There is no partial-compatibility mode
@@ -880,8 +877,9 @@ link. There is no wire between the firing point and the pad.</p>
       <text x="447" y="389" text-anchor="middle" stroke="none">200 mm</text>
     </g>
   </svg>
-  <figcaption><b>Figure 2</b> Remote unit front panel, 200 × 135 mm, drawn to the
-  as-built layout with its panel legend. The display and the igniter channel strip
+  <figcaption><b>Figure 2</b> Remote unit front panel, 200 × 135 mm, drawn from
+  the panel <em>design</em> file — unlike Figure 3, it has not yet been checked
+  against the built unit. The display and the igniter channel strip
   occupy the left half; the antenna, buzzer, power switch and service ports run
   along the top; and the three controls used during a sequence — arm key, selector,
   fire button — run down the right-hand edge in the order they are needed.</figcaption>
@@ -927,7 +925,8 @@ link. There is no wire between the firing point and the pad.</p>
       </marker>
     </defs>
 
-    <!-- ===== brushed-aluminium plate in the case lid ===== -->
+    <!-- ===== brushed-aluminium plate, mounted across the lower half of the
+         case BASE (not the lid — the lid is empty and hinges away behind) ===== -->
     <rect x="150" y="110" width="660" height="220" rx="6" fill="#d8dde2" stroke="#16191d" stroke-width="2.2"/>
 
     <!-- countersunk screws along the top edge -->
@@ -936,11 +935,13 @@ link. There is no wire between the firing point and the pad.</p>
       <circle cx="520" cy="122" r="3.5"/><circle cx="610" cy="122" r="3.5"/><circle cx="690" cy="122" r="3.5"/>
     </g>
 
-    <!-- ===== USB service sockets, top left: COM + JTAG, cables through a grommet ===== -->
-    <circle cx="212" cy="130" r="7" fill="#2a2e33" stroke="#8b98a5" stroke-width="1.4"/>
-    <path d="M212,130 C192,96 158,82 120,70" fill="none" stroke="#9aa2aa" stroke-width="5" stroke-linecap="round"/>
-    <rect x="220" y="122" width="24" height="14" rx="2" fill="#c9ced4" stroke="#16191d" stroke-width="1.2"/>
-    <rect x="250" y="122" width="24" height="14" rx="2" fill="#c9ced4" stroke="#16191d" stroke-width="1.2"/>
+    <!-- ===== service cable, entering the open case above the plate.
+         The plate itself carries NO USB sockets — see the 2026-09-10
+         photograph. The ESP32's two USB ports are inside the case and are
+         reached by opening it. ===== -->
+    <path d="M150,104 C176,84 210,74 246,66" fill="none" stroke="#9aa2aa"
+          stroke-width="5" stroke-linecap="round"/>
+    <circle cx="150" cy="104" r="5" fill="#2a2e33" stroke="#8b98a5" stroke-width="1.2"/>
 
     <!-- ===== SMA antenna, far left at mid-height, angled outward ===== -->
     <line x1="172" y1="225" x2="108" y2="213" stroke="#2a2e33" stroke-width="4" stroke-linecap="round"/>
@@ -995,25 +996,33 @@ link. There is no wire between the firing point and the pad.</p>
       <rect x="604" y="314" width="18" height="9" rx="1.5"/><rect x="673" y="314" width="18" height="9" rx="1.5"/>
     </g>
 
-    <!-- ===== key plate, right-hand end of the channel row: SAFE / ARM / HOT
-         lamps + brass barrel — slightly taller than the channel modules ===== -->
-    <rect x="721" y="238" width="80" height="90" rx="4" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
-    <text x="733" y="254" font-size="6.5" font-weight="700" fill="#fff">SAFE</text>
-    <circle cx="738" cy="261" r="3" fill="#3fa06b" stroke="#16191d" stroke-width="1"/>
-    <text x="789" y="254" text-anchor="end" font-size="6.5" font-weight="700" fill="#fff">ARM</text>
-    <circle cx="784" cy="261" r="3" fill="#d9435c" stroke="#16191d" stroke-width="1"/>
-    <text x="733" y="320" font-size="6.5" font-weight="700" fill="#fff">HOT</text>
-    <circle cx="738" cy="309" r="3" fill="#d9435c" stroke="#16191d" stroke-width="1"/>
-    <circle cx="760" cy="283" r="15" fill="#c9a227" stroke="#8a6d12" stroke-width="1.8"/>
-    <circle cx="760" cy="283" r="10" fill="#b8901d"/>
-    <line x1="760" y1="283" x2="770" y2="291" stroke="#4a3a06" stroke-width="3" stroke-linecap="round"/>
+    <!-- ===== key plate, right-hand end of the channel row, drawn from the
+         2026-09-10 photograph.
+         SAFE and ARM are engraved ACROSS THE TOP, flanking the barrel: they
+         are the two key POSITIONS, not lamp labels. HOT is engraved at the
+         left with its lamp directly beneath it. The other two lamps sit lower
+         down — SAFE lower-centre, ARM lower-right — and all three are
+         clear-lens LEDs. ===== -->
+    <rect x="721" y="250" width="80" height="78" rx="4" fill="#b0192f" stroke="#7a0f20" stroke-width="1.4"/>
+    <text x="731" y="264" font-size="6.5" font-weight="700" fill="#fff">SAFE</text>
+    <text x="791" y="264" text-anchor="end" font-size="6.5" font-weight="700" fill="#fff">ARM</text>
+    <!-- barrel, centred and a little right, as built -->
+    <circle cx="762" cy="288" r="13" fill="#c9ced4" stroke="#6a7480" stroke-width="1.6"/>
+    <circle cx="762" cy="288" r="9" fill="#eef1f4"/>
+    <line x1="757" y1="292" x2="767" y2="284" stroke="#4a4f55" stroke-width="2.6" stroke-linecap="round"/>
+    <!-- HOT: engraving with its lamp directly below -->
+    <text x="729" y="285" font-size="6.5" font-weight="700" fill="#fff">HOT</text>
+    <circle cx="734" cy="294" r="3" fill="#8e2233" stroke="#16191d" stroke-width="1"/>
+    <!-- SAFE lamp (lower centre) and ARM lamp (lower right) -->
+    <circle cx="750" cy="315" r="3" fill="#2f6b4c" stroke="#16191d" stroke-width="1"/>
+    <circle cx="782" cy="315" r="3.4" fill="#ff2a2a" stroke="#16191d" stroke-width="1"/>
 
     <!-- ===== callouts, left ===== -->
     <g font-size="10" fill="#16191d">
-      <line x1="230" y1="118" x2="212" y2="76" stroke="#6a7480" marker-end="url(#ld2)"/>
-      <text x="215" y="44" text-anchor="end" font-weight="700">USB SERVICE SOCKETS</text>
-      <text x="215" y="56" text-anchor="end" font-size="8.5" fill="#6a7480">COM (serial console) and JTAG —</text>
-      <text x="215" y="67" text-anchor="end" font-size="8.5" fill="#6a7480">cables through a grommet</text>
+      <line x1="200" y1="84" x2="215" y2="70" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="215" y="40" text-anchor="end" font-weight="700">SERVICE ACCESS</text>
+      <text x="215" y="52" text-anchor="end" font-size="8.5" fill="#6a7480">no USB socket on the plate —</text>
+      <text x="215" y="63" text-anchor="end" font-size="8.5" fill="#6a7480">open the case to reach the board</text>
 
       <line x1="128" y1="211" x2="146" y2="158" stroke="#6a7480" marker-end="url(#ld2)"/>
       <text x="140" y="140" text-anchor="end" font-weight="700">SMA ANTENNA</text>
@@ -1026,7 +1035,7 @@ link. There is no wire between the firing point and the pad.</p>
       <text x="140" y="317" text-anchor="end" font-size="8.5" fill="#6a7480">CH1 leftmost; the IGN lens is</text>
       <text x="140" y="328" text-anchor="end" font-size="8.5" fill="#6a7480">that channel's NeoPixel —</text>
       <text x="140" y="339" text-anchor="end" font-size="8.5" fill="#6a7480">continuity colours per §3.5;</text>
-      <text x="140" y="350" text-anchor="end" font-size="8.5" fill="#6a7480">FIRE lens is the relay's;</text>
+      <text x="140" y="350" text-anchor="end" font-size="8.5" fill="#6a7480">FIRE lens below it is the relay's;</text>
       <text x="140" y="361" text-anchor="end" font-size="8.5" fill="#6a7480">yellow XT60 igniter socket</text>
     </g>
 
@@ -1042,47 +1051,59 @@ link. There is no wire between the firing point and the pad.</p>
       <text x="820" y="228" font-size="8.5" fill="#6a7480">SPDT in the arm relay’s</text>
       <text x="820" y="239" font-size="8.5" fill="#6a7480">coil drive path</text>
 
-      <line x1="787" y1="262" x2="815" y2="258" stroke="#6a7480" marker-end="url(#ld2)"/>
-      <text x="820" y="252" font-weight="700">SAFE / ARM / HOT LAMPS</text>
-      <text x="820" y="264" font-size="8.5" fill="#6a7480">three passive LEDs — copper,</text>
-      <text x="820" y="275" font-size="8.5" fill="#6a7480">not software; believe these</text>
+      <line x1="786" y1="315" x2="815" y2="300" stroke="#6a7480" marker-end="url(#ld2)"/>
+      <text x="820" y="286" font-weight="700">SAFE / ARM / HOT LAMPS</text>
+      <text x="820" y="298" font-size="8.5" fill="#6a7480">three passive LEDs — copper,</text>
+      <text x="820" y="309" font-size="8.5" fill="#6a7480">not software; believe these.</text>
+      <text x="820" y="320" font-size="8.5" fill="#6a7480">HOT under its engraving at the</text>
+      <text x="820" y="331" font-size="8.5" fill="#6a7480">left; SAFE lower centre; ARM</text>
+      <text x="820" y="342" font-size="8.5" fill="#6a7480">lower right (lit red, key at ARM)</text>
     </g>
   </svg>
-  <figcaption><b>Figure 3</b> Base unit front plate, drawn from the as-built
-  photograph (<span class="pill">docs/reference/RLC_base_front.jpg</span>; original
-  on the fileshare). The antenna sits at the far left at mid-height; the two USB
-  service sockets — COM and JTAG — are top left behind a grommet; and the bottom
-  row runs CH1…CH8 left to right, ending at the SAFE/ARM/HOT key plate — with the
-  on/off toggle on its small red plate directly above the key plate. The siren and
-  battery live inside the case, behind the plate; the LED strip does not — its
-  eight pixels are the IGN lenses on the channel modules.</figcaption>
+  <figcaption><b>Figure 3</b> Base unit front panel, redrawn 2026-09-10 from a
+  photograph of the open case (<span class="pill">docs/reference/RLC_base_open_case.jpg</span>,
+  with the earlier <span class="pill">RLC_base_front.jpg</span> agreeing on every
+  point). The panel is mounted across the lower half of the <b>case base</b> — the
+  lid hinges away empty behind it. The antenna is at the far left at mid-height;
+  the bottom row runs CH1…CH8 left to right, ending at the key plate, with the
+  on/off toggle on its small red plate directly above it. On each channel module
+  the IGN lens sits between the <span class="pill">IGN</span> and
+  <span class="pill">FIRE</span> engravings and the FIRE lens directly below
+  <span class="pill">FIRE</span>, with the XT60 socket at the bottom. On the key
+  plate, <span class="pill">SAFE</span> and <span class="pill">ARM</span> are
+  engraved across the top as the two <em>key positions</em>; the three lamps are
+  lower — HOT beneath its own engraving at the left, SAFE lower centre, ARM lower
+  right (shown lit, as photographed with the key at ARM and the base idle).
+  <b>The panel carries no USB socket</b>; the siren, battery and service ports are
+  all inside the case. The LED strip is on the panel, though — its eight pixels
+  are the IGN lenses.</figcaption>
 </figure>
 
 <table>
   <thead><tr><th style="width:26%">Control / indicator</th><th>Function</th></tr></thead>
   <tbody>
     <tr><td><strong>Base arm key switch</strong></td>
-        <td>The brass-barrel key switch on the red plate at the right-hand end of the channel row — the on/off toggle plate sits directly above it. An SPDT key switch wired in series with the arm relay coil. In SAFE it physically breaks the coil circuit, so the arm relay cannot energise no matter what the firmware does. This is the LCO’s control, and the key lives on the lanyard, not in the switch.</td></tr>
+        <td>The barrel key switch — chrome barrel, white face — on the red plate at the right-hand end of the channel row — the on/off toggle plate sits directly above it. An SPDT key switch wired in series with the arm relay coil. In SAFE it physically breaks the coil circuit, so the arm relay cannot energise no matter what the firmware does. This is the LCO’s control, and the key lives on the lanyard, not in the switch.</td></tr>
+    <tr><td><strong>Key plate engraving</strong></td>
+        <td><span class="pill">SAFE</span> and <span class="pill">ARM</span> are engraved across the <em>top</em> of the plate, flanking the barrel: they mark the two <strong>key positions</strong>, not the lamps. Only <span class="pill">HOT</span> engraves a lamp — it sits at the left with its lamp directly beneath. The three lamps are all clear-lens LEDs, so <strong>identify them by position, not by lens colour</strong>: HOT at the left under its engraving, SAFE lower centre, ARM lower right.</td></tr>
     <tr><td><strong>Green lamp “SAFE”</strong></td>
-        <td>On the key plate, engraved <span class="pill">SAFE</span> at the upper left of the barrel. Lit when the base arm key is in SAFE. <strong>Powered directly from the battery through the switch contacts</strong> — it works with the ESP32 crashed, hung or unpowered.</td></tr>
+        <td>The lower-centre lamp on the key plate. Lit when the base arm key is in SAFE. <strong>Powered directly from the battery through the switch contacts</strong> — it works with the ESP32 crashed, hung or unpowered.</td></tr>
     <tr><td><strong>Red lamp “ARM”</strong></td>
-        <td>On the key plate, engraved <span class="pill">ARM</span> at the upper right of the barrel. Lit when the base arm key is in ARM. Also passive.</td></tr>
+        <td>The lower-right lamp on the key plate. Lit when the base arm key is in ARM. Also passive. This is the lamp shown lit in Figure 3.</td></tr>
     <tr><td><strong>Red lamp “HOT” (arm relay live)</strong></td>
-        <td>On the key plate, engraved <span class="pill">HOT</span> at the lower left of the barrel. Wired across the arm relay coil. Lit only when the base arm key <em>and</em> the firmware are both driving the relay — i.e. when battery voltage is on the fire bus. Also passive. <strong>Treat this lamp as the definitive statement that the pad is live.</strong></td></tr>
+        <td>The left-hand lamp on the key plate, directly below the <span class="pill">HOT</span> engraving. Wired across the arm relay coil. Lit only when the base arm key <em>and</em> the firmware are both driving the relay — i.e. when battery voltage is on the fire bus. Also passive. <strong>Treat this lamp as the definitive statement that the pad is live.</strong> Note it is dark in Figure 3 even though the key is at ARM: the key alone does not make the pad live, which is the whole point of the two-break design.</td></tr>
     <tr><td><strong>Siren</strong></td>
         <td>Mounted inside the case, behind the plate — you hear it, you don’t see it. Sounds continuously from arming through the end of the fire pulse. Short patterns signal link loss (4 × 500 ms), an error state (3 × 200 ms) and a continuity-loss disarm (3 × 200 ms). A single 200 ms chirp at the end of boot says the unit came up healthy and the siren itself has just been proven. Shorter 100 ms blips mark each igniter as it is connected while the base is idle — one for a good connection, two for a marginal one (fw 1.2.4/1.2.5) — never while it is armed, where nothing may interrupt the continuous warning.</td></tr>
     <tr><td><strong>LED strip</strong></td>
-        <td>Eight pixels, one per channel, showing live locally-measured continuity. Mounted on the plate: each channel's <strong>IGN lens is its pixel</strong> (the FIRE lens beside it is separate). Channel 1 is at the data-in end on the base.</td></tr>
+        <td>Eight pixels, one per channel, showing live locally-measured continuity. Mounted on the plate: each channel's <strong>IGN lens is its pixel</strong> (the FIRE lens directly below it is a separate plain LED). Channel 1 is at the data-in end on the base.</td></tr>
     <tr><td><strong>Channel modules CH1–CH8</strong></td>
-        <td>Eight identical red modules along the bottom of the plate, numbered CH1–CH8 from the left. Each carries indicator lenses at the <span class="pill">IGN</span> and <span class="pill">FIRE</span> markings and a yellow XT60 socket for the igniter clips — the IGN lens is that channel's NeoPixel pixel and shows the continuity colours of §3.5, the FIRE lens is the relay indicator — and <strong>CH1 is the leftmost module, not the rightmost</strong>. When idle, each channel’s relay rests on its NC contact, which routes the igniter to the continuity sense circuit rather than the fire bus.</td></tr>
+        <td>Eight identical red modules along the bottom of the plate, numbered CH1–CH8 from the left. Read each module top to bottom: the channel number, <span class="pill">IGN</span>, the IGN lens, <span class="pill">FIRE</span>, the FIRE lens, then the yellow XT60 socket for the igniter clips. The IGN lens is that channel's NeoPixel pixel and shows the continuity colours of §3.5; the FIRE lens below it is the relay indicator. <strong>CH1 is the leftmost module, not the rightmost</strong>. When idle, each channel’s relay rests on its NC contact, which routes the igniter to the continuity sense circuit rather than the fire bus.</td></tr>
     <tr><td><strong>On/off switch</strong></td>
         <td>The silver toggle on the small red plate directly above the key plate, engraved <span class="pill">ON</span> above and <span class="pill">OFF</span> below. Wired inline with the battery. It <strong>physically cuts pack power</strong> when off. This is the switch to reach for when a base unit must be killed — see the danger note in §5.11.</td></tr>
     <tr><td><strong>SMA antenna connector</strong></td>
         <td>External antenna for the 2.4 GHz link, on a bulkhead at the far left of the plate at mid-height. <strong>Never power the unit up without the antenna fitted.</strong> Antenna height and clear line of sight do far more for range than anything in the firmware.</td></tr>
-    <tr><td><strong>USB port</strong></td>
-        <td>The ESP32-S3’s native USB, on the JTAG socket at the top left of the plate; the service cables pass through a grommet in the case lid. Firmware flashing and the serial console. Not used in normal operation.</td></tr>
-    <tr><td><strong>COM port</strong></td>
-        <td>The ESP32-S3’s UART bridge, on the COM socket at the top left of the plate, beside the JTAG socket. Either socket serves the serial console and flashing; not used in normal operation.</td></tr>
+    <tr><td><strong>USB / COM ports (service)</strong></td>
+        <td><strong>Not brought out on the panel.</strong> The 2026-09-10 photograph of the open case shows the panel’s top edge as plain aluminium and mounting screws — there is no socket on it. The ESP32-S3’s two ports (the UART bridge used as COM, and the native USB) are on the board <em>inside</em> the case, reached by opening it, and a service cable is routed in over the top edge of the panel. Firmware flashing and the serial console only; never touched in normal operation. Charging is likewise done with the case open.</td></tr>
     <tr><td><strong>Charger connector</strong></td>
         <td>Balance connector for the 3S pack. <strong>Not brought out on the as-built front plate</strong> — charge the pack by opening the case, and switch the unit off before charging.</td></tr>
   </tbody>
@@ -1844,7 +1865,7 @@ physically disconnected it.</p>
 
 <p>Stated plainly, because overstating the safety case would be worse than
 carrying these openly. Every item below is known, tracked, and unresolved at
-firmware 1.2.1.</p>
+firmware 1.2.7.</p>
 
 <table>
   <thead><tr><th style="width:32%">Limitation</th><th>What it means for you</th></tr></thead>
@@ -2035,7 +2056,7 @@ one is set.</p>
 </ul>
 
 <footer class="doc">
-  <span>RLC-OPS-001 · Operations Manual · firmware 1.2.1 · issued 2026-08-29</span>
+  <span>RLC-OPS-001 · Operations Manual · firmware 1.2.7 · issued 2026-09-10</span>
   <span>Safety questions to the RSO. Always.</span>
 </footer>
 </section>

@@ -1,5 +1,87 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-10 — as-built panel re-verified from a new photo; docs production pass
+
+New photograph of the open base case (`baseunit.jpg` on the fileshare →
+`docs/reference/RLC_base_open_case.jpg`, orientation corrected, 1600 px). Every
+claim in the panel documentation was checked against it and against the earlier
+`RLC_base_front.jpg`, which agrees on every point. **Two standing claims turned
+out to be wrong and are withdrawn.**
+
+### 1. The panel carries no USB socket (v1.56 withdrawn)
+
+v1.56 stated: *"the plate carries TWO USB sockets at top left — COM and JTAG,
+side by side behind the grommet"*. The photograph shows the panel's top edge as
+unbroken brushed aluminium and mounting screws, from the antenna at the left to
+the on/off plate at the right. There is no socket on it.
+
+The ESP32's two ports are on the board **inside** the case; a service cable is
+routed in over the panel's top edge. v1.54's original position — service access
+by opening the case, charger not brought out — is reinstated and extended to
+both ports.
+
+### 2. The key-plate engraving does not name the lamps, except HOT (v1.54 withdrawn)
+
+v1.54 recorded *"SAFE (green, upper left of the barrel), ARM (red, upper right),
+HOT (red, lower left)"*. That read the key-position engravings as lamp labels.
+As built:
+
+- `SAFE` and `ARM` are engraved **across the top**, flanking the barrel. They
+  mark the two **key positions**.
+- Only `HOT` labels a lamp, with its lamp directly beneath it.
+- All three lamps are **clear-lens** LEDs sitting lower on the plate, so they
+  must be identified **by position**: HOT left, SAFE lower centre, ARM lower
+  right.
+
+The mapping is not a guess. The photograph was taken with the base idle and the
+key at ARM (`arm=0 key=1` in the console): lower-right lit red, lower-centre
+dark, HOT dark. That is exactly what the two-break design predicts — the key
+alone does not make the pad live — so the state corroborates the positions.
+
+### Also corrected
+
+| Was | Is |
+|---|---|
+| Panel "in the case lid" | Panel is in the **case base**; the lid hinges away empty |
+| FIRE lens "beside" the IGN lens | FIRE lens is **directly below** it; each engraving sits above its own lens |
+| "brass-barrel" key switch | **Chrome** barrel, white face |
+
+Incidental confirmation from the same photo: all eight IGN lenses read amber
+with nothing connected — `RLC_COLOR_CONT_OPEN` on all eight, the expected
+resting display, and end-to-end proof the strip and its per-channel mapping work.
+
+### Production-readiness pass over the rest
+
+- **Both user documents declared "firmware 1.2.1"** — in the masthead, in §1.3
+  *Applicability and version matching*, in §5.12, and in the footers — while
+  documenting behaviour from 1.2.3 through 1.2.7. On a document whose own §1.3
+  explains that a single digit of version mismatch refuses the link, that is the
+  worst place to carry a stale number. Both now read **1.2.7**, issued
+  2026-09-10.
+- Figure 3 and the cover diagram redrawn to the photograph; §3.2 controls table
+  rewritten (new *Key plate engraving* row telling the operator to identify the
+  lamps by position, since the lenses are clear); README as-built paragraph
+  rewritten; field card conformed.
+- Operational constants quoted in the field card re-checked against
+  `rlc_config.h`: pre-fire 5 s, pulse 1 s, arm timeout 10 s, FIRE COMPLETE 10 s,
+  link loss 1.5 s, 30 % ping-loss threshold, ~200 m. All correct.
+- Figure 3 was rendered to PNG and inspected, not just hand-edited; both HTML
+  documents re-parsed for tag balance.
+
+### Recorded as outstanding, not fixed
+
+**The remote panel has never been verified against the built unit.** Figure 2
+and `ESP32-RLC-front-remote.svg` are drawn from the *design*. That was always
+true and never stated; it matters now because today's session produced two
+findings of exactly this kind — the base's phantom USB sockets above, and
+(fw 1.2.6) an entirely undocumented second contact on the remote's arm key,
+sitting on a pin the FSD was simultaneously advertising as spare. Both were
+found by the operator looking at the hardware; neither by reading the documents.
+FSD §5.5 now carries a verification-status note, and Figure 2's caption says
+plainly what it is drawn from. **The same claim that proved false on the base —
+service ports brought out to the panel — is still asserted for the remote.**
+
+
 ## 2026-09-10 — fw 1.2.7: the arm-key fault becomes visible where it is needed
 
 Prompted by the question "is there an explicit error screen coded for the arm
