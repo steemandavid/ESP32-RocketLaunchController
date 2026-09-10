@@ -7,7 +7,44 @@
 
 #pragma once
 
-/* 1.2.4 (2026-09-10): the base blips its siren each time an igniter is
+/* 1.2.5 (2026-09-10): a marginal igniter connection gets its own signal —
+ * two blips instead of one.
+ *
+ * The other half of 1.2.4's feature, deliberately deferred until the single
+ * blip had been heard at the pad (T-A21, PASS 2026-09-10). A high-resistance
+ * crimp is the fault the operator most wants to know about while still
+ * standing at the motor — it is the one that costs a launch window — and until
+ * now MARGINAL was the one band that made no sound at all, so a bad connection
+ * was indistinguishable from no connection by ear.
+ *
+ *   CONNECTED → one 100 ms blip    (SIREN_IGNITER_CONNECTED)
+ *   MARGINAL  → two 100 ms blips   (SIREN_IGNITER_MARGINAL)
+ *   OPEN      → silence, unchanged
+ *
+ * Two rather than three, and 100 ms rather than 200 ms, so it cannot be heard
+ * as `SIREN_ERROR` or `SIREN_CONTINUITY_LOST` (both three 200 ms blasts, both
+ * meaning "stop"). Counting one against two is the easiest discrimination
+ * available to someone who is deliberately not looking at anything, and the
+ * shared pitch and length make the pair read as two values of one message.
+ *
+ * The rate limit changed with it, and this is the interesting part: it is now
+ * per channel AND per band. A repeat of the same signal inside the window is
+ * still suppressed as chatter, but a *change* of signal always sounds —
+ * because "two blips, re-seat the crimp, one blip" is the exact loop this
+ * feature exists to close, and the old shared window would have swallowed the
+ * confirming blip and left the operator believing the crimp was still bad.
+ * The cost is that a connection oscillating across the CONNECTED/MARGINAL
+ * boundary can blip on each change; the round-robin sampler caps that at one
+ * change per ~800 ms per channel, and a connection that cannot decide which
+ * band it is in is itself something the operator needs to hear.
+ *
+ * Every gate and suppression from 1.2.4 applies unchanged to both patterns:
+ * BOOT and IDLE only, never on an `initial` classification, and not inside the
+ * post-fire inhibit window.
+ *
+ * Base-only, audible-only, no protocol change. Flash both units together.
+ *
+ * 1.2.4 (2026-09-10): the base blips its siren each time an igniter is
  * connected.
  *
  * Operator request: the person wiring up at the pad had no way to know a
@@ -924,5 +961,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  4
-#define RLC_VERSION_STRING "1.2.4"
+#define RLC_VERSION_PATCH  5
+#define RLC_VERSION_STRING "1.2.5"

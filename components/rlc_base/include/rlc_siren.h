@@ -80,3 +80,16 @@ void siren_boot_pulse(void);
  * silenced pad warning.
  */
 void siren_chirp_connect(void);
+
+/**
+ * Two short blips — FSD §12.2 SIREN_IGNITER_MARGINAL.
+ *
+ * Sounded when a channel's igniter appears on the continuity sense but reads
+ * MARGINAL: a connection with enough resistance that it may not fire. One blip
+ * means good, two means look at it — the operator hears the difference without
+ * walking back to the LEDs, which is the case that costs a launch window.
+ *
+ * Same gate and same refusal-while-busy behaviour as siren_chirp_connect(),
+ * which see.
+ */
+void siren_chirp_marginal(void);

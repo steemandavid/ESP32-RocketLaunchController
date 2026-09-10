@@ -1070,7 +1070,7 @@ link. There is no wire between the firing point and the pad.</p>
     <tr><td><strong>Red lamp “HOT” (arm relay live)</strong></td>
         <td>On the key plate, engraved <span class="pill">HOT</span> at the lower left of the barrel. Wired across the arm relay coil. Lit only when the base arm key <em>and</em> the firmware are both driving the relay — i.e. when battery voltage is on the fire bus. Also passive. <strong>Treat this lamp as the definitive statement that the pad is live.</strong></td></tr>
     <tr><td><strong>Siren</strong></td>
-        <td>Mounted inside the case, behind the plate — you hear it, you don’t see it. Sounds continuously from arming through the end of the fire pulse. Short patterns signal link loss (4 × 500 ms), an error state (3 × 200 ms) and a continuity-loss disarm (3 × 200 ms). A single 200 ms chirp at the end of boot says the unit came up healthy and the siren itself has just been proven. A shorter 100 ms blip marks each igniter reaching CONNECTED while the base is idle (fw 1.2.4) — never while it is armed, where nothing may interrupt the continuous warning.</td></tr>
+        <td>Mounted inside the case, behind the plate — you hear it, you don’t see it. Sounds continuously from arming through the end of the fire pulse. Short patterns signal link loss (4 × 500 ms), an error state (3 × 200 ms) and a continuity-loss disarm (3 × 200 ms). A single 200 ms chirp at the end of boot says the unit came up healthy and the siren itself has just been proven. Shorter 100 ms blips mark each igniter as it is connected while the base is idle — one for a good connection, two for a marginal one (fw 1.2.4/1.2.5) — never while it is armed, where nothing may interrupt the continuous warning.</td></tr>
     <tr><td><strong>LED strip</strong></td>
         <td>Eight pixels, one per channel, showing live locally-measured continuity. Mounted on the plate: each channel's <strong>IGN lens is its pixel</strong> (the FIRE lens beside it is separate). Channel 1 is at the data-in end on the base.</td></tr>
     <tr><td><strong>Channel modules CH1–CH8</strong></td>
@@ -1209,7 +1209,8 @@ things matter: <strong>tempo separates states from faults</strong>, and
     <tr><td>Remote</td><td>Continuous 200/200 alarm</td><td>Link lost</td></tr>
     <tr><td>Remote</td><td>Continuous 100/100 alarm</td><td>Critical fault</td></tr>
     <tr><td>Base siren</td><td>Single 200 ms chirp</td><td>Boot completed healthy — and the siren has just been proven to sound (fw 1.2.3)</td></tr>
-    <tr><td>Base siren</td><td>Single 100 ms blip</td><td>An igniter just came up CONNECTED on one channel (fw 1.2.4). Idle only — you will never hear it while the pad is armed. A marginal connection is silent.</td></tr>
+    <tr><td>Base siren</td><td>Single 100 ms blip</td><td>An igniter just came up <b>CONNECTED and good</b> on one channel (fw 1.2.4). Idle only — you will never hear it while the pad is armed.</td></tr>
+    <tr><td>Base siren</td><td>Two 100 ms blips</td><td>An igniter came up <b>MARGINAL</b> — connected, but high resistance and may not fire (fw 1.2.5). Re-make that connection and listen for the single blip. <b>Two short blips are not the three-blast alarm.</b></td></tr>
     <tr><td>Base siren</td><td>Continuous</td><td>Armed, counting down, or firing. <strong>Pad is live.</strong></td></tr>
     <tr><td>Base siren</td><td>4 × 500 ms</td><td>Link to the remote lost; the base has disarmed</td></tr>
     <tr><td>Base siren</td><td>3 × 200 ms</td><td>Error state, or a continuity-loss disarm</td></tr>
@@ -1308,9 +1309,10 @@ distance.</p>
   <li><span class="title">Short the igniter leads together until connected.</span>
     Standard practice, and unaffected by anything the controller does.</li>
   <li><span class="title">Connect one channel at a time and listen for the blip.</span>
-    The base sounds a <strong>single short siren blip</strong> as each igniter comes up CONNECTED (fw 1.2.4), so you can work at the motors without looking back at the base or the remote. The channel’s pixel and the remote’s grid step to ● CONNECTED within about a second either way.
+    The base tells you what it found, so you can work at the motors without looking back at the base or the remote: <strong>one short blip = connected and good</strong>, <strong>two blips = connected but marginal</strong> (high resistance — inspect that crimp), <strong>silence = nothing connected</strong>. The channel’s pixel and the remote’s grid follow within about a second either way.
     <span class="expect"><b>Expect</b> One blip per igniter connected, ● CONNECTED on that channel, ○ OPEN on all others.</span>
-    <span class="expect stop"><b>Investigate if</b> there is no blip. A silent connection means the channel did not reach CONNECTED — most often a marginal crimp, which reads ▲ MARGINAL and deliberately stays silent. <strong>The blip confirms a good connection; its absence is not proof of no connection</strong>, so check the strip or the remote grid before deciding.</span>
+    <span class="expect stop"><b>Two blips: re-make the connection.</b> ▲ MARGINAL is a joint with too much resistance to trust — it may not fire. Re-seat or re-crimp it and listen again: <strong>a single blip is the confirmation that the fix worked</strong>, and it will sound immediately, without waiting out any hold-off.</span>
+    <span class="expect stop"><b>Investigate if</b> you hear nothing at all — the channel did not reach either band. Count carefully: two short blips are the connection signal, three longer blasts are an alarm and mean stop.</span>
     <span class="expect stop"><b>Investigate if</b> the wrong channel changes — that is a harness mis-mapping, and it means you would fire a motor you did not select.</span></li>
   <li><span class="title">Note the channel numbers.</span>
     Write down which channel is which rocket or motor. The controller shows you a number; only you know what it is wired to.</li>

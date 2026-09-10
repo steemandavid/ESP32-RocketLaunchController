@@ -52,6 +52,7 @@ static struct {
     int     siren_continuity_calls;
     int     siren_off_calls;
     int     siren_chirp_calls;
+    int     siren_marginal_calls;
 
     bool    fire_timer_running;
     int     fire_timer_starts;
@@ -102,6 +103,7 @@ void siren_off(void)                   { hw.siren_off_calls++; hw.siren_on = fal
  * that should have gated it out still fails here rather than being masked by
  * the driver's own belt-and-braces guard. */
 void siren_chirp_connect(void)         { hw.siren_chirp_calls++; }
+void siren_chirp_marginal(void)        { hw.siren_marginal_calls++; }
 
 /* fire timer */
 void fire_timer_init(void) {}
@@ -238,7 +240,10 @@ static void reset_world(void)
     s_arm_verify_timeouts = 0;   /* MIN-02 strike counter */
     s_link_lost_pending = false;
     s_last_fire_cmd_ms = 0;
-    for (int i = 0; i < NUM_CHANNELS; i++) s_chirp_last_ms[i] = 0;
+    for (int i = 0; i < NUM_CHANNELS; i++) {
+        s_chirp_last_ms[i] = 0;
+        s_chirp_last_band[i] = 0;
+    }
     s_chirp_inhibit_until_ms = 0;
 }
 
@@ -526,16 +531,38 @@ static void t_connect_chirp(void)
     expect("BOOT + ch CONNECTED -> chirp", hw.siren_chirp_calls == 1);
     expect_state("chirp does not leave BOOT", STATE_BOOT);
 
-    /* CONNECTED only. */
+    /* MARGINAL gets its own signal (fw 1.2.5); OPEN stays silent. */
     reset_world();
     post_cont(1, CONT_MARGINAL);
+    expect("MARGINAL -> double blip, not the single one",
+           hw.siren_marginal_calls == 1 && hw.siren_chirp_calls == 0);
+    reset_world();
     post_cont(2, CONT_OPEN);
-    expect("MARGINAL and OPEN never chirp", hw.siren_chirp_calls == 0);
+    expect("OPEN never blips at all",
+           hw.siren_chirp_calls == 0 && hw.siren_marginal_calls == 0);
+
+    /* The loop the MARGINAL signal exists to close: hear two blips, re-seat
+     * the crimp, hear one. The confirming single blip must NOT be swallowed by
+     * the rate limit — a change of band always sounds. */
+    reset_world();
+    post_cont(1, CONT_MARGINAL);
+    expect("bad crimp -> two blips", hw.siren_marginal_calls == 1);
+    advance_ms(900);   /* one sampler sweep — well inside the rate limit */
+    post_cont(1, CONT_CONNECTED);
+    expect("re-seated -> single blip confirms, inside the window",
+           hw.siren_chirp_calls == 1);
+    /* ...but a repeat of the same band inside the window is still chatter. */
+    advance_ms(100);
+    post_cont(1, CONT_CONNECTED);
+    expect("repeat of the same band is still suppressed",
+           hw.siren_chirp_calls == 1);
 
     /* The sampler's first classification is not a connection being made. */
     reset_world();
     post_cont_initial(1, CONT_CONNECTED);
-    expect("initial classification does not chirp", hw.siren_chirp_calls == 0);
+    post_cont_initial(2, CONT_MARGINAL);
+    expect("initial classification does not chirp, on either band",
+           hw.siren_chirp_calls == 0 && hw.siren_marginal_calls == 0);
 
     /* ...and having been suppressed, a later real transition still chirps. */
     advance_ms(SIREN_CONNECT_CHIRP_MIN_INTERVAL_MS);
@@ -563,7 +590,9 @@ static void t_connect_chirp(void)
     arm_now(1);
     expect_state("armed for the gate check", STATE_ARMED);
     post_cont(2, CONT_CONNECTED);
-    expect("ARMED never chirps", hw.siren_chirp_calls == 0);
+    post_cont(3, CONT_MARGINAL);
+    expect("ARMED never chirps, on either band",
+           hw.siren_chirp_calls == 0 && hw.siren_marginal_calls == 0);
     expect("ARMED siren still continuous", hw.siren_on);
 
     reset_world();
@@ -571,27 +600,34 @@ static void t_connect_chirp(void)
     post_cmd(EVT_CMD_FIRE, 1);
     expect_state("pre-fire for the gate check", STATE_PRE_FIRE);
     post_cont(2, CONT_CONNECTED);
-    expect("PRE_FIRE never chirps", hw.siren_chirp_calls == 0);
+    post_cont(3, CONT_MARGINAL);
+    expect("PRE_FIRE never chirps, on either band",
+           hw.siren_chirp_calls == 0 && hw.siren_marginal_calls == 0);
 
     reset_world();
     arm_now(1);
     fire_now(1);
     expect_state("firing for the gate check", STATE_FIRING);
     post_cont(2, CONT_CONNECTED);
-    expect("FIRING never chirps", hw.siren_chirp_calls == 0);
+    post_cont(3, CONT_MARGINAL);
+    expect("FIRING never chirps, on either band",
+           hw.siren_chirp_calls == 0 && hw.siren_marginal_calls == 0);
 
     reset_world();
     post(EVT_LINK_LOST);
     expect_state("link lost for the gate check", STATE_LINK_LOST);
     post_cont(2, CONT_CONNECTED);
+    post_cont(3, CONT_MARGINAL);
     expect("LINK_LOST never chirps (its own pattern is running)",
-           hw.siren_chirp_calls == 0);
+           hw.siren_chirp_calls == 0 && hw.siren_marginal_calls == 0);
 
     reset_world();
     post(EVT_BATTERY_CRITICAL);
     expect_state("error for the gate check", STATE_ERROR);
     post_cont(2, CONT_CONNECTED);
-    expect("ERROR never chirps", hw.siren_chirp_calls == 0);
+    post_cont(3, CONT_MARGINAL);
+    expect("ERROR never chirps, on either band",
+           hw.siren_chirp_calls == 0 && hw.siren_marginal_calls == 0);
 
     /* POST_FIRE, and the re-read window after it returns to IDLE: an unfired
      * igniter reappearing as CONNECTED is not somebody plugging it in. */
@@ -601,7 +637,9 @@ static void t_connect_chirp(void)
     post(EVT_FIRE_PULSE_DONE);
     expect_state("reached POST_FIRE", STATE_POST_FIRE);
     post_cont(1, CONT_CONNECTED);
-    expect("POST_FIRE never chirps", hw.siren_chirp_calls == 0);
+    post_cont(2, CONT_MARGINAL);
+    expect("POST_FIRE never chirps, on either band",
+           hw.siren_chirp_calls == 0 && hw.siren_marginal_calls == 0);
 
     advance_ms(POST_FIRE_COOLDOWN_MS + 1);
     check_timers();

@@ -103,13 +103,70 @@ the confirmation that the remote took 1.2.4.
   post-init inhibit running to ~3265 ms), so the log cannot attribute the
   suppression to one or the other; T-FSM10 separates them.
 
-### Still to do
+## 2026-09-10 (same session) — fw 1.2.5: two blips for a marginal connection
 
-- **Decide on MARGINAL.** A distinct pattern for a bad crimp is arguably the
-  more useful half of the feature — it would tell the operator about a poor
-  connection without walking back — and it was deferred precisely until the
-  CONNECTED blip had been heard in the field, which it now has. It needs to
-  stay distinguishable from the 3-blast ERROR and CONTINUITY_LOST alerts.
+The deferred half of the feature above, taken up as soon as the single blip had
+been heard at the pad. MARGINAL was the one band that made no sound, so a
+high-resistance crimp — the fault the operator most wants told about while
+still standing at the motor — was indistinguishable from no connection by ear.
+
+    CONNECTED → one 100 ms blip     (SIREN_IGNITER_CONNECTED)
+    MARGINAL  → two 100 ms blips    (SIREN_IGNITER_MARGINAL)
+    OPEN      → silence, unchanged
+
+### What was built
+
+- **`siren_chirp_marginal()`** — two blips, 100 ms apart. Both patterns now go
+  through one `siren_chirp(blips, what)` helper, so the refuse-while-busy guard
+  lives in a single place rather than being duplicated per pattern.
+- **`maybe_chirp_connect()` → `maybe_chirp_continuity()`** — handles both
+  bands. Every 1.2.4 gate and suppression applies unchanged to both: BOOT and
+  IDLE only, never on an `initial` classification, not inside the post-fire
+  inhibit window, and never while the siren is already sounding.
+- **Host tests T-FSM10 extended** — 150 checks, 0 failures. Both patterns
+  asserted silent in all six gated states, and the re-seat case below has its
+  own test.
+
+### The two decisions worth recording
+
+- **Two short blips, not three.** Three 200 ms blasts is already `SIREN_ERROR`
+  and `SIREN_CONTINUITY_LOST` — those mean *stop*, this means *look*. Counting
+  one against two is the easiest discrimination available to someone who is
+  deliberately not looking at anything, and the shared pitch and length make
+  the pair read as two values of one message rather than two alarms. The FSD
+  now states that distinction as a **requirement on any future change to
+  either pair**, so it cannot be eroded by a later tweak.
+- **The rate limit is now per channel AND per band.** A repeat of the same
+  signal inside 2 s is still suppressed as chatter, but a *change* of signal
+  always sounds. Reason: "two blips → re-seat the crimp → one blip" is the loop
+  the feature exists to close, re-seating easily happens inside 2 s, and the
+  old band-blind window would have swallowed the confirming blip — leaving the
+  operator believing the joint was still bad. That is the worst available
+  failure for a signal whose whole premise is that nobody is watching the LEDs.
+  **Accepted cost:** a connection oscillating on the CONNECTED/MARGINAL
+  boundary can blip on each change. The round-robin sampler caps that at one
+  change per ~800 ms per channel, and a joint that cannot decide which band it
+  is in is itself something worth hearing. Reverting to a band-blind window is
+  a one-line change if the field says otherwise.
+
+### Flashed and verified — T-A22 PASS
+
+Both units flashed 1.2.5 over the same by-id ports and linked: base
+`=== RLC Base Unit v1.2.5 ===`, 12/12 self-test suites,
+`LINK_REQUEST from remote fw 1.2.5` → `BOOT -> IDLE`, rssi −23/−24, `err=0x00`.
+
+**T-A22 PASS** — two blips are countable as two and are not mistaken for the
+three-blast alarm; replacing a marginal load with a good one inside the 2 s
+window sounds the confirming single blip (the per-band limit doing its job); a
+same-band repeat inside the window stays silent; and with a channel ARMED, a
+marginal connection elsewhere produced no blips and did not break the
+continuous tone.
+
+Docs: FSD **v1.58** (§12.2 row, §7.3.1 step 5 rewritten, §14.1, T-A22),
+operations manual (the connection procedure now reads one blip / two blips /
+silence, with a "two short blips are not the three-blast alarm" caution), field
+reference card, `Development_Progress.md`, `README.md`, project summary.
+
 
 ## 2026-09-01 — fw 1.2.3: base boot chirp; user docs redrawn from the final base front plate
 

@@ -258,23 +258,49 @@ void siren_start_continuity_lost(void)
  * the continuous ARMED tone that is the pad's only audible warning. The FSM
  * does not call it from those states; this makes that non-negotiable rather
  * than a property of one switch statement. */
-void siren_chirp_connect(void)
+static void siren_chirp(uint8_t blips, const char *what)
 {
     siren_lock();
     if (s_siren_on || s_timer_active) {
         siren_unlock();
-        ESP_LOGD(TAG, "connect chirp suppressed — siren already sounding");
+        ESP_LOGD(TAG, "%s chirp suppressed — siren already sounding", what);
         return;
     }
-    s_pulse_count = 0;
+    /* N blips at SIREN_CONNECT_CHIRP_MS: the callback toggles on every tick
+     * and decrements the count on each ON→OFF edge, so a count of N yields
+     * exactly N sounded halves before the "pattern finished" branch stops the
+     * timer. (siren_boot_pulse() below uses the count-0 shortcut instead,
+     * which ends one tick sooner; the audible output of count 1 is identical.) */
+    s_pulse_count = blips;
     siren_drive(true);
     if (siren_timer_run(SIREN_CONNECT_CHIRP_MS)) {
         s_timer_active = true;
     } else {
         siren_drive(false);   /* see siren_start_link_lost() */
+        s_pulse_count = 0;
         s_timer_active = false;
     }
     siren_unlock();
+}
+
+void siren_chirp_connect(void)
+{
+    siren_chirp(1, "connect");
+}
+
+/* SIREN_IGNITER_MARGINAL: two blips, same length and spacing as the single
+ * connect blip.
+ *
+ * Two rather than three, and 100 ms rather than 200 ms, so it cannot be
+ * confused with `SIREN_ERROR` or `SIREN_CONTINUITY_LOST` (both three 200 ms
+ * blasts) — those mean "stop what you are doing", this means "look at that
+ * crimp". Counting one against two is the easiest discrimination available to
+ * someone who is not looking at anything, which is the whole point of both
+ * signals, and pairing them at the same pitch and length makes them read as
+ * two values of one message rather than two unrelated alarms. */
+void siren_chirp_marginal(void)
+{
+    siren_chirp(2, "marginal");
 }
 
 /* SIREN_BOOT_TEST: one 200 ms blast. Starting the timer with the cycle count
