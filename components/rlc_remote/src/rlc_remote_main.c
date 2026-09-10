@@ -101,6 +101,24 @@ static void on_arm_switch_change(bool armed)
     post_input_event(&evt, "arm switch");
 }
 
+/* §5.5.2: the two arm-key contacts have disagreed for longer than
+ * ARM_SWITCH_DISAGREE_MS. Not an interlock — arming still follows the NO
+ * contact — but the operator must be told, because the failure it detects is
+ * exactly the one that used to be invisible: a key that IS turned to ARM while
+ * the remote insists it is not. Announced the way every other refusal is
+ * (§7.2.9a: audible AND on the display), then left to the log. */
+static void on_arm_switch_fault(bool fault)
+{
+    if (fault) {
+        ESP_LOGE(TAG, "ARM KEY SWITCH FAULT — contacts disagree; service the key switch");
+        buzzer_play(BUZZER_BEEP_TRIPLE);
+        display_toast("ARM KEY SWITCH FAULT");
+    } else {
+        ESP_LOGW(TAG, "arm key switch fault cleared");
+        display_toast("ARM KEY OK");
+    }
+}
+
 static void on_encoder_rotate(uint8_t channel)
 {
     if (!remote_fsm_get_queue()) return;
@@ -244,6 +262,7 @@ void remote_app_main(void)
      * immediately if remote_fsm_get_queue() is still NULL. */
     fire_button_register_cb(on_fire_press, on_fire_release);
     arm_switch_register_cb(on_arm_switch_change);
+    arm_switch_register_fault_cb(on_arm_switch_fault);
     encoder_register_rotate_cb(on_encoder_rotate);
     encoder_register_press_cb(on_encoder_press);
     encoder_register_long_press_cb(on_encoder_long_press);

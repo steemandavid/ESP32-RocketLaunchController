@@ -132,6 +132,17 @@
  * (linking typically completes in well under a second). FSD §10.2.1. */
 #define SPLASH_MIN_DURATION_MS         10000
 
+/* §5.5.2: how long the remote's two arm-key contacts may disagree before the
+ * disagreement is reported as a switch fault.
+ *
+ * The key is break-before-make, so "both contacts open" is the normal state
+ * *during* a turn and must not be reported. A person turns a key in well under
+ * a second; a second of continuous disagreement is a contact that is not
+ * closing, a broken wire, or a key left standing between positions. Comfortably
+ * longer than the 160 ms debounce on each leg, so the two engines settling at
+ * slightly different moments can never trip it. */
+#define ARM_SWITCH_DISAGREE_MS         1000
+
 #define WATCHDOG_TIMEOUT_S             5
 #define DEBOUNCE_POLL_INTERVAL_MS      10
 #define CONT_RELAY_DROPOUT_MS          50    /* Relay settling before first ADC sample (§5.4.6) */

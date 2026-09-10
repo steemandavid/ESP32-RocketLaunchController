@@ -1,5 +1,89 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-10 — fw 1.2.6: the remote's arm key has a second contact, on GPIO 2
+
+Found by the operator, not by the code, and not by any document. The remote's
+arm key is an **SPDT with its common at ground**: NO → GPIO 7, **NC → GPIO 2**.
+Only the NO leg had ever been recorded — in `pin_config.h`, in FSD C.2, and in
+the pinout this project had handed the operator.
+
+**FSD C.2 listed GPIO 2 among the remote's spare pins, "available for future
+expansion".** It was not spare. The NC contact hard-shorts it to ground for as
+long as the key sits at SAFE, which is most of the time. Nothing had ever
+configured GPIO 2, so the short was harmless — but the document was pointing at
+the one spare pin with a wire on it, and anyone accepting that invitation and
+assigning it as an output would have driven that output into a dead short on
+every turn of the key.
+
+### 1. The pin is claimed
+
+`arm_switch_init()` now configures GPIO 2 as a pulled-up input. Safe in both key
+positions, and it can no longer be handed out by accident. This is the part that
+actually removes the hazard; everything below is a bonus.
+
+### 2. The documents are corrected
+
+- **FSD §5.5.2** rewritten: the switch is described as the SPDT it physically
+  is, with a truth table for the four contact combinations and a boxed note on
+  why GPIO 2 was missing.
+- **FSD C.2**: NC input listed, GPIO 2 removed from the spare list — **6 spare
+  GPIOs, not 7** — with a boxed warning at the spare list itself.
+- **FSD §9.13 step 7** now requires the NC contact to be configured *even though
+  it drives nothing*, and says why.
+- **§8.3.3**, the §2.1 architecture diagram, §14.1 (`ARM_SWITCH_DISAGREE_MS`),
+  §4 phase list, and the **hw-test-remote** harness (its own `pin_config.h` and
+  test spec §6.6) all conformed.
+- A **remote pinout memory** was written, because the root cause is that the
+  remote loom was never traced against the documents the way the base plate was
+  (photographed and reconciled in FSD v1.54). The base had a pinout memory; the
+  remote did not.
+
+### 3. The contacts are cross-checked
+
+A healthy SPDT closes exactly one contact per position, so the two debounced
+inputs are complementary. A disagreement persisting past
+`ARM_SWITCH_DISAGREE_MS` (1000 ms — clear of the break-before-make gap while
+turning a key, and far clear of the 160 ms per-contact debounce) raises **ARM
+KEY SWITCH FAULT**: log, triple beep, display toast, per §7.2.9a's rule that
+every failure is both audible and visible.
+
+This buys the diagnosis that was missing. With the NO leg alone, a broken wire,
+a lifted joint or a contact that no longer closes reads **exactly like "key at
+SAFE"** — so the remote refuses every long-press with TURN ARM KEY FIRST while
+the operator stares at a key they have already turned, with nothing anywhere
+saying why. That failure now names itself.
+
+**Deliberately not an interlock.** `arm_switch_is_armed()` still follows the NO
+contact alone, even while the fault stands. The NC joint has never been
+exercised in service; letting it veto arming would let a marginal connection on
+a previously dead pin disable the remote at a launch — trading a silent
+diagnostic gap for a loud availability failure. The remote's key is not in the
+fire path in any case (§5.4.4: the two breaks are the base's arm relay and the
+channel relay), so none of this bears on the fire-path safety argument.
+
+### Flashed; T-A23 outstanding
+
+Both units flashed 1.2.6 and linked. Remote logs
+`arm_sw: initialised (NO=7, NC=2, LED=8)`; base logs
+`LINK_REQUEST from remote fw 1.2.6` → `BOOT -> IDLE`, rssi −21, `err=0x00`. No
+fault raised with the key at ARM — **which is expected but proves nothing yet**:
+at ARM the NC contact is open, so a correctly wired NC pin and an unconnected
+one read identically. The discriminating checks are in **T-A23** and have not
+been run:
+
+- key at SAFE (NC should read closed), and slow ARM↔SAFE turns raising no fault;
+- disconnect the NC lead → fault after ~1 s, reconnect → cleared;
+- with NC still disconnected, confirm the key **still arms** — proving it is a
+  diagnostic and not an interlock;
+- disconnect the NO lead and turn to ARM → the remote refuses to arm *and* now
+  says why, instead of silently insisting the key is at SAFE.
+
+There is no host test for the cross-check. The logic lives in a polling task
+alongside the GPIO driver, and extracting it the way `test_base_fsm.c` extracts
+the FSM is real work for a diagnostic that is not on the safety path — recorded
+here as a deliberate gap rather than an oversight, covered on target by T-A23.
+
+
 ## 2026-09-10 — fw 1.2.4: the base blips its siren when an igniter is connected
 
 Operator request: the person working at the motors had no way to know a

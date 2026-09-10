@@ -7,7 +7,49 @@
 
 #pragma once
 
-/* 1.2.5 (2026-09-10): a marginal igniter connection gets its own signal —
+/* 1.2.6 (2026-09-10): the remote's arm key switch has a second contact, and
+ * the firmware now knows about it.
+ *
+ * Found by the operator, not by the code: the key is an SPDT with its common
+ * at ground — NO to GPIO 7, NC to **GPIO 2** — and only the NO leg had ever
+ * been documented. GPIO 2 was listed in FSD C.2 among the remote's *spare*
+ * pins, "available for future expansion". It was not spare: the NC contact
+ * hard-shorts it to ground for as long as the key sits at SAFE, which is most
+ * of the time. Anyone taking that documented invitation and assigning GPIO 2
+ * as an output would have been driving it into a dead short on every turn of
+ * the key. Nothing did so — the pin was never configured — but the document
+ * was pointing at the one spare pin with a wire on it.
+ *
+ * Three things follow, in order of importance:
+ *
+ *   1. The pin is claimed. `arm_switch_init()` configures GPIO 2 as a
+ *      pulled-up input, which is safe in both key positions and cannot be
+ *      reassigned by accident.
+ *   2. FSD C.2 no longer lists it as spare (6 spare GPIOs on the remote, not
+ *      7), and §5.5.2 now documents the switch as the SPDT it physically is.
+ *   3. The contacts are cross-checked. A healthy SPDT closes exactly one
+ *      contact per position, so the two debounced inputs are complementary;
+ *      a disagreement lasting longer than ARM_SWITCH_DISAGREE_MS is reported
+ *      as ARM KEY SWITCH FAULT (log, triple beep, display toast).
+ *
+ * Point 3 buys a real diagnosis. With the NO leg alone, a broken wire, a
+ * lifted joint or a contact that no longer closes reads exactly like "key at
+ * SAFE" — so the remote refuses every long-press with TURN ARM KEY FIRST while
+ * the operator is looking at a key they have already turned, with nothing
+ * anywhere to say why. Now that failure names itself.
+ *
+ * Deliberately NOT an interlock: `arm_switch_is_armed()` still follows the NO
+ * contact alone, even while the fault is raised. The NC leg was unused until
+ * today and its joint has never been exercised; letting it veto arming would
+ * let a marginal solder joint on a previously dead pin disable the remote at a
+ * launch — trading a silent diagnostic gap for a loud availability failure.
+ * The remote's key is not in the fire path in any case (§5.4.4: the two breaks
+ * are the base's arm relay and the channel relay), so nothing here touches the
+ * fire-path safety argument.
+ *
+ * Remote-only, no protocol change. Flash both units together.
+ *
+ * 1.2.5 (2026-09-10): a marginal igniter connection gets its own signal —
  * two blips instead of one.
  *
  * The other half of 1.2.4's feature, deliberately deferred until the single
@@ -961,5 +1003,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  5
-#define RLC_VERSION_STRING "1.2.5"
+#define RLC_VERSION_PATCH  6
+#define RLC_VERSION_STRING "1.2.6"

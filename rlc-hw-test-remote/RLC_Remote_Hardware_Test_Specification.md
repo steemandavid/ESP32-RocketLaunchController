@@ -52,7 +52,8 @@ All pin assignments match the main RLC FSD (RLC-FSPEC-001 v1.15, Appendix C.2).
 | Encoder CLK (A) | 4 | Digital input | Internal pull-up, interrupt-driven |
 | Encoder DT (B) | 5 | Digital input | Internal pull-up, interrupt-driven |
 | Encoder SW (push) | 6 | Digital input | Internal pull-up |
-| Arm/disarm switch | 7 | Digital input | Internal pull-up |
+| Arm/disarm key switch (NO) | 7 | Digital input | Internal pull-up. Common at ground. LOW = key at ARM |
+| Arm/disarm key switch (NC) | 2 | Digital input | Internal pull-up. LOW = key at SAFE. **Not a spare pin** — see §6.6 |
 | Arm switch LED (red) | 8 | Digital output | Built-in series resistor |
 | Fire button | 15 | Digital input | Internal pull-up |
 | Fire button LED (red) | 17 | Digital output | Built-in series resistor |
@@ -224,10 +225,19 @@ Digital outputs SHALL use configurable polarity defined in `pin_config.h`:
 
 ### 6.6 Arm Switch Debounce
 
-- GPIO 7 with internal pull-up.
+- The key switch is an **SPDT with its common at ground**: NO on GPIO 7, NC on
+  GPIO 2, both with internal pull-ups.
+- GPIO 7 (NO) is authoritative for the arm state and is what this harness
+  monitors: LOW = ARMED.
 - 16-bit shift-register debounce, 10 ms polling, 160 ms debounce time.
 - Stable values: 0x0000 = ARMED, 0xFFFF = DISARMED.
 - Fail-safe: disconnected wire = HIGH = DISARMED.
+- **GPIO 2 carries the NC contact** and is shorted to ground whenever the key
+  sits at SAFE. It went unrecorded until 2026-09-10, when the FSD still listed
+  it among the remote's spare pins — do not assign it as an output in this
+  harness or anywhere else. Production firmware claims it as a pulled-up input
+  and cross-checks the two contacts (FSD §5.5.2); this harness only declares it
+  so the pin is not handed out twice.
 
 ### 6.7 ILI9488 Display
 

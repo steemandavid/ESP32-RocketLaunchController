@@ -18,8 +18,16 @@
 #define PIN_ENCODER_B           5   /* DT  — interrupt, pull-up */
 #define PIN_ENCODER_SW          6   /* Push — pull-up, 16-bit debounce */
 
-/* --- Arm/disarm switch ------------------------------------------------- */
-#define PIN_ARM_SWITCH          7   /* Pull-up, 16-bit debounce */
+/* --- Arm/disarm key switch (SPDT, common to GND) ------------------------ */
+#define PIN_ARM_SWITCH          7   /* NO contact. Pull-up, 16-bit debounce.
+                                     * LOW = key at ARM. Authoritative. */
+#define PIN_ARM_SWITCH_NC       2   /* NC contact. LOW = key at SAFE.
+                                     * Undocumented until 2026-09-10 — GPIO 2
+                                     * was listed as a spare remote pin while
+                                     * this contact shorts it to ground for as
+                                     * long as the key sits at SAFE. Declared
+                                     * here so this harness does not hand the
+                                     * pin out either. See FSD 5.5.2. */
 #define PIN_ARM_LED             8   /* Red LED, digital output */
 #define PIN_ARM_LED_ACTIVE      0   /* 0 = active LOW (LED wired 3.3V→resistor→GPIO) */
 

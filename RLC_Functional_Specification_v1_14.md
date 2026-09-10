@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.58
+**Version:** 1.59
 **Date:** 2026-09-10
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -72,6 +72,7 @@
 | 1.56 | 2026-09-01 | **Two as-built corrections from the whole-panel Visio drawing (annotated photo of the open case).** (1) **The plate carries TWO USB sockets at top left — COM (the ESP32-S3's UART bridge) and JTAG (native USB), side by side behind the grommet**; v1.54's "the COM port … is not brought out on the as-built plate" is withdrawn (the photo showed one socket only because a single plug was inserted, into COM). The charger connector remains not brought out. (2) **The 8-pixel WS2812 strip is not inside the case: its pixels are the IGN lenses of the eight channel modules on the plate** (each NeoPixel widened into its lens through soldered connections) — the IGN lens is that channel's continuity pixel; the FIRE lens beside it is a separate plain LED. §5.4.11 gains an as-built mounting note; §5.4.4's plate note gains the USB socket pair. RLC-OPS-001 Figure 3 (two sockets drawn, IGN-lens callout, caption), §3.2 table (LED strip, channel modules, USB and COM rows), cover diagram and README conformed. Documentation-only; no firmware change (fw stays 1.2.3). |
 | 1.57 | 2026-09-10 | **§12.2 `SIREN_IGNITER_CONNECTED`; firmware 1.2.4.** By operator request, the base sounds a single 100 ms siren blip each time a channel's continuity band moves to CONNECTED, so the person wiring up at the pad hears that the connection was made instead of walking back to read the LEDs on the base or the remote. The design is in what it refuses: the blip sounds in **BOOT and IDLE only** — in ARMED/PRE_FIRE/FIRING the siren is the pad's continuous warning that the fire path is live and the one-shot's own mechanism would silence it, and in LINK_LOST/ERROR a patterned alert is running that carries meaning. Both the FSM (§7.3.1 step 5) and `siren_chirp_connect()` itself enforce that, the driver declining whenever the siren is already sounding. **CONNECTED only** — MARGINAL is a connection to look at rather than trust, so giving it the same blip would teach the wrong reflex; a distinct MARGINAL pattern is deferred until this one has been heard in the field. Three suppressions keep the blip meaning one thing: the sampler's *first* classification of a channel does not sound it (new `initial` flag on `EVT_CONTINUITY_CHANGED`, so igniters already connected at power-on do not blip through the first 800 ms sweep), nor a repeat on the same channel within `SIREN_CONNECT_CHIRP_MIN_INTERVAL_MS` (a half-seated connector being wiggled), nor anything within `SIREN_CONNECT_CHIRP_INHIBIT_MS` of POST_FIRE → IDLE (where an unfired igniter reappears as CONNECTED with nobody having touched it). 100 ms rather than the 200 ms of every other pattern because the operator is standing next to a siren built to be heard across a launch site — but not shorter, because v1.35 showed the siren's internal sweep needs time to make a tone rather than a click. New §14.1 constants; host tests T-FSM10. Base-only, audible-only, no protocol change; version bumped because the binary differs. |
 | 1.58 | 2026-09-10 | **§12.2 `SIREN_IGNITER_MARGINAL`; firmware 1.2.5.** The other half of v1.57's feature, deferred there until the single blip had been heard at the pad (**T-A21 PASS**, same day). A channel reaching **MARGINAL** now sounds **two** 100 ms blips against CONNECTED's one: a high-resistance crimp is the fault the operator most wants told about while still standing at the motor, and until now MARGINAL was the one band that made no sound, so a bad connection was indistinguishable from no connection by ear. Two rather than three, and 100 ms rather than 200 ms, so it cannot be heard as `SIREN_ERROR` or `SIREN_CONTINUITY_LOST` — both three 200 ms blasts, both meaning *stop* — while the shared pitch and length make the pair read as two values of one message. OPEN stays silent. **The rate limit is now per channel and per band**: a repeat of the same signal inside the window is still suppressed as chatter, but a *change* of signal always sounds, because "two blips → re-seat the crimp → one blip" is the loop the feature exists to close and a shared window would have swallowed the confirming blip. The cost is accepted deliberately: a connection oscillating across the CONNECTED/MARGINAL boundary can blip on each change, capped at one change per ~800 ms per channel by the round-robin sampler — and a connection that cannot decide which band it is in is itself something the operator needs to hear. Every v1.57 gate and suppression applies unchanged to both patterns. §7.3.1 step 5 rewritten, §14.1 note, T-A22 added. Base-only, audible-only, no protocol change. |
+| 1.59 | 2026-09-10 | **The remote's arm key switch is an SPDT, and its NC contact is on GPIO 2. Firmware 1.2.6.** Reported by the operator against the pinout this document had given them: the key's common is at ground, NO to GPIO 7, **NC to GPIO 2** — and only the NO leg had ever been recorded. **C.2 listed GPIO 2 among the remote's spare pins, "available for future expansion".** It was not spare: the NC contact hard-shorts it to ground for as long as the key sits at SAFE, so anyone accepting that documented invitation and assigning GPIO 2 as an output would have driven it into a dead short on every turn of the key. Nothing ever did — the pin was never configured — but the document was pointing at the one spare pin with a wire on it. Three corrections: **(1)** the pin is claimed, `arm_switch_init()` configuring it as a pulled-up input so it is safe in both key positions and cannot be reassigned by accident; **(2)** §5.5.2 now describes the switch as the SPDT it physically is, and C.2 lists the NC input and drops it from the spare list (**6 spare, not 7**); **(3)** the contacts are cross-checked — a healthy SPDT closes exactly one per position, so the debounced inputs are complementary, and a disagreement persisting beyond the new `ARM_SWITCH_DISAGREE_MS` (1000 ms, comfortably clear of the break-before-make gap while turning the key) raises **ARM KEY SWITCH FAULT** on the log, the buzzer and the display. That last point buys a real diagnosis: with the NO leg alone, a broken wire or a contact that no longer closes reads exactly like "key at SAFE", so the remote refuses every long-press with TURN ARM KEY FIRST while the operator looks at a key they have already turned, with nothing anywhere saying why. Deliberately **not an interlock** — `arm_switch_is_armed()` still follows the NO contact alone even while the fault is raised, because the NC joint has never been exercised and letting it veto arming would trade a silent diagnostic gap for a marginal solder joint disabling the remote at a launch. The remote's key is not in the fire path (§5.4.4), so none of this touches the fire-path safety argument. New test T-A23. Remote-only, no protocol change. |
 
 ## Table of Contents
 
@@ -136,9 +137,10 @@ Safety is the overriding design constraint. The system shall implement defence-i
 │                        REMOTE UNIT                              │
 │                                                                 │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────┐   │
-│  │ Rotary   │  │ Arm/     │  │ Fire     │  │  ILI9488 LCD  │   │
-│  │ Encoder  │  │ Disarm   │  │ Button   │  │  480×320 SPI  │   │
-│  │ (+ push) │  │ Switch   │  │          │  │               │   │
+│  │ Rotary   │  │ Arm Key  │  │ Fire     │  │  ILI9488 LCD  │   │
+│  │ Encoder  │  │ Switch   │  │ Button   │  │  480×320 SPI  │   │
+│  │ (+ push) │  │ (SPDT,   │  │          │  │               │   │
+│  │          │  │  NO+NC)  │  │          │  │               │   │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └───────┬───────┘   │
 │       │              │             │                │           │
 │  ┌────┴──────────────┴─────────────┴────────────────┴───────┐   │
@@ -352,7 +354,7 @@ Deliverables:
 - `rlc_base`: STATUS_UPDATE message generation (periodic + event-driven) with `continuity_bands` field.
 - `rlc_remote`: Rotary encoder driver (interrupt-driven, channel 1–8 wrapping).
 - `rlc_remote`: Fire button driver (debounced, fresh-press detection).
-- `rlc_remote`: Arm switch monitoring (debounced).
+- `rlc_remote`: Arm key switch monitoring (debounced, both SPDT contacts — §5.5.2).
 - `rlc_remote`: Battery monitoring.
 - `rlc_remote`: Buzzer pattern player task.
 - Unit tests for debounce engine, battery threshold logic, continuity band classification.
@@ -1159,14 +1161,67 @@ The direction of rotation determines increment (+1) or decrement (−1) of the s
 
 > **AS-BUILT NOTE (2026-08-20).** Until this date the firmware implemented **neither** mechanism specified above. The decoder was a Gray-code level comparison (`if (A != B) CW else CCW`) sampling B at an edge on A — the approach this section explicitly rejects — and `ENC_DIVIDER` did not exist anywhere in the codebase, so every accepted edge became a channel change. Additionally B was configured to interrupt but had no handler attached, so three of every four transitions were lost. Together these produced the reported oversensitivity, and made the input vulnerable to electrical noise: a glitch on A yielded a channel step whose direction depended on whatever B happened to read. Now implemented as specified, with `ENC_DIVIDER` raised to 4. Covered by host tests T-Q01…T-Q06 (§15.5).
 
-#### 5.5.2 Manual Arm/Disarm Switch Input
+#### 5.5.2 Manual Arm/Disarm Key Switch Input
+
+**The key switch is an SPDT with its common at ground** (as-built, recorded
+v1.59 after the operator reported it against this document's own pinout). Both
+contacts are wired and both are read:
 
 | Parameter | Value |
 |---|---|
-| Signal type | Digital input with internal pull-up |
-| Quantity | 1 |
-| Logic | LOW = ARMED, HIGH = DISARMED (fail-safe) |
-| Debounce | Shift-register, 10 ms polling, 160 ms debounce |
+| Signal type | Two digital inputs, each with internal pull-up |
+| Common | Ground |
+| NO contact | `PIN_ARM_SWITCH` (GPIO 7) — LOW = key at ARM, HIGH = key at SAFE |
+| NC contact | `PIN_ARM_SWITCH_NC` (GPIO 2) — LOW = key at SAFE, HIGH = key at ARM |
+| Logic (arm state) | LOW on the **NO** contact = ARMED, HIGH = DISARMED (fail-safe) |
+| Debounce | Shift-register per contact, 10 ms polling, 160 ms debounce |
+
+**The NO contact alone determines the arm state.** That path is unchanged and
+remains authoritative. The NC contact is read purely as a cross-check.
+
+**Contact cross-check (v1.59).** A healthy SPDT closes exactly one contact per
+position, so the two debounced inputs SHALL be complementary. Two combinations
+are not:
+
+| NO | NC | Meaning |
+|---|---|---|
+| closed (LOW) | open (HIGH) | Key at ARM |
+| open (HIGH) | closed (LOW) | Key at SAFE |
+| open | open | Normal *while the key is turning* (break-before-make); a fault once it persists — broken wire, lifted joint, a contact that no longer closes, or a key left standing between positions |
+| closed | closed | Impossible on a break-before-make switch — a short, or the wrong switch fitted |
+
+A disagreement persisting longer than `ARM_SWITCH_DISAGREE_MS` SHALL be
+reported as **ARM KEY SWITCH FAULT** — log, buzzer, and a display message, per
+§7.2.9a's rule that every refusal or failure is both audible and visible. The
+threshold is deliberately far longer than the 160 ms debounce so that the two
+engines settling at slightly different moments can never trip it, and longer
+than any human turn of a key.
+
+This is a **diagnostic, not an interlock.** `arm_switch_is_armed()` SHALL
+continue to follow the NO contact alone even while the fault is raised. The
+reasoning is availability, not indifference: the NC leg was undocumented and
+unread until fw 1.2.6, so its joint has never been exercised, and letting it
+veto arming would allow a marginal connection on a previously dead pin to
+disable the remote at a launch — trading a silent diagnostic gap for a loud
+availability failure. The remote's key is not in the fire path in any case
+(§5.4.4: the two breaks are the base's arm relay and the channel relay), so
+nothing here bears on the fire-path safety argument.
+
+What the cross-check actually buys: with the NO leg alone, a broken wire or a
+failed contact is **indistinguishable from "key at SAFE"**. The remote refuses
+every long-press with TURN ARM KEY FIRST while the operator is looking at a key
+they have already turned, and nothing on either unit says why. That failure now
+names itself.
+
+> **Why GPIO 2 was missing.** The NC contact was fitted from the start but
+> never recorded. Until v1.59 this document listed GPIO 2 among the remote's
+> *spare* pins, "available for future expansion" — while the NC contact
+> hard-shorts it to ground for as long as the key sits at SAFE. Nothing had
+> ever configured GPIO 2, so the short was harmless in practice, but a future
+> expansion taking the document at its word and assigning it as an output would
+> have driven that output into a dead short on every turn of the key. Claiming
+> the pin (§9.13 step 7, `arm_switch_init()`) is what makes that impossible;
+> reading it is the bonus.
 
 #### 5.5.3 Fire Button Input
 
@@ -2287,9 +2342,14 @@ MAJ-01/02/03).**
 
 #### 8.3.3 Arm Switch
 
-- Shift-register debounce, 10 ms polling.
+- Shift-register debounce, 10 ms polling, **one engine per contact** (§5.5.2).
+- The **NO** contact (GPIO 7) is authoritative for the arm state.
 - Moving to DISARMED (0xFFFF) at any time triggers immediate disarm sequence.
 - Moving to ARMED (0x0000) does NOT automatically arm — it is a precondition only.
+- The **NC** contact (GPIO 2) drives nothing. It is cross-checked against the NO
+  contact, and a disagreement persisting beyond `ARM_SWITCH_DISAGREE_MS` raises
+  ARM KEY SWITCH FAULT (§5.5.2) — a maintenance report, never a lockout: the
+  arm state continues to follow the NO contact while the fault stands.
 
 #### 8.3.4 Battery Monitoring
 
@@ -2448,7 +2508,7 @@ Both units SHALL execute the following initialisation sequence in order. If any 
 | 4 | Initialise ADC calibration | Yes | §5.4.7, §5.4.2 |
 | 5 | Initialise ESP-NOW, set PMK, register peer | Yes | §6.2.1, §6.2.3 — retry 3× on failure |
 | 6 | Initialise display, read-back display ID | Yes (remote only) | §5.5.6 |
-| 7 | Configure all input GPIOs (including arm relay feedback §5.4.3 and key switch sense §5.4.3b), start debounce engine | Yes | §5.3 |
+| 7 | Configure all input GPIOs (base: arm relay feedback §5.4.3 and key switch sense §5.4.3b; remote: **both** arm key contacts, NO and NC, §5.5.2), start debounce engine | Yes | §5.3. The remote's NC contact SHALL be configured even though it drives nothing: its common is at ground, so an unclaimed GPIO 2 is a pin the pinout would otherwise offer for reuse while it is shorted to GND at every SAFE position (v1.59) |
 | 8 | *(was: configure watchdog — moved to step 0, see below)* | — | §9.6 |
 | 9 | Start FreeRTOS tasks | Yes | §9.10 |
 | 10 | Begin link establishment (LINK_REQUEST / wait for link) | Yes | §6.4.1 |
@@ -3087,6 +3147,7 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `POST_FIRE_COOLDOWN_MS` | 2000 | Cooldown before returning to IDLE |
 | `FIRE_PULSE_BACKSTOP_MARGIN_MS` | 250 | Grace beyond `FIRE_PULSE_DURATION_MS` before the FSM's max-duration backstop synthesises pulse completion. Defence in depth: if the GPTimer notification is ever lost the FSM would otherwise sit in FIRING with the relay energised, and the task watchdog would not catch it (the task keeps feeding). |
 | `SIREN_LINK_LOST_DURATION_MS` | 4000 | Siren duration on link loss. Since v1.31 the cycle count is **derived** from this and the 500 ms half-period (4 cycles); it was previously a bare literal, so editing this constant had no effect. |
+| `ARM_SWITCH_DISAGREE_MS` | 1000 | How long the remote's two arm-key contacts may disagree before ARM KEY SWITCH FAULT is raised (v1.59, §5.5.2). The key is break-before-make, so "both open" is normal *during* a turn — this must stay well above any human turn of a key, and well above the 160 ms per-contact debounce so the two engines settling at different moments cannot trip it. |
 | `SIREN_CONNECT_CHIRP_MS` | 100 | Length of the `SIREN_IGNITER_CONNECTED` blip (v1.57, §12.2). Shorter than every other pattern because the operator is standing next to the siren; not shorter still, because the siren's internal sweep needs time to produce a tone rather than a click (v1.35). Raise this first if the bench says it is inaudible. |
 | `SIREN_CONNECT_CHIRP_MIN_INTERVAL_MS` | 2000 | Minimum interval before a channel repeats **the same** connection signal — anti-chatter for a half-seated connector. Per channel **and per band** (v1.58): a change between `SIREN_IGNITER_CONNECTED` and `SIREN_IGNITER_MARGINAL` always sounds, so re-seating a marginal crimp is confirmed immediately. Per channel, so eight igniters connected in succession still give eight signals. |
 | `SIREN_CONNECT_CHIRP_INHIBIT_MS` | 2000 | Connect blips are suppressed for this long after the FSM starts and after POST_FIRE → IDLE, covering the sampler's boot sweep and the post-fire re-read of an igniter that did not fire. |
@@ -3218,6 +3279,7 @@ The developer shall implement and document tests for the following scenarios. Te
 | T-A18 | **Disconnect an igniter on a NON-armed channel while another channel is ARMED** | Base stays ARMED — only the armed channel's band triggers disarm. `STATUS_UPDATE` reflects the other channel as OPEN. (v1.35 regression guard) |
 | T-A21 | **Igniter-connected blip** (v1.57, §12.2 `SIREN_IGNITER_CONNECTED`) | **PASS 2026-09-10** — all six suppression cases plus the blip itself verified on target with both units on fw 1.2.4. `SIREN_CONNECT_CHIRP_MS` = 100 ms confirmed by ear at the pad: an audible tone, not a click, and not punishing at arm's length — the value stands as specified. Case (b) is also evidenced in the base boot log, where `ch1: band 0 -> 1` at t=1275 ms produced no chirp line. **Case (e) is the safety-relevant one and passed**: with a channel ARMED, connecting an igniter elsewhere neither blipped nor interrupted the continuous tone. Procedure: with the base in IDLE, connect an igniter (or a test load) to a channel: one short siren blip within ~1 s of the band reaching CONNECTED, base log `ch N connected — chirp`. **Judge the blip length by ear at the pad** — it must be an audible tone, not a click, and must not be punishing to someone kneeling beside the base; `SIREN_CONNECT_CHIRP_MS` is the knob. Then the suppressions: (a) a MARGINAL load (~68 Ω) blips **not at all**; (b) power-cycle the base with igniters already connected — the boot chirp sounds, the initial classification sweep does **not** blip; (c) wiggle a half-seated connector — at most one blip per 2 s per channel; (d) connect all eight in succession — eight blips; (e) with a channel ARMED, connect an igniter on another channel — **no blip, and the continuous ARMED tone is not interrupted** (the safety-relevant case); (f) fire a channel with an intact load and let the base return to IDLE — the post-fire re-read does **not** blip. |
 | T-A22 | **Marginal-connection double blip** (v1.58, §12.2 `SIREN_IGNITER_MARGINAL`) | **PASS 2026-09-10** — verified on target with both units on fw 1.2.5. Two blips are countable as two and are not mistaken for the three-blast ERROR/CONTINUITY_LOST alert; the confirming single blip sounds immediately when a marginal load is replaced by a good one inside the 2 s window (the per-band rate limit doing its job); a repeat of the same band inside the window stays silent; and with a channel ARMED, a marginal connection elsewhere produced no blips and did not break the continuous tone. Procedure: with the base in IDLE, connect a marginal load (~68–100 Ω) to a channel: **two** short blips, base log `ch N MARGINAL — double chirp`, remote grid ▲ MARGINAL. **Judge the pair by ear**: two blips must be countable as two, and must not be mistakable for the three-blast ERROR/CONTINUITY_LOST alert — ask someone who has heard both. Then the loop the signal exists for: with the marginal load still connected, replace it with a good one (~2 Ω) **within 2 s** — the confirming **single** blip MUST sound, i.e. the rate limit must not swallow a change of band. Then the chatter case: repeat the same band twice inside 2 s — the second is silent. Finally, the gate: with a channel ARMED, connect a marginal load elsewhere — **no blips, and the continuous ARMED tone unbroken**. |
+| T-A23 | **Arm key switch contact cross-check** (v1.59, §5.5.2) | Normal operation first: turn the key slowly ARM↔SAFE several times — the arm LED and the remote's key state follow as before and **no fault is raised**, because break-before-make disagreement lasts far less than `ARM_SWITCH_DISAGREE_MS`. Then the fault: with the remote powered, disconnect the **NC** lead (GPIO 2) and leave the key at SAFE — after ~1 s, triple beep, display **ARM KEY SWITCH FAULT**, log line naming both contacts. Reconnect: **ARM KEY OK**. Then prove it is not an interlock — with the NC lead still disconnected, confirm the key **still arms normally** on the NO contact and a full arm/fire sequence is unaffected. Finally the case the feature exists for: disconnect the **NO** lead (GPIO 7) and turn the key to ARM — the remote correctly refuses to arm, but now also reports ARM KEY SWITCH FAULT instead of silently insisting the key is at SAFE. |
 
 ### 15.3 Fire Tests
 
@@ -3597,7 +3659,8 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm
 | Encoder CLK (A) | 4 | Digital input, pull-up, interrupt |
 | Encoder DT (B) | 5 | Digital input, pull-up, interrupt |
 | Encoder SW (push) | 6 | Digital input, pull-up |
-| Arm/disarm switch | 7 | Digital input, pull-up |
+| Arm/disarm key switch (NO contact) | 7 | Digital input, pull-up. Common at ground. LOW = key at ARM. **Authoritative for the arm state.** |
+| Arm/disarm key switch (NC contact) | 2 | Digital input, pull-up. LOW = key at SAFE. Cross-check only (§5.5.2) — **not spare**, and shorted to ground whenever the key is at SAFE |
 | Arm switch LED (red) | 8 | Digital output (built-in series resistor) |
 | Fire button | 15 | Digital input, pull-up |
 | Fire button LED (red) | 17 | Digital output (built-in series resistor) |
@@ -3613,9 +3676,15 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm
 | Display MISO | 9 | SPI2 MISO |
 | RGB LED (status) | 48 | WS2812 8-pixel strip + parallel on-board LED via RMT |
 
-**Total: 17 GPIOs + 1 on-board LED = 18 pins used. 7 spare GPIOs.**
+**Total: 18 GPIOs + 1 on-board LED = 19 pins used. 6 spare GPIOs.**
 
-**Spare GPIOs available:** 2, 38, 39, 40, 41, 42, 47 — available for future expansion (e.g., SD card, additional buttons, external status LEDs).
+**Spare GPIOs available:** 38, 39, 40, 41, 42, 47 — available for future expansion (e.g., SD card, additional buttons, external status LEDs).
+
+> **GPIO 2 was listed here as spare until v1.59 and is not.** The arm key's NC
+> contact is wired to it, with the switch common at ground, so it is shorted to
+> GND for as long as the key sits at SAFE — an output assigned to it would have
+> been driven into a dead short on every turn of the key. It is now claimed as
+> a pulled-up input by `arm_switch_init()` (§5.5.2).
 
 **Notes:**
 - Battery ADC is on GPIO 1 (ADC1_CH0), same as base unit for code reuse.

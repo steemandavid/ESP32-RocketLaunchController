@@ -69,8 +69,24 @@
 #define PIN_ENCODER_DT             5    /* B / DT  — interrupt */
 #define PIN_ENCODER_SW             6    /* Push button */
 
-/* Arm/disarm switch — LOW = armed, HIGH = disarmed */
+/* Arm/disarm key switch — SPDT, common to GND.
+ *
+ *   NO  → PIN_ARM_SWITCH     : LOW = key at ARM,  HIGH = key at SAFE
+ *   NC  → PIN_ARM_SWITCH_NC  : LOW = key at SAFE, HIGH = key at ARM
+ *
+ * Both inputs are pulled up, so an open contact reads HIGH and a lost wire
+ * fails towards SAFE on the NO leg.
+ *
+ * The NC leg was fitted in hardware from the start but went undocumented until
+ * 2026-09-10 — GPIO 2 was listed as a *spare* pin in FSD C.2, i.e. the one
+ * remote GPIO offered for future expansion was the one with a wire on it that
+ * shorts to ground whenever the key sits in SAFE. It is claimed here so that
+ * cannot happen, and read so the pair can be cross-checked: with only the NO
+ * leg, a broken wire or a failed contact is indistinguishable from "key at
+ * SAFE" and the operator is told to turn a key that is already turned. See
+ * §5.5.2 and arm_switch_get_fault(). */
 #define PIN_ARM_SWITCH             7
+#define PIN_ARM_SWITCH_NC          2
 #define PIN_ARM_LED                8    /* Red LED (built-in series resistor) */
 #define PIN_ARM_LED_ACTIVE         0    /* 0 = active LOW (LED wired 3.3V→resistor→GPIO) */
 
