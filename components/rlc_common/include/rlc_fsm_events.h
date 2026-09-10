@@ -106,6 +106,15 @@ typedef struct {
         struct {
             uint8_t channel;    /* Channel number (1-8) */
             uint8_t band;       /* rlc_continuity_band_t value */
+            /* True when this is the channel's FIRST classification since boot
+             * (or since an ADC failure recovered), i.e. the sampler settling
+             * on reality rather than anything changing in the world. The
+             * bands all start at OPEN, so an igniter already connected at
+             * power-on produces a change event that nobody caused — which the
+             * §12.2 connect chirp must not sound for. Carried on the event
+             * rather than inferred from a time window, because the window
+             * depends on when the link comes up and the fact does not. */
+            uint8_t initial;
         } continuity;
 
     } data;

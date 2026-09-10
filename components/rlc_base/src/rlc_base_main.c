@@ -56,7 +56,7 @@ static const char *TAG = "rlc_base";
  * burst would silently leave the base armed on an open igniter, which is the
  * exact failure this event exists to prevent.
  */
-static void on_io_change(uint8_t ch, rlc_continuity_band_t band)
+static void on_io_change(uint8_t ch, rlc_continuity_band_t band, bool initial)
 {
     status_update_trigger();
     if (base_fsm_get_queue()) {
@@ -64,6 +64,7 @@ static void on_io_change(uint8_t ch, rlc_continuity_band_t band)
         evt.type = EVT_CONTINUITY_CHANGED;
         evt.data.continuity.channel = ch;
         evt.data.continuity.band    = (uint8_t)band;
+        evt.data.continuity.initial = initial ? 1 : 0;
         if (xQueueSend(base_fsm_get_queue(), &evt, pdMS_TO_TICKS(10)) != pdTRUE) {
             ESP_LOGE(TAG, "FSM queue full — EVT_CONTINUITY_CHANGED ch%u dropped!", ch);
         }

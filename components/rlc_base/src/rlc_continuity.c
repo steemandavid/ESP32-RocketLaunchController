@@ -64,7 +64,8 @@ static volatile int32_t s_uv[NUM_CHANNELS] = { 0 };
 static volatile int32_t s_raw[NUM_CHANNELS] = { 0 };   /* pre-calibration counts */
 
 /* Callback on band change */
-static void (*s_on_change_cb)(uint8_t ch, rlc_continuity_band_t band) = NULL;
+static void (*s_on_change_cb)(uint8_t ch, rlc_continuity_band_t band,
+                              bool initial) = NULL;
 
 /* CI-01 / FSD §5.4.6: earliest time (ms since boot) at which a channel may be
  * sampled again after its relay was de-energised. A channel relay returning
@@ -181,7 +182,9 @@ static void continuity_task(void *arg)
             if (s_bands[current_ch] != CONT_OPEN) {
                 s_bands[current_ch] = CONT_OPEN;
                 if (s_on_change_cb) {
-                    s_on_change_cb((uint8_t)(current_ch + 1), CONT_OPEN);
+                    /* Not an initial classification: this is a live channel
+                     * failing safe, which the FSM must treat as a real OPEN. */
+                    s_on_change_cb((uint8_t)(current_ch + 1), CONT_OPEN, false);
                 }
             }
         } else {
@@ -199,7 +202,8 @@ static void continuity_task(void *arg)
 
             s_uv[current_ch] = uv;
 
-            if (!s_band_initialized[current_ch]) {
+            bool initial = !s_band_initialized[current_ch];
+            if (initial) {
                 new_band = rlc_continuity_classify_initial(uv);
                 s_band_initialized[current_ch] = true;
             } else {
@@ -213,7 +217,7 @@ static void continuity_task(void *arg)
 
                 /* Notify the status update task and the FSM. */
                 if (s_on_change_cb) {
-                    s_on_change_cb((uint8_t)(current_ch + 1), new_band);
+                    s_on_change_cb((uint8_t)(current_ch + 1), new_band, initial);
                 }
             }
         }
@@ -323,7 +327,8 @@ rlc_continuity_band_t continuity_get_channel(uint8_t ch)
     return s_bands[ch - 1];
 }
 
-void continuity_register_change_cb(void (*cb)(uint8_t ch, rlc_continuity_band_t band))
+void continuity_register_change_cb(
+    void (*cb)(uint8_t ch, rlc_continuity_band_t band, bool initial))
 {
     s_on_change_cb = cb;
 }

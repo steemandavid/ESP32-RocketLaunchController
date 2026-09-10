@@ -75,6 +75,15 @@ static bool s_link_lost_pending = false;
 /* C3/M3: Local dead-man timestamp — updated from wire-receive time of valid CMD_FIRE */
 static int64_t s_last_fire_cmd_ms = 0;
 
+/* ── §12.2 SIREN_IGNITER_CONNECTED chirp state ───────────────────
+ *
+ * Per-channel timestamp of the last connect chirp, and a global inhibit
+ * deadline. Both exist to keep the blip meaning exactly one thing: "somebody
+ * just plugged an igniter in". See SIREN_CONNECT_CHIRP_* in rlc_config.h for
+ * why each is needed. FSM-task-owned like all state in this file. */
+static int64_t s_chirp_last_ms[NUM_CHANNELS] = { 0 };
+static int64_t s_chirp_inhibit_until_ms = 0;
+
 /* Task and queue handles */
 static QueueHandle_t s_evt_queue = NULL;
 static TaskHandle_t  s_fsm_task = NULL;
@@ -147,6 +156,13 @@ int base_fsm_init(void)
 
     /* Queue registration with link manager is done by the application
      * after both link and FSM are initialised (avoids init race — M8). */
+
+    /* §12.2: backstop for the boot-time chirp storm. The `initial` flag on
+     * EVT_CONTINUITY_CHANGED is the real defence — this window only covers a
+     * sampler that reports a genuine second transition on a channel while the
+     * unit is still coming up. base_fsm_init() runs before continuity_task is
+     * started, so the window is measured from before the first sweep. */
+    s_chirp_inhibit_until_ms = now_ms() + SIREN_CONNECT_CHIRP_INHIBIT_MS;
 
     ESP_LOGI(TAG, "base FSM initialised");
     return 0;
@@ -382,6 +398,58 @@ static bool armed_channel_went_open(const rlc_fsm_event_t *evt)
            evt->data.continuity.band == CONT_OPEN;
 }
 
+/* ── §12.2 SIREN_IGNITER_CONNECTED (FSD §7.3.1) ──────────────────
+ *
+ * A short blip when a channel's igniter appears on the continuity sense, so
+ * the person kneeling at the pad hears that the connection was made instead of
+ * walking back to read the base or remote LEDs.
+ *
+ * Called ONLY from the BOOT and IDLE arms of process_event(). That gate is the
+ * design, not a convenience:
+ *
+ *   - ARMED / PRE_FIRE / FIRING: the siren is the pad's continuous warning
+ *     that the fire path is live. Nothing may interrupt it, and nobody should
+ *     be connecting igniters then anyway.
+ *   - LINK_LOST / ERROR: a patterned alert is running and carries meaning; a
+ *     blip would cut it short or be misread as part of it.
+ *   - POST_FIRE: the armed channel's re-read after the relay returns to NC is
+ *     the fire-result indication, not an operator action.
+ *
+ * BOOT is included deliberately. The base sits in BOOT until the link comes
+ * up, and connecting igniters at the pad before the LCO has powered the remote
+ * is normal — refusing to chirp there would withhold the feature during the
+ * part of the setup it was asked for. `siren_chirp_connect()` declines on its
+ * own if the siren is busy, so BOOT's own error paths stay audible.
+ *
+ * CONNECTED only. MARGINAL is a connection the operator should look at rather
+ * than trust, and giving it the same blip as a good one would teach exactly
+ * the wrong reflex; giving it a different blip is a second pattern to keep
+ * distinct from the 3-blast alerts, which was deferred until this one has been
+ * heard in the field. MARGINAL therefore stays LED-only, as it was.
+ */
+static void maybe_chirp_connect(const rlc_fsm_event_t *evt)
+{
+    uint8_t ch = evt->data.continuity.channel;
+
+    if (evt->data.continuity.band != CONT_CONNECTED) return;
+    if (ch < 1 || ch > NUM_CHANNELS) return;
+    /* The sampler settling on a channel it had never read, not a connection
+     * being made. Igniters already in place at power-on would otherwise blip
+     * their way through the first round-robin sweep. */
+    if (evt->data.continuity.initial) return;
+
+    int64_t t = now_ms();
+    if (t < s_chirp_inhibit_until_ms) return;
+    if (s_chirp_last_ms[ch - 1] != 0 &&
+        (t - s_chirp_last_ms[ch - 1]) < SIREN_CONNECT_CHIRP_MIN_INTERVAL_MS) {
+        return;
+    }
+
+    s_chirp_last_ms[ch - 1] = t;
+    ESP_LOGI(TAG, "ch %u connected — chirp", ch);
+    siren_chirp_connect();
+}
+
 /* ── Event Processing ─────────────────────────────────────────── */
 
 static void process_event(const rlc_fsm_event_t *evt)
@@ -418,6 +486,10 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* §6: battery posts this once per crossing — discarding it here
              * would lose it permanently. Critical battery is terminal. */
             do_enter_error(ERR_VBAT_CRITICAL);
+        } else if (evt->type == EVT_CONTINUITY_CHANGED) {
+            /* §12.2: igniters are routinely connected before the remote is
+             * powered, i.e. while the base is still waiting for the link. */
+            maybe_chirp_connect(evt);
         }
         break;
 
@@ -549,6 +621,14 @@ static void process_event(const rlc_fsm_event_t *evt)
                 s_arm_verify_start_ms = 0;
             }
             do_enter_link_lost();
+        } else if (evt->type == EVT_CONTINUITY_CHANGED) {
+            /* §12.2 connect chirp — the normal case: the operator is at the
+             * pad wiring up while the base sits disarmed. Note that bug #30's
+             * comment above ("EVT_CONTINUITY_CHANGED is not handled in IDLE")
+             * described why arming re-reads continuity rather than relying on
+             * an edge; that reasoning is untouched — this arm is audible-only
+             * and changes no state. */
+            maybe_chirp_connect(evt);
         }
         break;
 
@@ -1047,6 +1127,12 @@ static void check_timers(void)
         if ((t - s_postfire_start_ms) >= POST_FIRE_COOLDOWN_MS) {
             s_postfire_start_ms = 0;
             rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
+            /* §12.2: the fired channel's sense line reads OPEN while its relay
+             * is on NO and is re-read once the relay returns to NC. An igniter
+             * that did not fire reappears as CONNECTED with nobody having
+             * touched it — that must not sound like a connection being made.
+             * Suppress chirps across the re-read window. */
+            s_chirp_inhibit_until_ms = t + SIREN_CONNECT_CHIRP_INHIBIT_MS;
             ESP_LOGI(TAG, "POST_FIRE -> IDLE");
             s_state = STATE_IDLE;
         }

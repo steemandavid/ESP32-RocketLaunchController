@@ -51,6 +51,7 @@ static struct {
     int     siren_error_calls;
     int     siren_continuity_calls;
     int     siren_off_calls;
+    int     siren_chirp_calls;
 
     bool    fire_timer_running;
     int     fire_timer_starts;
@@ -96,6 +97,11 @@ void siren_start_link_lost(void)       { hw.siren_link_lost_calls++; hw.siren_on
 void siren_start_error(void)           { hw.siren_error_calls++; hw.siren_on = false; }
 void siren_start_continuity_lost(void) { hw.siren_continuity_calls++; hw.siren_on = false; }
 void siren_off(void)                   { hw.siren_off_calls++; hw.siren_on = false; }
+/* §12.2 connect chirp. The real one declines while the siren is sounding; the
+ * fake records every call regardless, so a test that reaches it from a state
+ * that should have gated it out still fails here rather than being masked by
+ * the driver's own belt-and-braces guard. */
+void siren_chirp_connect(void)         { hw.siren_chirp_calls++; }
 
 /* fire timer */
 void fire_timer_init(void) {}
@@ -232,6 +238,8 @@ static void reset_world(void)
     s_arm_verify_timeouts = 0;   /* MIN-02 strike counter */
     s_link_lost_pending = false;
     s_last_fire_cmd_ms = 0;
+    for (int i = 0; i < NUM_CHANNELS; i++) s_chirp_last_ms[i] = 0;
+    s_chirp_inhibit_until_ms = 0;
 }
 
 static void post(uint32_t type)
@@ -265,6 +273,17 @@ static void post_cont(uint8_t ch, uint8_t band)
     e.type = EVT_CONTINUITY_CHANGED;
     e.data.continuity.channel = ch;
     e.data.continuity.band = band;
+    process_event(&e);
+}
+
+/* Same, flagged as the sampler's first classification of the channel. */
+static void post_cont_initial(uint8_t ch, uint8_t band)
+{
+    rlc_fsm_event_t e = {0};
+    e.type = EVT_CONTINUITY_CHANGED;
+    e.data.continuity.channel = ch;
+    e.data.continuity.band = band;
+    e.data.continuity.initial = 1;
     process_event(&e);
 }
 
@@ -486,6 +505,113 @@ static void t_continuity_loss_disarm(void)
     expect_state("FIRING is not disarmed by OPEN", STATE_FIRING);
     post_cont(1, CONT_OPEN);
     expect_state("FIRING ignores the OPEN event too", STATE_FIRING);
+}
+
+/* FSD §12.2 SIREN_IGNITER_CONNECTED: the connect chirp and, more importantly,
+ * every state and condition in which it must NOT sound. */
+static void t_connect_chirp(void)
+{
+    printf("T-FSM10 igniter-connected chirp (FSD 12.2, 7.3.1)\n");
+
+    /* The feature itself. */
+    reset_world();
+    post_cont(3, CONT_CONNECTED);
+    expect("IDLE + ch CONNECTED -> one chirp", hw.siren_chirp_calls == 1);
+    expect("chirp changes no state", s_state == STATE_IDLE && !hw.arm_relay_on);
+
+    /* BOOT counts too — igniters get wired up before the remote is powered. */
+    reset_world();
+    s_state = STATE_BOOT;
+    post_cont(3, CONT_CONNECTED);
+    expect("BOOT + ch CONNECTED -> chirp", hw.siren_chirp_calls == 1);
+    expect_state("chirp does not leave BOOT", STATE_BOOT);
+
+    /* CONNECTED only. */
+    reset_world();
+    post_cont(1, CONT_MARGINAL);
+    post_cont(2, CONT_OPEN);
+    expect("MARGINAL and OPEN never chirp", hw.siren_chirp_calls == 0);
+
+    /* The sampler's first classification is not a connection being made. */
+    reset_world();
+    post_cont_initial(1, CONT_CONNECTED);
+    expect("initial classification does not chirp", hw.siren_chirp_calls == 0);
+
+    /* ...and having been suppressed, a later real transition still chirps. */
+    advance_ms(SIREN_CONNECT_CHIRP_MIN_INTERVAL_MS);
+    post_cont(1, CONT_CONNECTED);
+    expect("real change after an initial one chirps", hw.siren_chirp_calls == 1);
+
+    /* Rate limit: chatter on one channel cannot machine-gun the siren. */
+    reset_world();
+    post_cont(1, CONT_CONNECTED);
+    advance_ms(SIREN_CONNECT_CHIRP_MIN_INTERVAL_MS - 100);
+    post_cont(1, CONT_CONNECTED);
+    expect("second chirp inside the window suppressed", hw.siren_chirp_calls == 1);
+    advance_ms(200);
+    post_cont(1, CONT_CONNECTED);
+    expect("chirps again once the window passes", hw.siren_chirp_calls == 2);
+
+    /* ...but the limit is per channel: eight igniters, eight blips. */
+    reset_world();
+    for (int ch = 1; ch <= NUM_CHANNELS; ch++) post_cont((uint8_t)ch, CONT_CONNECTED);
+    expect("all 8 channels chirp back to back",
+           hw.siren_chirp_calls == NUM_CHANNELS);
+
+    /* Gated out of every state where the siren means something. */
+    reset_world();
+    arm_now(1);
+    expect_state("armed for the gate check", STATE_ARMED);
+    post_cont(2, CONT_CONNECTED);
+    expect("ARMED never chirps", hw.siren_chirp_calls == 0);
+    expect("ARMED siren still continuous", hw.siren_on);
+
+    reset_world();
+    arm_now(1);
+    post_cmd(EVT_CMD_FIRE, 1);
+    expect_state("pre-fire for the gate check", STATE_PRE_FIRE);
+    post_cont(2, CONT_CONNECTED);
+    expect("PRE_FIRE never chirps", hw.siren_chirp_calls == 0);
+
+    reset_world();
+    arm_now(1);
+    fire_now(1);
+    expect_state("firing for the gate check", STATE_FIRING);
+    post_cont(2, CONT_CONNECTED);
+    expect("FIRING never chirps", hw.siren_chirp_calls == 0);
+
+    reset_world();
+    post(EVT_LINK_LOST);
+    expect_state("link lost for the gate check", STATE_LINK_LOST);
+    post_cont(2, CONT_CONNECTED);
+    expect("LINK_LOST never chirps (its own pattern is running)",
+           hw.siren_chirp_calls == 0);
+
+    reset_world();
+    post(EVT_BATTERY_CRITICAL);
+    expect_state("error for the gate check", STATE_ERROR);
+    post_cont(2, CONT_CONNECTED);
+    expect("ERROR never chirps", hw.siren_chirp_calls == 0);
+
+    /* POST_FIRE, and the re-read window after it returns to IDLE: an unfired
+     * igniter reappearing as CONNECTED is not somebody plugging it in. */
+    reset_world();
+    arm_now(1);
+    fire_now(1);
+    post(EVT_FIRE_PULSE_DONE);
+    expect_state("reached POST_FIRE", STATE_POST_FIRE);
+    post_cont(1, CONT_CONNECTED);
+    expect("POST_FIRE never chirps", hw.siren_chirp_calls == 0);
+
+    advance_ms(POST_FIRE_COOLDOWN_MS + 1);
+    check_timers();
+    expect_state("POST_FIRE -> IDLE", STATE_IDLE);
+    post_cont(1, CONT_CONNECTED);
+    expect("post-fire re-read does not chirp", hw.siren_chirp_calls == 0);
+    advance_ms(SIREN_CONNECT_CHIRP_INHIBIT_MS + 1);
+    post_cont(1, CONT_CONNECTED);
+    expect("chirps again once the inhibit window passes",
+           hw.siren_chirp_calls == 1);
 }
 
 /* FSD §7.2.4: the PRE_FIRE -> FIRING guards. */
@@ -783,6 +909,7 @@ int main(void)
     t_arm_guards();
     t_arm_verify_window();
     t_continuity_loss_disarm();
+    t_connect_chirp();
     t_prefire_guards();
     t_two_fire_cycles();
     t_firing_exits();

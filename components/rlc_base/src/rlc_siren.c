@@ -247,6 +247,36 @@ void siren_start_continuity_lost(void)
     siren_unlock();
 }
 
+/* SIREN_IGNITER_CONNECTED: one SIREN_CONNECT_CHIRP_MS blip, same one-shot
+ * mechanism as siren_boot_pulse() below — but only when the siren is idle.
+ *
+ * The guard is the safety-relevant part. This is the only siren call driven by
+ * an external event (someone plugging in an igniter) rather than by a state
+ * transition, so it is the only one that can arrive at an arbitrary moment.
+ * Arriving mid-pattern it would stop the timer, drive ON, and drive OFF at its
+ * first tick — cutting a LINK_LOST or ERROR pattern short, or worse, silencing
+ * the continuous ARMED tone that is the pad's only audible warning. The FSM
+ * does not call it from those states; this makes that non-negotiable rather
+ * than a property of one switch statement. */
+void siren_chirp_connect(void)
+{
+    siren_lock();
+    if (s_siren_on || s_timer_active) {
+        siren_unlock();
+        ESP_LOGD(TAG, "connect chirp suppressed — siren already sounding");
+        return;
+    }
+    s_pulse_count = 0;
+    siren_drive(true);
+    if (siren_timer_run(SIREN_CONNECT_CHIRP_MS)) {
+        s_timer_active = true;
+    } else {
+        siren_drive(false);   /* see siren_start_link_lost() */
+        s_timer_active = false;
+    }
+    siren_unlock();
+}
+
 /* SIREN_BOOT_TEST: one 200 ms blast. Starting the timer with the cycle count
  * already at 0 makes the first tick take the "pattern finished" branch in
  * siren_timer_cb() — drive OFF, stop, done — which is exactly a single

@@ -9,6 +9,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "rlc_protocol.h"
 
 /**
@@ -42,13 +43,21 @@ rlc_continuity_band_t continuity_get_channel(uint8_t ch);
  * Register a callback invoked when any channel's band changes.
  * Called from continuity_task context, so it must stay short.
  *
- * @param cb  receives the channel (1-8) and its new band. The arguments were
+ * @param cb  receives the channel (1-8), its new band, and whether this is
+ *            the channel's first classification since boot or since an ADC
+ *            failure recovered (`initial`) — the sampler settling on reality
+ *            rather than the world changing. Consumers that act on an
+ *            operator's doing (the §12.2 connect chirp) must ignore those;
+ *            consumers that act on the state itself (STATUS_UPDATE, the
+ *            armed-channel OPEN disarm) treat them like any other change.
+ *            The channel and band arguments were
  *            added on 2026-08-26: the FSM needs to know *which* channel moved
  *            and where to, so that an armed igniter going OPEN can disarm the
  *            base (FSD 7.2.7). A bare "something changed" ping was enough for
  *            the STATUS_UPDATE trigger but not for a safety decision.
  */
-void continuity_register_change_cb(void (*cb)(uint8_t ch, rlc_continuity_band_t band));
+void continuity_register_change_cb(
+    void (*cb)(uint8_t ch, rlc_continuity_band_t band, bool initial));
 
 /**
  * Last sampled sense voltage for a channel, in microvolts.

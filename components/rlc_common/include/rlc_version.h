@@ -7,7 +7,44 @@
 
 #pragma once
 
-/* 1.2.3 (2026-09-01): the base chirps its siren once at the end of a
+/* 1.2.4 (2026-09-10): the base blips its siren each time an igniter is
+ * connected.
+ *
+ * Operator request: the person wiring up at the pad had no way to know a
+ * connection had been made without walking back to read the LEDs on the base
+ * or the remote. A 100 ms blip (SIREN_IGNITER_CONNECTED, §12.2) sounds when a
+ * channel's continuity band moves to CONNECTED.
+ *
+ * Everything interesting about this change is what it refuses to do:
+ *
+ *   - It sounds in BOOT and IDLE only. In ARMED/PRE_FIRE/FIRING the siren is
+ *     the pad's continuous warning that the fire path is live, and the blip's
+ *     "drive on, drive off at the first tick" mechanism would silence it; in
+ *     LINK_LOST and ERROR a patterned alert is running and carries meaning.
+ *     The FSM gates it (§7.3.1) AND siren_chirp_connect() declines whenever
+ *     the siren is already sounding — one gate is a property of a switch
+ *     statement, two make it structural.
+ *   - CONNECTED only. MARGINAL is a connection to look at rather than trust;
+ *     giving it the same blip would teach the wrong reflex, and giving it a
+ *     different one is a second pattern to keep distinct from the 3-blast
+ *     alerts. Deferred until this blip has been heard in the field.
+ *   - Not on the sampler's first classification of a channel (new `initial`
+ *     flag on EVT_CONTINUITY_CHANGED), so igniters already connected at
+ *     power-on do not blip their way through the first round-robin sweep.
+ *   - Not within 2 s of the same channel's last blip (chatter from a
+ *     half-seated connector), and not within 2 s of POST_FIRE → IDLE, where an
+ *     unfired igniter reappears as CONNECTED with nobody having touched it.
+ *
+ * 100 ms rather than the 200 ms of every other pattern because the operator is
+ * standing next to a siren built to be heard across a launch site. Long enough
+ * that its internal sweep makes a tone rather than a click — v1.35's lesson
+ * from the removed ARMED pulse; SIREN_CONNECT_CHIRP_MS is the knob if the
+ * bench says otherwise.
+ *
+ * Base-only, audible-only, no protocol change. Version bumped anyway: the
+ * binary differs. Flash both units together.
+ *
+ * 1.2.3 (2026-09-01): the base chirps its siren once at the end of a
  * successful boot.
  *
  * Operator request: a single 200 ms blast, so the operator at the pad hears
@@ -887,5 +924,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  3
-#define RLC_VERSION_STRING "1.2.3"
+#define RLC_VERSION_PATCH  4
+#define RLC_VERSION_STRING "1.2.4"

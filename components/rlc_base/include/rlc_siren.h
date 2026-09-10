@@ -61,3 +61,22 @@ void siren_start_continuity_lost(void);
  * the chirp is a positive claim that boot completed.
  */
 void siren_boot_pulse(void);
+
+/**
+ * One short blip (SIREN_CONNECT_CHIRP_MS, then silence) — FSD §12.2
+ * SIREN_IGNITER_CONNECTED.
+ *
+ * Sounded when a channel's igniter appears on the continuity sense, so the
+ * operator at the pad hears the connection being made instead of walking back
+ * to read the LEDs on the base or the remote.
+ *
+ * Unlike every other entry point here, this one REFUSES rather than takes
+ * over: if the siren is already sounding — a continuous ARMED/PRE_FIRE/FIRING
+ * tone, or a running LINK_LOST/ERROR/CONTINUITY_LOST pattern — the call is a
+ * no-op. Every other pattern here means something the operator must hear, and
+ * the one-shot's "drive on, drive off at the first tick" mechanism would end
+ * by silencing it. The FSM already gates the call to BOOT and IDLE (§7.3.1);
+ * this is the belt-and-braces half, because the cost of getting it wrong is a
+ * silenced pad warning.
+ */
+void siren_chirp_connect(void);

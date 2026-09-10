@@ -1,5 +1,94 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-10 — fw 1.2.4: the base blips its siren when an igniter is connected
+
+Operator request: the person working at the motors had no way to know a
+connection had been made without walking back to check the LEDs on the base or
+the remote. The base now sounds a single 100 ms siren blip each time a
+channel's continuity band moves to CONNECTED (`SIREN_IGNITER_CONNECTED`,
+FSD §12.2).
+
+### What was built
+
+- **`siren_chirp_connect()`** (`rlc_siren.c`) — the same one-shot mechanism as
+  `siren_boot_pulse()` (pulse count 0, so the first timer tick takes the
+  "pattern finished" branch), at `SIREN_CONNECT_CHIRP_MS`. Unlike every other
+  entry point in that file it **refuses rather than takes over**: if
+  `s_siren_on || s_timer_active` it returns without touching the output.
+- **FSM gate** (`rlc_base_fsm.c`, `maybe_chirp_connect()`) — called only from
+  the **BOOT** and **IDLE** arms of `process_event()`. BOOT is deliberate:
+  igniters are routinely connected before the LCO powers the remote, and the
+  base waits in BOOT until the link comes up.
+- **`initial` flag on `EVT_CONTINUITY_CHANGED`** — the sampler now tells the
+  FSM when a band change is a channel's first classification since boot (or
+  since an ADC failure recovered) rather than something changing in the world.
+  All bands start at OPEN, so igniters already connected at power-on would
+  otherwise blip their way through the first 800 ms round-robin sweep.
+- **Rate limit and inhibit windows** — no second blip on the same channel
+  within 2 s (a half-seated XT60 being wiggled; per channel, so eight igniters
+  in succession still give eight blips), and no blip within 2 s of FSM start or
+  of POST_FIRE → IDLE, where an igniter that failed to fire reappears as
+  CONNECTED with nobody having touched it.
+- **Host tests T-FSM10** (`tests/host/test_base_fsm.c`) — the feature in IDLE
+  and BOOT, and every case where it must stay silent, including the one that
+  matters: with a channel ARMED, a connection on another channel neither blips
+  nor interrupts the continuous tone. 146 checks, 0 failures.
+
+### The design decisions, and why
+
+- **Two gates, not one.** The FSM state gate would be sufficient today. The
+  driver guard exists because this is the only siren call driven by an external
+  event (someone plugging something in) rather than by a state transition, so
+  it is the only one that can arrive at an arbitrary moment — and arriving
+  mid-pattern, the one-shot's drive-on/drive-off would cut a LINK_LOST or ERROR
+  pattern short, or silence the continuous ARMED tone that is the pad's only
+  audible warning that the fire path is live. One gate is a property of a
+  switch statement; two make it structural.
+- **CONNECTED only; MARGINAL stays silent.** MARGINAL is a connection to
+  inspect rather than trust, so giving it the same blip as a good one would
+  teach the wrong reflex. A *distinct* MARGINAL pattern is arguably the more
+  valuable half of this feature — it would tell the operator about a bad crimp
+  without walking back — but it is a second pattern that has to stay
+  distinguishable from the 3-blast ERROR and CONTINUITY_LOST alerts, so it is
+  deferred until this blip has been heard in the field.
+- **100 ms, not 200.** Every other pattern is 200 ms, but the operator making
+  the connection is standing next to a siren built to be heard across a launch
+  site. Shorter risks v1.35's lesson in the other direction: the siren's
+  internal sweep needs time to produce a tone rather than a click, which is why
+  the pulsed ARMED warning was removed. `SIREN_CONNECT_CHIRP_MS` is the knob;
+  **the length has not yet been judged by ear** — that is T-A21 at the pad.
+
+### Documentation
+
+- **FSD v1.57** — §12.2 table row, §7.3.1 step 5 (the gate, the three
+  suppressions, and why MARGINAL is silent), §5.4.8 "silent at power-on"
+  amendment, §14.1 constants, §15.2 **T-A21**, §15.5 **T-FSM10**, revision row.
+- **Operations manual** (`docs/RLC_Operations_Manual.html`) — §4 igniter
+  connection procedure rewritten around the blip ("connect one channel at a
+  time and **listen**"), with the caveat stated explicitly: the blip confirms a
+  good connection, but its **absence is not proof of no connection** — a
+  marginal crimp is silent by design, so check the strip or the grid before
+  concluding. Base controls table and the sounds table both gain the blip.
+- **Field reference card** — new row in the siren table.
+- **`Development_Progress.md`** — firmware table row 1.2.4, Phase 5 status.
+- **`README.md`**, **`RLC_Project_Summary.md`** — version status, and a
+  plain-language paragraph on what the blip means and what stays silent.
+
+### Still to do
+
+- **Flash both units** (strict version check covers all three components).
+  Nothing was flashed this session — no `/dev/serial/by-id/` on the build
+  machine, i.e. neither unit was plugged in. Both are still on 1.2.3.
+- **T-A21 on target**: blip length by ear first (`SIREN_CONNECT_CHIRP_MS` is
+  the knob — 100 ms is an estimate between "punishing at arm's length" and "a
+  click, because the sweep never starts"), then the six suppression cases, of
+  which case (e) is the safety-relevant one: with a channel ARMED, connecting
+  an igniter elsewhere must neither blip nor interrupt the continuous tone.
+- **Decide on MARGINAL** once the blip has been heard in the field. A distinct
+  pattern for a bad crimp is arguably the more useful half of the feature; it
+  needs to stay distinguishable from the 3-blast ERROR and CONTINUITY_LOST
+  alerts.
+
 ## 2026-09-01 — fw 1.2.3: base boot chirp; user docs redrawn from the final base front plate
 
 Two pieces of work in one session: an operator-requested firmware change (boot
