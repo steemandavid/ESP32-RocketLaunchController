@@ -810,11 +810,21 @@ static void process_event(const rlc_fsm_event_t *evt)
 
             /* Guard 1: Arm switch must be ON */
             if (!arm_switch_is_armed()) {
-                ESP_LOGI(TAG, "ARM rejected: arm switch OFF");
+                /* §5.5.2: if the key's two contacts are in disagreement, this
+                 * refusal is very probably a *failed contact* rather than a
+                 * key at SAFE — the two are indistinguishable on the NO leg
+                 * alone, which is why the cross-check exists. Telling the
+                 * operator to turn a key they have already turned, at the one
+                 * moment they are asking why it will not arm, is the worst
+                 * available answer; name the fault instead. */
+                bool key_fault = arm_switch_get_fault();
+                ESP_LOGI(TAG, "ARM rejected: arm switch OFF%s",
+                         key_fault ? " (arm key contacts disagree — suspect the switch)" : "");
                 /* MAJ-06: this was the one guard in the family with no
                  * audible half. §7.2.9a wants both on every refusal. */
                 buzzer_play(BUZZER_BEEP_TRIPLE);
-                display_toast("TURN ARM KEY FIRST");
+                display_toast(key_fault ? "ARM KEY FAULT - CHECK SWITCH"
+                                        : "TURN ARM KEY FIRST");
                 break;
             }
 
@@ -1074,9 +1084,16 @@ static void process_event(const rlc_fsm_event_t *evt)
              * arm switch as a fire precondition; the remote must never put a
              * CMD_FIRE on the wire without it, whatever led it into ARMED. */
             if (!arm_switch_is_armed()) {
-                ESP_LOGW(TAG, "FIRE rejected: arm switch OFF");
+                /* §5.5.2, same reasoning as the ARM guard: the disarm itself
+                 * is correct either way — a key that reads SAFE disarms, and a
+                 * NO contact that has just failed open SHOULD fail safe — but
+                 * the operator is owed the real reason. */
+                bool key_fault = arm_switch_get_fault();
+                ESP_LOGW(TAG, "FIRE rejected: arm switch OFF%s",
+                         key_fault ? " (arm key contacts disagree — suspect the switch)" : "");
                 buzzer_play(BUZZER_BEEP_TRIPLE);
-                display_toast("ARM KEY OFF - FIRE REFUSED");
+                display_toast(key_fault ? "ARM KEY FAULT - FIRE REFUSED"
+                                        : "ARM KEY OFF - FIRE REFUSED");
                 do_disarm_and_idle();
                 break;
             }

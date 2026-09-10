@@ -596,6 +596,10 @@ typedef struct {
     rlc_link_status_t           link;
     uint16_t                    vbat_mv;
     bool                        remote_key_armed;
+    /* §5.5.2: the two arm-key contacts have been disagreeing. The condition
+     * persists until the switch is serviced, so — unlike the 3 s toast that
+     * announces it — the indication must persist too. */
+    bool                        remote_key_fault;
     bool                        remote_error_latched;   /* set by the frame loop */
     rlc_payload_status_update_t status;
     bool                        status_fresh;
@@ -610,6 +614,7 @@ static void snapshot(disp_data_t *d)
     d->armed             = remote_fsm_get_armed_channel();
     d->vbat_mv           = rlc_battery_get_voltage_mv();
     d->remote_key_armed  = arm_switch_is_armed();
+    d->remote_key_fault  = arm_switch_get_fault();
     d->status_fresh      = remote_fsm_get_status(&d->status);
     d->prefire_remain_ms = remote_fsm_get_prefire_remaining_ms();
     rlc_link_get_status(&d->link);
@@ -1063,9 +1068,16 @@ static void draw_main_dynamic(const disp_data_t *d)
      * WELD! flash on every disarm, and it also read SAFE on a dead link for as
      * long as the last status stayed inside its freshness window. */
     base_arm_state_t bs = base_arm_state_settled(d);
+    /* §5.5.2: under a contact fault this field must not keep asserting a key
+     * position — its two sources disagree, so "ARMED"/"SAFE" would be a claim
+     * the remote cannot support. Saying KEY FAULT is both the honest answer
+     * and the persistent indication the 3 s toast cannot be.
+     * "BASE READY   REMOTE KEY FAULT" is 29 of the 29 characters this field
+     * holds at the scale-2 floor. */
     snprintf(buf, sizeof(buf), "BASE %s   REMOTE %s",
              base_arm_label(bs),
-             d->remote_key_armed ? "ARMED" : "SAFE");
+             d->remote_key_fault ? "KEY FAULT"
+                                 : (d->remote_key_armed ? "ARMED" : "SAFE"));
     draw_field(120, y, DW - 126, buf, 2, fg, bg);
 
     if (d->status_fresh && d->status.error_flags) {
@@ -1084,6 +1096,16 @@ static void draw_main_dynamic(const disp_data_t *d)
                      ef, rlc_error_flag_str(ef));
         }
         draw_text_centred_bg_in(0, DW, DH - 35, buf, 2, fg, bg);
+    } else if (d->remote_key_fault) {
+        /* §5.5.2. Ranked below a base error — that one is about the fire path
+         * — but above the next-step prompt, because the prompt is exactly what
+         * this fault makes untrustworthy: with a failed NO contact the key
+         * reads SAFE, so the line would tell the operator to turn a key they
+         * are looking at, already turned. The REMOTE field above says KEY
+         * FAULT at the same time, so the fault stays visible even while a base
+         * error owns this line. */
+        draw_text_centred_bg_in(0, DW, DH - 35,
+                                "ARM KEY FAULT - CHECK SWITCH", 2, fg, bg);
     } else {
         /* Name the step that is actually outstanding. This used to test only
          * the remote arm switch, so with the remote armed and the base key
@@ -1164,7 +1186,8 @@ static void draw_armed_dynamic(const disp_data_t *d, bool blink_on)
     bool sense_ok = d->status_fresh && d->status.base_arm_sense;
     snprintf(buf, sizeof(buf), "BASE ARM SENSE %s   REMOTE %s",
              sense_ok ? "OK" : (d->status_fresh ? "NOT OK" : "?"),
-             d->remote_key_armed ? "ARMED" : "SAFE");
+             d->remote_key_fault ? "KEY FAULT"
+                                 : (d->remote_key_armed ? "ARMED" : "SAFE"));
     uint32_t bg = draw_status_band(d, BAND_Y, 0, false);
     draw_text_centred_bg_in(0, DW, DH - 26, buf, 2, band_fg(bg), bg);
 }

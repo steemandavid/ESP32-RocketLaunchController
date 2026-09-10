@@ -1,5 +1,81 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-10 — fw 1.2.7: the arm-key fault becomes visible where it is needed
+
+Prompted by the question "is there an explicit error screen coded for the arm
+key exceptions?" There was not — 1.2.6 raised the fault with a triple beep and a
+3-second amber toast, fired once on the edge, and that is all. Answering the
+question honestly exposed that the announcement was **transient for a condition
+that persists**, and worse, that it landed at the wrong moment.
+
+The sequence that makes it concrete:
+
+1. The NO contact fails. The operator turns the key to ARM.
+2. ~1 s later: triple beep, ARM KEY SWITCH FAULT for 3 s. The operator is
+   looking at the pad or the key, not the screen.
+3. They long-press to arm. Refused.
+4. The display says **TURN ARM KEY FIRST** — the same overlay slot, now telling
+   them to turn a key they are looking at, already turned, at the exact moment
+   they are asking why it will not arm. The message that would have explained
+   it expired a moment earlier.
+
+The information existed and was thrown away just before it was needed.
+
+### 1. The refusals are state-aware
+
+The ARM guard and the FIRE key-off guard now consult `arm_switch_get_fault()`
+and say **ARM KEY FAULT - CHECK SWITCH** / **ARM KEY FAULT - FIRE REFUSED**
+while the contacts disagree.
+
+The refusals themselves are untouched and remain correct — a NO contact that
+fails open *should* read as SAFE and *should* fail safe. Only the explanation
+changes. That distinction matters: this is a wording fix on a safety path, not
+a behaviour change to one.
+
+### 2. The indication persists
+
+| Element | While the fault stands |
+|---|---|
+| Status band, REMOTE field | **KEY FAULT** in place of ARMED/SAFE — main and ARMED screens |
+| Main screen prompt line | **ARM KEY FAULT - CHECK SWITCH** |
+| Toast | unchanged: on the rising edge, ARM KEY OK on the falling edge |
+
+The REMOTE field is the load-bearing half. That field's entire job is to report
+the key position, and while the two contacts disagree **the remote cannot
+honestly claim one** — so it stops asserting rather than picking the more likely
+answer. It also keeps the fault visible when a base error owns the prompt line.
+
+Ranking on the prompt line: below a base error (that one is about the fire
+path), above the next-step prompt — which is precisely what this fault makes
+untrustworthy, since with a failed NO contact the prompt would read "FLIP REMOTE
+ARM SWITCH" at someone who already has.
+
+### What was deliberately not done
+
+`display_error()` exists and latches a full error screen until reboot (§10.2.6).
+It was **not** used. For a maintenance warning on a path that is not the fire
+path, holding the screen until a power cycle would make the indication more
+disruptive than the condition — and this fault is explicitly not an interlock.
+Using it would have contradicted the 1.2.6 decision rather than completing it.
+
+### Generalised, so the next one gets it right
+
+New **FSD §10.2.7a**: a transient overlay announces an *event*; a condition that
+continues to hold SHALL also be shown persistently. The 3 s toast is right for a
+refusal or a NACK — something that happened — and wrong on its own for a state
+that continues, because an operator who was not watching the screen has no way
+to recover the information. Written as the rule for any comparable condition
+added later, not just this one.
+
+### Flashed
+
+Both units on 1.2.7 and linked; remote logs `=== RLC Remote Unit v1.2.7 ===`,
+`arm_sw: initialised (NO=7, NC=2, LED=8)`, `LINKING -> IDLE`. T-A23 gains the
+v1.60 steps — check the REMOTE field and prompt line **after waiting out the
+3 s toast**, since the whole point is that they are still there — and remains
+outstanding.
+
+
 ## 2026-09-10 — fw 1.2.6: the remote's arm key has a second contact, on GPIO 2
 
 Found by the operator, not by the code, and not by any document. The remote's

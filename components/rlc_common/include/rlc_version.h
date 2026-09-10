@@ -7,7 +7,41 @@
 
 #pragma once
 
-/* 1.2.6 (2026-09-10): the remote's arm key switch has a second contact, and
+/* 1.2.7 (2026-09-10): the arm-key fault is now visible where it is needed,
+ * not just for three seconds when it appears.
+ *
+ * 1.2.6 announced ARM KEY SWITCH FAULT with a triple beep and a 3 s amber
+ * toast, fired once on the edge. The condition it reports is not transient —
+ * a broken wire stays broken — and the announcement was landing at the wrong
+ * moment: the operator turns the key, looks at the pad rather than the screen,
+ * long-presses to arm, and gets refused. Under 1.2.6 that refusal read
+ * "TURN ARM KEY FIRST" — telling them to turn a key they are looking at,
+ * already turned, at the exact moment they are asking why it will not arm,
+ * with the toast that would have explained it already expired.
+ *
+ *   1. The refusals are state-aware. The ARM guard and the FIRE key-off guard
+ *      now say "ARM KEY FAULT - CHECK SWITCH" / "ARM KEY FAULT - FIRE
+ *      REFUSED" when the contacts are in disagreement. The refusal itself is
+ *      unchanged and still correct — a NO contact that fails open SHOULD read
+ *      as SAFE and fail safe — only the explanation improves.
+ *
+ *   2. The indication persists. The status band's REMOTE field reads
+ *      "KEY FAULT" instead of ARMED/SAFE for as long as the fault stands, on
+ *      both the main and ARMED screens, and the main screen's prompt line
+ *      reads "ARM KEY FAULT - CHECK SWITCH". The field change is the
+ *      important half: that field's whole job is to report the key position,
+ *      and while the two contacts disagree the remote cannot honestly claim
+ *      one. Ranked below a base error on the prompt line (that one is about
+ *      the fire path) but above the next-step prompt — which is precisely
+ *      what this fault makes untrustworthy.
+ *
+ * Still not an interlock, still not a latched error screen. `display_error()`
+ * would hold the screen until reboot, which for a maintenance warning on a
+ * path that is not the fire path would be more disruptive than the fault.
+ *
+ * Remote-only, display and wording, no protocol change. Flash both units.
+ *
+ * 1.2.6 (2026-09-10): the remote's arm key switch has a second contact, and
  * the firmware now knows about it.
  *
  * Found by the operator, not by the code: the key is an SPDT with its common
@@ -1003,5 +1037,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  6
-#define RLC_VERSION_STRING "1.2.6"
+#define RLC_VERSION_PATCH  7
+#define RLC_VERSION_STRING "1.2.7"
