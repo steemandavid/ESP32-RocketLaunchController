@@ -75,6 +75,20 @@ v1.60 steps — check the REMOTE field and prompt line **after waiting out the
 3 s toast**, since the whole point is that they are still there — and remains
 outstanding.
 
+### Closing sweep
+
+A cross-reference check caught two wrong section numbers in the text written
+above: the v1.60 revision row and §10.2.7a both pointed the refusal messages at
+**§8.3.1**, which is the rotary encoder. The ARM guard is §8.2.3 (IDLE → ARMED)
+and the FIRE key-off guard is §8.2.4 (ARMED → PRE_FIRE) — the latter verified by
+reading the guard's enclosing `case STATE_ARMED` rather than trusting the first
+plausible section. Both corrected.
+
+Everything else in the session's documentation was written alongside the code
+and re-checked: no doc still describes the arm-key fault as toast-only, and the
+firmware-version statements in `README.md` and `Development_Progress.md` track
+1.2.7.
+
 
 ## 2026-09-10 — fw 1.2.6: the remote's arm key has a second contact, on GPIO 2
 
