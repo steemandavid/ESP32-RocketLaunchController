@@ -6,6 +6,7 @@
 #   ./build_remote.sh flash    # build + flash (default PORT below; override with -p <by-id>)
 #   ./build_remote.sh -p PORT  # build and flash to custom port
 #   ./build_remote.sh --inject # TEST ONLY: remote fault-injection console
+#   ./build_remote.sh splash F  # flash ONLY the boot video band asset F
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -20,15 +21,35 @@ PORT="/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B5E043219-if00"   # remote C
 # Parse args
 DO_FLASH=false
 DO_INJECT=false
+SPLASH_FILE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         flash)    DO_FLASH=true ;;
+        splash)   shift; SPLASH_FILE="${1:-}" ;;
         --inject) DO_INJECT=true ;;
         -p)       shift; PORT="$1" ;;
-        *)        echo "Usage: $0 [flash] [--inject] [-p PORT]"; exit 1 ;;
+        *)        echo "Usage: $0 [flash] [splash FILE] [--inject] [-p PORT]"; exit 1 ;;
     esac
     shift
 done
+
+# `splash FILE` writes only the boot video band asset and exits. It is a
+# separate partition precisely so the footage can be iterated on without
+# rebuilding or reflashing the firmware that runs the fire path.
+if [ -n "$SPLASH_FILE" ]; then
+    if [ ! -f "$SPLASH_FILE" ]; then
+        echo "No such asset: $SPLASH_FILE"
+        echo "Build one with: tools/mkvideoband.py <video> -o splash.bin"
+        exit 1
+    fi
+    source ~/esp/esp-idf/export.sh 2>/dev/null
+    echo "=== Writing splash asset $SPLASH_FILE to $PORT ==="
+    python3 "$IDF_PATH/components/partition_table/parttool.py" \
+        --port "$PORT" --partition-table-file "$BUILD_DIR/partition_table/partition-table.bin" \
+        write_partition --partition-name splash --input "$SPLASH_FILE"
+    echo "Done. Power-cycle the remote to see it."
+    exit 0
+fi
 
 # Source ESP-IDF
 source ~/esp/esp-idf/export.sh 2>/dev/null
@@ -116,10 +137,22 @@ if $DO_FLASH; then
     # success, and the stale build was only caught by reading version banners
     # off the devices. In a project whose safety rule is "flash both units
     # together", a silently-failed flash is the wrong thing to be quiet about.
+    #
+    # Bootloader + partition table + app, not just the app. The remote moved
+    # off CONFIG_PARTITION_TABLE_SINGLE_APP in 1.2.9 (partitions_remote.csv:
+    # 3 MB factory, plus a 2 MB `splash` partition for the boot video band),
+    # and a device still carrying the old 1 MB table would either reject the
+    # larger image or run it against the wrong map. Writing all three is
+    # cheap and removes the question.
+    #
+    # The `splash` partition is NOT written here — it is flashed separately
+    # with `./build_remote.sh splash <file>` and survives app reflashes.
     FLASH_LOG=$(mktemp)
     if ! python3 -m esptool --chip esp32s3 -p "$PORT" -b 460800 \
         --before default_reset --after hard_reset \
         write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
+        0x0     "$BUILD_DIR/bootloader/bootloader.bin" \
+        0x8000  "$BUILD_DIR/partition_table/partition-table.bin" \
         0x10000 "$BUILD_DIR/rlc.bin" > "$FLASH_LOG" 2>&1; then
         echo "*** FLASH FAILED — REMOTE IS STILL RUNNING ITS PREVIOUS FIRMWARE ***"
         tail -15 "$FLASH_LOG"

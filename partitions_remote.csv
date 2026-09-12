@@ -1,0 +1,18 @@
+# Remote unit partition table (16 MB flash).
+#
+# The remote left CONFIG_PARTITION_TABLE_SINGLE_APP behind in 1.2.9: that
+# table gives the app 1 MB, and at 863 KB there was no room for the boot
+# splash video band. The base keeps the single-app table — it has no splash
+# asset, and not touching its layout keeps a pad-side unit off the list of
+# things this change can break.
+#
+# `splash` holds the RLCV video blob (tools/mkvideoband.py) and is read
+# memory-mapped, so it needs no filesystem. 2 MB is far more than the ~500 KB
+# a 10 s band costs, deliberately: reflashing the asset must never mean
+# redrawing the partition table, which would mean re-flashing the app too.
+#
+# Name,     Type, SubType,   Offset,   Size,     Flags
+nvs,        data, nvs,       0x9000,   0x6000,
+phy_init,   data, phy,       0xf000,   0x1000,
+factory,    app,  factory,   0x10000,  0x300000,
+splash,     data, undefined, ,         0x200000,

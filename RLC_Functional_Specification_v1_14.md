@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.62
-**Date:** 2026-09-10
+**Version:** 1.65
+**Date:** 2026-09-12
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -76,6 +76,9 @@
 | 1.60 | 2026-09-10 | **The arm-key fault becomes visible where it is needed; §10.2.7a. Firmware 1.2.7.** v1.59 announced ARM KEY SWITCH FAULT with a triple beep and a 3 s toast, fired once on the edge — a transient announcement for a condition that persists until the switch is serviced, landing at the wrong moment. The sequence that exposed it: the operator turns the key, looks at the pad rather than the screen, long-presses to arm and is refused — and under v1.59 that refusal read **"TURN ARM KEY FIRST"**, telling them to turn a key they are looking at, already turned, at the exact moment they are asking why it will not arm, with the toast that would have explained it already expired. Two changes. **(1) The refusals are state-aware**: the §8.2.3 ARM guard and the §8.2.4 FIRE key-off guard now say "ARM KEY FAULT - CHECK SWITCH" / "ARM KEY FAULT - FIRE REFUSED" while the contacts disagree. The refusals themselves are unchanged and remain correct — a NO contact that fails open SHOULD read as SAFE and fail safe — only the explanation improves. **(2) The indication persists**: the status band's REMOTE field reads **KEY FAULT** instead of ARMED/SAFE for as long as the fault stands, on both the main and ARMED screens, and the main screen's prompt line reads ARM KEY FAULT - CHECK SWITCH. The field change is the important half — that field's job is to report the key position, and while the two contacts disagree the remote cannot honestly claim one. The prompt line ranks it **below** a base error (that one is about the fire path) and **above** the next-step prompt, which is exactly what this fault makes untrustworthy; the REMOTE field keeps it visible even when a base error owns the line. Deliberately **not** the §10.2.6 latched error screen: that holds until reboot, which for a maintenance warning off the fire path would be more disruptive than the fault. New §10.2.7a; §5.5.2 and T-A23 extended. Remote-only, display and wording, no protocol change. |
 | 1.61 | 2026-09-10 | **As-built panel re-verified against a new photograph of the open case; two v1.54/v1.56 claims withdrawn.** New reference photo `baseunit.jpg` (fileshare) → `docs/reference/RLC_base_open_case.jpg`, cross-checked against the existing `RLC_base_front.jpg`, which agrees on every point. **(1) The panel carries no USB socket.** v1.56's "two USB sockets at top left, side by side behind the lid grommet: COM and JTAG" is **withdrawn** — the photograph shows the panel's top edge as unbroken brushed aluminium and mounting screws from the antenna at the left to the on/off plate at the right. The Visio drawing v1.56 cited does carry "Usb com connector" and "Usb jtag connector" annotations, so the claim had a source — but they sit in the drawing's **interior** group with `battery`, `siren` and `XT60 battery connector`, not with the panel items; they annotate the ESP32 board's own two ports inside the case. v1.56 read an interior annotation as a panel feature. v1.54's original position (service access by opening the case) is reinstated and extended to both ports. **(2) The key-plate engraving does not name the lamps, except HOT.** v1.54's "SAFE (green, upper left of the barrel), ARM (red, upper right), HOT (red, lower left)" is **withdrawn**: `SAFE` and `ARM` are engraved across the *top* of the plate flanking the barrel and mark the two **key positions**. Only `HOT` labels a lamp. All three lamps are **clear-lens** LEDs sitting lower on the plate and must be identified **by position** — HOT under its engraving at the left, SAFE lower centre, ARM lower right. The mapping has two independent confirmations: the photograph taken with the base idle and the key at ARM (`arm=0 key=1`) — lower-right lit red, lower-centre dark, HOT dark, the key alone not making the pad live — and the Visio drawing's own annotations (`SAFE LED`, `ARM LED`, `HOT`), which place SAFE and ARM at the same height with SAFE left of ARM and HOT higher and further left. Also corrected: the panel is mounted in the **case base**, not the lid (the lid hinges away empty); the key barrel is **chrome with a white face**, not brass; and each channel module's **FIRE lens is directly below the IGN lens**, not "beside" it (v1.56) — the `IGN` and `FIRE` engravings each sit immediately above their own lens. §5.4.4 and §5.4.11 as-built notes rewritten, RLC-OPS-001 Figure 3 and the cover diagram redrawn, §3.2 controls table and README conformed. §5.5 gains an **as-built verification-status note**: the remote panel has never been checked against the built unit — Figure 2 is drawn from the design file — and given that this revision withdrew a USB-socket claim on the base and v1.59 found an undocumented contact on a pin C.2 advertised as spare, the same reconciliation is outstanding for the remote. Incidental confirmation: all eight IGN lenses read amber with nothing connected — `RLC_COLOR_CONT_OPEN` on all eight, the expected resting display. Documentation-only; no firmware change (fw stays 1.2.7). |
 | 1.62 | 2026-09-10 | **Second range test: 430 m holding at −91 dBm — the v1.33 d⁴ extrapolation is retired as a prediction.** Same geometry class as the 2026-08-25 test: base on the ground, external antennas on both units. The new reading is more than double the 200 m distance at a *stronger* reported RSSI (−91 vs −93 dBm), which contradicts the v1.33 two-ray (d⁴) extrapolation of "runs out at ~250–260 m in that geometry" by ~15 dB (d⁴ predicts ~−106 dBm at 430 m). §6.1 now records d⁴ as a **pessimistic bound, not a prediction**: the model fitted the single 200 m point to 0.5 dB, but the real link's geometry (remote height above ground, ground conditions) evidently departs from the ideal two-ray case. At 430 m the link retained **5–8 dB of margin** against the −96 to −99 dBm drop-out window. Recorded that the two RSSI figures are not strictly comparable across sessions — the reading is uncalibrated and compressed in the high −90s (v1.33). The v1.33 height guidance stands: raising both ends to ~1.5 m is worth ~30 dB. Documentation-only; no firmware change (fw stays 1.2.7). |
+| 1.63 | 2026-09-12 | **§10.2.1 boot splash animation; firmware 1.2.7 → 1.2.8.** The splash gains a procedurally-drawn background scene — two side boosters descending onto their pads through a graded night sky over the 10 s hold, with plumes, deploying legs, staggered touchdowns and settling dust — in a new band at `y 116..190`, with the static header block moved up to open it (dynamic field positions unchanged). Recorded in §10.2.1 as a *procedural* scene and why it SHALL NOT become video playback: the ILI9488 is 18-bit-only over SPI, so a full frame is 460,800 B = 184 ms against a 100 ms frame period — the wire is the constraint, not decode cost or flash space, and full-panel playback would saturate the panel for exactly the window the link handshake runs in. Scene colours are bounded below `0x9A` on every channel so the title and version text keep the contrast, and the starfield is static because scattered single-pixel changes widen §10.3's per-row transmit runs for nothing. A `CONFIG_RLC_REMOTE_FAULT_INJECTION` build draws no scene. Also in this revision: **the splash stops presenting the handshake as bounded.** `LINK_REQUEST_MAX_RETRIES` is a backoff threshold, not a give-up count, and rendering it as the denominator of `Attempt N / 5` — clamped, bar pinned at 100% — froze the boot screen while the firmware was still retrying, reading as a hung remote. Now an unbounded `Attempt N`, with a `No response from base` headline and an indeterminate sweep past the threshold; `display_splash()` loses its `max_attempts` argument. And **`LINK_REQUEST_SLOW_INTERVAL_MS` is restored to 5000** (§14.1): it had read 2000 since the initial scaffolding commit, equal to the fast interval, so §6.4.1's backoff chose between two identical values and had never once taken effect — and this document's constants table had been edited down to match the code instead of the code being fixed to match v1.3–v1.8. The fast phase is untouched, so v1.14's aggressive-retry intent stands; the cost is up to 3 s of extra reconnect latency in LINK_LOST, where the base already fails safe independently. **Explicitly not a battery saving** — `rlc_espnow.c` sets `WIFI_PS_NONE` with no PM or tickless idle, so the receive chain draws continuously whatever the transmit cadence — and recorded as such in §10.2.1 and §14.1 so it is not cited as one later. Also **new `BEEP_LINK_TRY` (§12.1)**: a 40 ms blip per handshake attempt while `LINKING`, so a remote left switched on with no base in range says so audibly instead of flattening its pack behind a screen nobody is looking at — this, not the retry interval, is the actual battery measure. No protocol change; version bumped because a changed binary sharing a version number is what the strict check exists to prevent. |
+| 1.64 | 2026-09-12 | **§10.2.1 boot splash: procedural scene replaced by a video band; firmware 1.2.8 → 1.2.9.** v1.63's drawn boosters were rejected on appearance and their code is removed entirely. The splash now plays a letterboxed **480x80 JPEG frame sequence at 10 Hz** (`y 112..191`) from a new `splash` flash partition. The remote leaves `CONFIG_PARTITION_TABLE_SINGLE_APP` for `partitions_remote.csv` (3 MB factory + 2 MB `splash`, memory-mapped, no filesystem); **the base keeps the single-app table**, being out of scope. The asset is deliberately not embedded in the binary, so footage can be reflashed without touching the image that runs the fire path — `./build_remote.sh flash` now writes bootloader + partition table + app, and `./build_remote.sh splash <file>` writes the asset alone. New `tools/mkvideoband.py` builds the container and performs the mandatory grading (desaturate, darken, hard-cap every channel at `0x9A`) so the title text keeps its contrast. Every failure path — missing partition, missing, blank or corrupt asset, wrong dimensions, undecodable frame — degrades to a plain dark band and a normally-booting remote; the container is validated whole at init. The clip holds on its last frame rather than looping, because an unlinked remote sits on this screen indefinitely. Restated unchanged: full-panel playback remains impossible at 184 ms/frame against a 100 ms period, and SHALL NOT be attempted. |
+| 1.65 | 2026-09-12 | **§10.2.1 splash layout and cut corrections; firmware 1.2.9 → 1.2.10.** Three operator-reported fixes, all cosmetic. **(1)** The v1.64 cut missed the landing: its crop pan settled *after* touchdown, putting the pads on the band's bottom edge so the boosters descended out of the strip instead of landing in it. Re-cut with the pan settling on the touchdown itself; §10.2.1 now records why this is fiddly (the source camera tracks, so the ground line moves from ~63-65% of frame height to ~55% during the landing) so the next re-cut does not rediscover it. **(2)** The band now SHALL keep 15 blank rows above and below it — butted straight against the credit and the status line, it read as a rendering fault rather than a frame. **(3)** The version string leaves its own row for the copyright line (`(C) 2026 David Steeman  v<version>`), which is what pays for those margins; it SHALL stay on the boot screen in some form, because the strict version check makes the running firmware something an operator must be able to read without a serial cable. The fault-injection banner is keyed off the band geometry instead of its own literals, so it keeps occupying exactly the band's rows if the band moves again. |
 
 ## Table of Contents
 
@@ -2660,9 +2663,9 @@ The display shall support the following screens, determined by the remote FSM st
 │              CONTROLLER  v1.0.0                  │
 │                                                  │
 │              Connecting to base...               │
-│              Attempt 3 / 5                       │
+│              Attempt 3                           │
 │                                                  │
-│              ████████░░░░░░░░░░░░  40%           │
+│              ████████░░░░░░░░░░░░  60%           │
 │                                                  │
 └──────────────────────────────────────────────────┘
 ```
@@ -2696,11 +2699,121 @@ live well before the hold expires, so without this the remote could sit in ARMED
 the FIRE COMPLETE cancel list (§10.2.4a). Firmware-mismatch and error screens
 still outrank everything.
 
+**Retry counter SHALL NOT be presented as bounded (v1.63, firmware 1.2.8).**
+`LINK_REQUEST_MAX_RETRIES` is a backoff threshold, not a give-up count: the
+remote retries the handshake indefinitely, fast below the threshold and at
+`LINK_REQUEST_SLOW_INTERVAL_MS` above it (§6.4.1). No screen may render it as a
+denominator or clamp the counter to it. Through 1.2.7 the splash showed
+`Attempt N / 5`, clamped, with the bar pinned at 100% — a boot screen frozen
+while the firmware was still working, which reads as a hung remote on the one
+screen whose purpose is to show the unit is alive.
+
+The splash SHALL therefore show an unbounded `Attempt N`. Once N reaches
+`LINK_REQUEST_MAX_RETRIES` the headline SHALL read `No response from base` and
+the progress bar SHALL become an **indeterminate sweep**; below the threshold
+the bar may still show progress through the fast-retry phase, which is a real
+quantity. `display_splash()` takes no maximum.
+
+**Fast/slow handshake cadence (v1.63, firmware 1.2.8).**
+`LINK_REQUEST_SLOW_INTERVAL_MS` is restored to **5000 ms** (§14.1). It had read
+2000 in `rlc_config.h` since the initial commit — equal to the fast interval,
+making the §6.4.1 backoff a no-op for the life of the project — and this
+document's own constants table had been edited down to 2000 to match the code
+rather than the code corrected to match v1.3-v1.8's 5000. This does not reverse
+v1.14's move to aggressive retries: the fast phase (5 x 2 s) is unchanged, and
+the backoff engages only after ten seconds of silence. It costs up to 3 s of
+additional reconnect latency in `LINK_LOST`, accepted because link loss is not
+a silent failure — the base fails safe independently (§6.4.2) and the remote is
+already alarming.
+
+**This SHALL NOT be recorded as a power saving.** `rlc_espnow.c` configures
+`WIFI_PS_NONE` with no PM or tickless idle, so the receive chain draws
+continuously irrespective of transmit cadence; the change is a correctness fix
+against this specification, not a battery measure.
+
+**Boot video band (v1.64, firmware 1.2.9; layout revised v1.65, firmware
+1.2.10).** The splash SHALL carry a letterboxed **480x80 video band at
+`y 101..180`** playing a JPEG frame sequence at 10 Hz from the remote's
+`splash` flash partition. The static header sits above it (title `y 10` /
+`y 38`, club credit `y 70`); the dynamic fields are unmoved — headline
+`y 196`, attempt `y 228`, progress bar `y 262`, copyright `y DH-26`.
+
+**The band SHALL keep a clear margin above and below it** — 15 blank rows on
+each side, between the credit (ending `y 85`) and the headline (starting
+`y 196`). A photograph butted straight against the text either side of it
+reads as a rendering fault rather than a frame. Both gaps are load-bearing:
+anything that moves the header, the band or the headline must preserve them.
+
+**The version string SHALL appear on the copyright line**, not on a row of its
+own — `(C) 2026 David Steeman  v<version>` at `y DH-26`. Freeing that row is
+what pays for the band's margins. It SHALL remain on the boot screen in some
+form: the strict version check makes "which firmware is this unit running" a
+question an operator must be able to answer without a serial cable, and the
+firmware-mismatch screen that would otherwise report it is only reachable once
+a base answers.
+
+This replaces v1.63's procedurally-drawn scene, which was rejected on its
+appearance. All of its drawing code is removed.
+
+*The band SHALL NOT be widened to the full panel.* The ILI9488 is 18-bit-only
+over SPI, so a full 480x320 frame is 460,800 B — 184 ms at
+`DISPLAY_SPI_CLOCK_HZ`, against a 100 ms frame period. Full-panel playback is
+not slow, it is impossible, and it would saturate the panel for exactly the
+window the link handshake runs in. The band is 115,200 B = 46 ms. Decode cost
+and flash space are not the constraint; the wire is.
+
+**Asset storage.** The remote leaves `CONFIG_PARTITION_TABLE_SINGLE_APP` for
+`partitions_remote.csv` — 3 MB factory plus a 2 MB `splash` data partition,
+read memory-mapped with no filesystem. The asset SHALL NOT be embedded in the
+application binary: keeping it separate means footage can be re-cut and
+reflashed without rebuilding or reflashing the image that runs the fire path.
+`./build_remote.sh flash` consequently writes bootloader + partition table +
+app; the asset is written separately with `./build_remote.sh splash <file>`.
+**The base retains the single-app table** — it has no splash asset, and leaving
+its layout untouched keeps a pad-side unit out of scope for this change.
+
+**Grading is part of the format.** `tools/mkvideoband.py` SHALL desaturate,
+darken and hard-cap every channel at `0x9A` before encoding. The band sits
+behind white title text on the boot screen of a launch controller and the text
+must win on contrast; footage graded for a monitor will not.
+
+**Every failure SHALL be non-fatal.** A missing partition, a missing, blank or
+corrupt asset, wrong dimensions, or a frame that fails to decode SHALL each
+result in a plain dark band and a normally-booting remote. The container is
+validated in full at init — magic, format version, frame count, dimensions,
+interval, and every frame offset and length against the partition size — so
+that an erased all-`0xFF` partition is rejected as cleanly as a corrupt one and
+the 10 Hz path can index the frame table without re-checking bounds. A boot
+screen decoration must never be able to stop the unit coming up.
+
+**Shipped asset.** `assets/splash_falconheavy.bin` — the Falcon Heavy side
+boosters landing at LZ-1/LZ-2, 6 February 2018, cut from NASA imagery that is
+public domain in the United States. Source, licence and the exact
+`mkvideoband.py` recipe are recorded in `assets/README.md`; 199,110 B, 9.5% of
+the partition.
+
+**The cut SHALL contain the touchdown, not just the descent.** The source
+camera tracks and zooms: the ground line sits at ~63-65% of frame height at
+t=226-227 s and rises to ~55% by t=228 s. A band not low enough for the
+earlier, lower ground line puts the pads on its bottom edge and the boosters
+descend *out of* the strip rather than landing in it — the defect in the v1.64
+cut, corrected in v1.65 by settling the crop pan on the touchdown itself
+rather than after it.
+
+**The clip SHALL hold on its last frame, not loop.** `STATE_LINKING` maps to
+the splash screen, so an unlinked remote sits on it indefinitely; a landing
+clip restarting every ten seconds forever is a worse thing to leave switched on
+than a still of two landed boosters. Once held, the decode is skipped and the
+blit writes identical pixels, which §10.3's per-row `memcmp` rejects — an ended
+clip costs nothing on the wire.
+
 **Fault-injection banner (v1.51, firmware 1.2.1).** When the remote is built
 with `CONFIG_RLC_REMOTE_FAULT_INJECTION` the splash screen SHALL carry an
 unmissable warning: a red frame around the full panel and a red block reading
 `!! FAULT INJECTION BUILD !!` / `NOT SAFE FOR LIVE USE`, displacing the club
-credit. An abnormal build shall not look normal.
+credit — and, since v1.63, the boot animation with it: no scene or video
+band is drawn at all in such a build. An abnormal build shall not look normal, least of all
+prettier.
 
 The other four announcements this build already makes — the compile `#warning`,
 the boot banner, the flash-time warning, and the build failure if the option did
@@ -3064,6 +3177,7 @@ The remote uses an active buzzer for audible feedback. Patterns are implemented 
 | `BEEP_TRIPLE` | 100 on, 80 off, 100 on, 80 off, 100 on | Error / NACK received |
 | `BEEP_LONG` | 500 on | Disarm event |
 | `BEEP_PING_FAIL` | 80 on | Link quality degraded — played once on the transition into `ERR_COMM_DEGRADED` (rising edge), NOT once per missed ping. At a 500 ms heartbeat a per-ping beep would be a continuous rattle during exactly the condition the operator needs to hear other alerts through. (Semantics pinned v1.44; the pattern existed but was never played before firmware 1.1.9.) |
+| `BEEP_LINK_TRY` | 40 on | **Unlinked and still trying** — one blip per LINK_REQUEST while the link state is `LINKING`, i.e. the remote has never linked this power cycle. Its purpose is battery, not diagnosis: a remote switched on with no base in range retries forever (§6.4.1) and `STATE_LINKING` maps to the splash screen, so that is its indefinite steady state, not a boot phase — it will flatten its pack silently while the screen that says so is in a bag. The blip lets the operator decide to switch it off. **`LINKING` only, SHALL NOT sound in `LINK_LOST`:** that state already sounds `ALARM_LINK_LOST` continuously, which is a louder reminder, and layering a one-shot under a running alarm contends for the pattern player. Deliberately the shortest pattern in this table, and shorter than `BEEP_PING_FAIL` — it repeats every 2–5 s indefinitely, so it must stay a tick rather than become a nag, and must not be mistakable for a ping failure, which means the opposite thing (a link that exists and is degrading). Added v1.63, firmware 1.2.8. |
 | `BEEP_CONTINUITY_LOST` | 200 on, 100 off, 200 on, 100 off, 200 on | Continuity → OPEN disarm (distinctive pattern) |
 | `ALARM_LINK_LOST` | 200 on, 200 off, repeating | Link lost alarm |
 | `ALARM_CRITICAL` | 100 on, 100 off, repeating | Critical error alarm |
@@ -3249,8 +3363,8 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `STATUS_UPDATE_INTERVAL_MS` | 2000 | Periodic status broadcast interval |
 | `STATUS_STALE_TIMEOUT_MS` | 5000 | Max time without STATUS_UPDATE before remote disarms |
 | `LINK_REQUEST_INTERVAL_MS` | 2000 | Interval between link request retries |
-| `LINK_REQUEST_MAX_RETRIES` | 5 | Max retries before "NO LINK" display |
-| `LINK_REQUEST_SLOW_INTERVAL_MS` | 2000 | Retry interval after max retries |
+| `LINK_REQUEST_MAX_RETRIES` | 5 | **Backoff threshold, not a give-up count.** Fast attempts before the cadence drops to `LINK_REQUEST_SLOW_INTERVAL_MS`; also triggers the one-shot "NO LINK" log and the splash's `No response from base` headline. The remote retries forever either side of it and no screen may present it as a limit (§10.2.1). |
+| `LINK_REQUEST_SLOW_INTERVAL_MS` | 5000 | Handshake retry interval once `LINK_REQUEST_MAX_RETRIES` fast attempts have failed. Restored from 2000 in v1.63 — equal intervals had made the §6.4.1 backoff a no-op since the initial commit. |
 | `CMD_ACK_TIMEOUT_MS` | 500 | Timeout waiting for command ACK/NACK |
 | `CMD_RETRY_COUNT` | 1 | Number of retries for non-fire commands |
 | `FIRE_REPEAT_INTERVAL_MS` | 200 | Interval for repeated CMD_FIRE while button held |

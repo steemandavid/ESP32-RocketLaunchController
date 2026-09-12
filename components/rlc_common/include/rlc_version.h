@@ -7,7 +7,204 @@
 
 #pragma once
 
-/* 1.2.7 (2026-09-10): the arm-key fault is now visible where it is needed,
+/* 1.2.10 (2026-09-12): splash layout — the band gets margins, the version
+ * gets off its own row, and the cut finally contains the landing.
+ *
+ * Three operator-driven corrections to 1.2.9, all cosmetic, no protocol
+ * change. Flash both units.
+ *
+ *   1. THE CUT MISSED THE TOUCHDOWN. 1.2.9's crop panned to anchor 0.62
+ *      settling at 65% of the clip, which put the band's lower edge at ~71%
+ *      of frame height — and the pads sat right on that edge, so the boosters
+ *      descended out of the bottom of the strip instead of visibly landing in
+ *      it. The source camera tracks: the ground line runs ~63-65% of frame
+ *      height at t=226-227 s and rises to ~55% by t=228 s as it zooms, so the
+ *      band has to sit low enough for the earlier, lower ground line and
+ *      still hold the later, higher one. Re-cut at 222.0 s with the pan
+ *      0.50 -> 0.60 settling at 50% (the touchdown itself, rather than after
+ *      it): the band now spans ~42-72% through the landing, with ground
+ *      visible beneath the pads. Exact recipe in assets/README.md.
+ *
+ *   2. THE BAND HAD NO MARGINS. It butted straight against the club credit
+ *      above and the "Connecting to base" line below, which read as a
+ *      rendering fault rather than a frame — a photograph dropped into a text
+ *      layout needs to be seen to have been placed there. VBAND_Y is 101, so
+ *      there are now 15 blank rows above the band (the credit ends at y85)
+ *      and 15 below it (the headline starts at y196). Both gaps are load
+ *      bearing; anything moving the header, the band or the headline must
+ *      keep them.
+ *
+ *   3. THE VERSION LEFT ITS OWN ROW, which is what paid for those margins.
+ *      It now rides the copyright line at the foot of the screen —
+ *      "(C) 2026 David Steeman  v1.2.10" — as the same kind of small print.
+ *      It is emphatically still ON the boot screen: the strict version check
+ *      makes "which firmware is this unit running" a question an operator has
+ *      to be able to answer without a serial cable, and the firmware-mismatch
+ *      screen it backstops is only reachable once a base answers.
+ *
+ * The fault-injection banner is keyed off VBAND_Y/VBAND_H now instead of
+ * carrying its own literals, so it keeps occupying exactly the band's rows
+ * when the band moves again.
+ *
+ * 1.2.9 (2026-09-12): the boot splash plays real footage, not a drawing.
+ *
+ * 1.2.8's procedurally-drawn boosters were rejected on sight — they looked
+ * like what they were, nine pixels of rectangles pretending to be a rocket.
+ * They are gone entirely: the sky gradient, starfield, pads, sprites, plumes,
+ * legs and dust are all deleted, along with sky_fill(), rgb_lerp(),
+ * draw_booster(), booster_state() and draw_splash_scene().
+ *
+ * In their place, a real 480x80 letterboxed band of two side boosters landing,
+ * played from a JPEG frame sequence at 10 Hz.
+ *
+ * WHY A BAND AND NOT THE WHOLE PANEL, recorded again because it is the fact
+ * that shapes every other decision here: the ILI9488 is 18-bit-only over SPI,
+ * so a full 480x320 frame is 460,800 B = 184 ms at DISPLAY_SPI_CLOCK_HZ,
+ * against a 100 ms frame period. Full-panel playback is not slow, it is
+ * impossible — and it would saturate the panel for exactly the window the link
+ * handshake runs in. The band is 115,200 B = 46 ms and fits with room spare.
+ * Decode cost and flash space were never the constraint. The wire is.
+ *
+ * THE ASSET LIVES IN ITS OWN PARTITION. The remote leaves
+ * CONFIG_PARTITION_TABLE_SINGLE_APP behind for partitions_remote.csv: 3 MB
+ * factory (the 1 MB single-app partition held an 863 KB app with no room for
+ * this) plus a 2 MB `splash` data partition, read memory-mapped, no
+ * filesystem. Not embedded in the binary, deliberately — footage can then be
+ * re-cut and reflashed without rebuilding or reflashing the image that runs
+ * the fire path, and iterating on a decoration never touches it.
+ *
+ * The base keeps the single-app table. It has no splash asset, and leaving its
+ * layout alone keeps a pad-side unit off the list of things this can break.
+ * Note for later: that leaves the base app at 829 KB in a 1 MB partition,
+ * ~19% headroom — worth watching, but not worth a flash-layout change today.
+ *
+ * FLASHING CHANGES. `./build_remote.sh flash` now writes bootloader +
+ * partition table + app, not app alone: a device still carrying the old 1 MB
+ * table would run the new image against the wrong map. The asset is written
+ * separately with `./build_remote.sh splash <file>` and survives app
+ * reflashes. Build one with tools/mkvideoband.py.
+ *
+ * GRADING IS PART OF THE FORMAT, NOT TASTE. mkvideoband.py desaturates,
+ * darkens and then hard-caps every channel at 0x9A — the same bound 1.2.8
+ * applied to its palette, for the same reason. This band sits behind white
+ * title text on the boot screen of a launch controller and the text has to
+ * win. Footage that looks right on a monitor will scream here.
+ *
+ * EVERY FAILURE IS NON-FATAL. No partition, no asset, a blank or corrupt one,
+ * wrong dimensions, a frame that will not decode: each ends with a plain dark
+ * band and a remote that boots normally. The container is validated whole at
+ * init — magic, format, frame count, dimensions, interval, and every frame
+ * offset and length against the partition size — so the 10 Hz path can index
+ * the table without re-checking, and an erased all-0xFF partition is rejected
+ * as cleanly as a corrupt one. A boot screen decoration must never be able to
+ * stop the unit coming up.
+ *
+ * The clip HOLDS on its last frame rather than looping. STATE_LINKING maps to
+ * the splash screen, so an unlinked remote sits here indefinitely (see the
+ * 1.2.8 note) — and a landing clip restarting every ten seconds forever is a
+ * worse thing to leave switched on in a case than a still of two landed
+ * boosters. Once held, the decode is skipped and the blit writes identical
+ * pixels, which flush()'s per-row memcmp rejects: an ended clip costs nothing
+ * on the wire at all.
+ *
+ * The shipped asset is assets/splash_falconheavy.bin — the side boosters
+ * landing at LZ-1/LZ-2 on 6 February 2018, cut from NASA imagery that is
+ * public domain in the US. Provenance and the exact recipe are in
+ * assets/README.md, so the 10 s band can be rebuilt without guessing at
+ * which ten seconds of a four-minute source it came from.
+ *
+ * Remote-only: display, partition layout and flash procedure. No protocol
+ * change, but the version moves because the binary did. Flash both units.
+ *
+ * 1.2.8 (2026-09-12): the boot splash has a landing animation behind it.
+ *
+ * Cosmetic, remote-only, no protocol change — but the version is bumped
+ * because a changed binary sharing a version number is exactly what the
+ * strict check exists to prevent. Flash both units.
+ *
+ * The ask was a 10 s video of two Falcon Heavy side boosters landing. A video
+ * is not available on this hardware: the ILI9488 is 18-bit-only over SPI, so
+ * a full 480x320 frame is 460,800 B = 184 ms at DISPLAY_SPI_CLOCK_HZ, against
+ * a 100 ms frame period — decode cost and flash space are not the limit, the
+ * wire is. Full-screen playback would also saturate the panel for the whole
+ * splash, which is the window in which the link handshake runs.
+ *
+ * So the scene is drawn procedurally with the existing primitives: a graded
+ * night sky band (y 116..190), a fixed starfield, two pads, and two boosters
+ * descending on an ease-out profile with flickering plumes, deploying legs,
+ * staggered touchdowns and settling dust. ~18 KB/frame on the wire, ~7 ms of
+ * SPI, at the full 10 Hz. The band is repainted whole each frame and the
+ * boosters drawn on top; flush()'s shadow diff (and its per-row memcmp fast
+ * reject) is what keeps that cheap, so there is no hand-maintained erase list
+ * to get wrong.
+ *
+ * Subdued by construction, per the same request: no channel above 0x9A, most
+ * far below, against 0xFFFFFF title text and a C_SELECTED version string.
+ * The stars deliberately do not twinkle — scattered single-pixel changes
+ * across the full width widen flush()'s per-row runs for no visual gain.
+ *
+ * The static header block moves up (title y 8/36, version 64, credit 96) to
+ * open the band. Dynamic layout is unchanged: headline 196, attempt 228, bar
+ * 262, credit line at DH-26, so §10.2.1's live fields are where they were.
+ *
+ * Also in 1.2.8 — the boot splash stops claiming the handshake has a limit.
+ *
+ * It read "Attempt N / 5", clamped at 5, bar pinned at 100%. Every part of
+ * that was wrong. LINK_REQUEST_MAX_RETRIES was never a give-up count: it is
+ * the threshold at which tick_remote() changes cadence, and the remote retries
+ * forever either side of it. The splash rendered a backoff threshold as a
+ * denominator, promising an end that never came — and then froze the counter
+ * there while the firmware was still working, which reads as a hung remote.
+ * On the one screen whose job is to show the unit is alive.
+ *
+ * Now: no denominator, no clamp, "Attempt N" climbing without bound. Past the
+ * threshold the headline becomes "No response from base" and the bar becomes
+ * an indeterminate sweep — a number that keeps moving is the clearest proof
+ * available that the unit has not given up. Below it the bar still measures
+ * something real: progress through the fast-retry phase. display_splash()
+ * loses its max_attempts argument; it had no callers and could only
+ * reintroduce the same lie.
+ *
+ * And LINK_REQUEST_SLOW_INTERVAL_MS is a real interval at last: 5000, not the
+ * 2000 it has held since the initial scaffolding commit, which made the
+ * backoff ternary a choice between two identical values. Full reasoning in
+ * rlc_config.h.
+ *
+* And the remote now says out loud that it is still hunting: one 40 ms
+ * BUZZER_BEEP_LINK_TRY blip per handshake attempt while the link state is
+ * LINKING. This is the battery measure the slow interval was not.
+ *
+ * A remote switched on with no base in range never links, never times out and
+ * never stops retrying. STATE_LINKING maps to the splash screen, so that is
+ * its indefinite steady state rather than a boot phase — it will sit there
+ * drawing full current until the pack is flat, and the screen saying so is
+ * usually in a case or face-down in a bag. The blip is the audible half, and
+ * the decision it supports is the operator's: switch it off, or leave it.
+ *
+ * LINKING only, never LINK_LOST — that state already sounds
+ * ALARM_LINK_LOST continuously, a far louder reminder than this, and a
+ * one-shot layered under a running alarm only contends for the pattern
+ * player (see the CRIT-01 history in 1.1.30).
+ *
+  * ONE CORRECTION FOR THE RECORD, because the change was requested to save
+ * battery and does not: the backoff saves no meaningful power. rlc_espnow.c
+ * sets WIFI_PS_NONE with no PM or tickless idle configured, so the receive
+ * chain is powered continuously regardless of how often the remote transmits.
+ * A ~40-byte LINK_REQUEST every 5 s instead of every 2 s is an order of
+ * 0.1 mA against a draw dominated by the always-on radio and the display
+ * backlight. The change is still worth having — it restores the documented
+ * design and stops the cadence contradicting the spec — but it is a
+ * correctness fix, not a power fix, and SHALL NOT be cited as one. What would
+ * actually move the number, in order: blanking or dimming the backlight when
+ * unlinked and idle; and, far more invasively, stopping the radio between
+ * attempts on the never-linked path, which trades away the base's ability to
+ * reach a remote that is not currently transmitting.
+ *
+ * A CONFIG_RLC_REMOTE_FAULT_INJECTION build draws no scene at all. That build
+ * lies to its operator by construction and must not look normal — least of
+ * all better than normal; the red banner keeps the band to itself.
+ *
+ * 1.2.7 (2026-09-10): the arm-key fault is now visible where it is needed,
  * not just for three seconds when it appears.
  *
  * 1.2.6 announced ARM KEY SWITCH FAULT with a triple beep and a 3 s amber
@@ -1037,5 +1234,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  7
-#define RLC_VERSION_STRING "1.2.7"
+#define RLC_VERSION_PATCH  10
+#define RLC_VERSION_STRING "1.2.10"

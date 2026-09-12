@@ -37,6 +37,9 @@
 #include "rlc_arm_state.h"
 #include "rlc_version.h"
 #include "pin_config.h"
+#include "esp_partition.h"
+#include "esp_jpeg_common.h"
+#include "esp_jpeg_dec.h"
 
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
@@ -113,6 +116,11 @@ static const char *TAG = "rlc_disp";
 #define B8(c)  (uint8_t)( (c)        & 0xFF)
 
 /* Character cell: 5x7 glyph + 1 px spacing, multiplied by scale */
+/* Frame period of display_task. Declared here rather than next to the task
+ * because the splash animation derives its tick from it (see
+ * draw_splash_band). */
+#define DISPLAY_FRAME_MS  100   /* 10 Hz — FSD §10.3 requires >= 5 Hz */
+
 #define CHAR_W(s)  (6 * (s))
 #define CHAR_H(s)  (8 * (s))
 
@@ -187,7 +195,6 @@ static SemaphoreHandle_t s_req_mutex = NULL;
 
 static struct {
     int      splash_attempt;
-    int      splash_max;
     bool     fw_mismatch;
     uint8_t  fw_base[3];
     uint8_t  fw_remote[3];
@@ -437,6 +444,29 @@ static void draw_bar(int x, int y, int w, int h, int pct, uint32_t fg, uint32_t 
     draw_frame(x, y, w, h, 1, C_GREY);
     fill_rect(x + 1, y + 1, w - 2, h - 2, bg);
     if (fill > 0) fill_rect(x + 1, y + 1, fill, h - 2, fg);
+}
+
+/* Indeterminate progress: a block ping-ponging inside the frame.
+ *
+ * For work that is genuinely open-ended, where a filled bar would have to
+ * invent a denominator. The boot splash needs this because the remote retries
+ * the handshake forever — see draw_splash_dynamic. */
+static void draw_bar_sweep(int x, int y, int w, int h, int tick,
+                           uint32_t fg, uint32_t bg)
+{
+    draw_frame(x, y, w, h, 1, C_GREY);
+    fill_rect(x + 1, y + 1, w - 2, h - 2, bg);
+
+    int inner = w - 2;
+    int bw    = inner / 4;
+    int span  = inner - bw;
+    if (span <= 0) return;
+
+    int cycle = 2 * span;
+    int ph    = (tick * 8) % cycle;          /* 80 px/s at 10 Hz */
+    int off   = (ph < span) ? ph : (cycle - ph);
+
+    fill_rect(x + 1 + off, y + 1, bw, h - 2, fg);
 }
 
 static int pct_from_range(int value, int lo, int hi)
@@ -1389,50 +1419,312 @@ static void draw_error_screen(const char *text)
 
 /* ── Screen: splash / firmware mismatch — FSD §10.2.1 ─────────── */
 
+/* Boot-splash video band (1.2.9).
+ *
+ * A letterboxed strip of real footage — two side boosters landing — played
+ * behind the splash text from a JPEG frame sequence in the `splash` flash
+ * partition.
+ *
+ * WHY A BAND AND NOT THE WHOLE PANEL. The ILI9488 is 18-bit-only over SPI, so
+ * flush_run() ships 3 bytes/pixel at DISPLAY_SPI_CLOCK_HZ. A full 480x320
+ * frame is 460,800 B = 184 ms, against a 100 ms frame period: full-panel
+ * playback is not slow here, it is impossible, and it would saturate the panel
+ * for exactly the window the link handshake runs in. The 480x80 band is
+ * 115,200 B = 46 ms, which fits with room to spare. Decode cost and flash
+ * space were never the constraint — the wire is.
+ *
+ * The band is blitted whole every frame rather than diffed by hand; flush()'s
+ * shadow comparison decides what actually goes out. That matters more than it
+ * looks: STATE_LINKING maps to the splash screen, so a remote with no base in
+ * range sits here indefinitely. Once the clip ends the frame index sticks at
+ * the last frame, the decode is skipped, the blit writes identical pixels and
+ * the per-row memcmp rejects all of them — an ended clip costs nothing at all.
+ *
+ * The asset is deliberately NOT embedded in the app binary. It lives in its
+ * own partition so it can be reflashed (tools/mkvideoband.py, then
+ * `./build_remote.sh splash <file>`) without rebuilding or reflashing
+ * firmware, and so that iterating on the footage never touches the image that
+ * runs the fire path.
+ *
+ * Everything here degrades to a plain dark band: no partition, no asset, a
+ * blank partition, a corrupt header, wrong dimensions or a frame that fails to
+ * decode all end with the splash drawing and the remote booting normally. A
+ * boot screen decoration must never be able to stop the unit coming up.
+ */
+
+#define VBAND_X        0
+#define VBAND_Y        112
+#define VBAND_W        480
+#define VBAND_H        80      /* multiple of 16 — whole MCUs, no pad row */
+
+#define C_VBAND_EMPTY  0x0A0C12   /* shown when there is no playable asset */
+
+/* RLCV container, written by tools/mkvideoband.py. Little-endian throughout.
+ *
+ *   0  u32  magic 'RLCV'
+ *   4  u16  format version
+ *   6  u16  frame count
+ *   8  u16  width
+ *  10  u16  height
+ *  12  u16  frame interval, ms
+ *  14  u16  reserved
+ *  16  frame_count x { u32 offset; u32 length; }
+ *      JPEG payloads
+ *
+ * Read through explicit byte loads rather than a cast to a packed struct: the
+ * blob is memory-mapped flash written by an external tool, and it is not this
+ * file's business to assume its alignment or the compiler's packing. */
+#define RLCV_MAGIC       0x56434C52u
+#define RLCV_FORMAT      1
+#define RLCV_HDR_BYTES   16
+#define RLCV_MAX_FRAMES  600     /* 60 s at 10 Hz — sanity bound, not a spec */
+
+static const uint8_t             *s_vid          = NULL;
+static esp_partition_mmap_handle_t s_vid_map     = 0;
+static size_t                     s_vid_size     = 0;
+static uint16_t                   s_vid_frames   = 0;
+static uint16_t                   s_vid_interval = DISPLAY_FRAME_MS;
+static uint8_t                   *s_vid_rgb      = NULL;  /* decoded frame */
+static int                        s_vid_cur      = -1;    /* index in s_vid_rgb */
+static bool                       s_vid_logged   = false; /* decode-fail log once */
+
+static inline uint16_t rd16(const uint8_t *p)
+{
+    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+
+static inline uint32_t rd32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+/* Validate the whole container up front, so the per-frame path can index the
+ * table without re-checking bounds every time. A blank (erased, all-0xFF)
+ * partition must fail here as cleanly as a corrupt one. */
+static bool splash_video_validate(const uint8_t *b, size_t size)
+{
+    if (size < RLCV_HDR_BYTES)             return false;
+    if (rd32(b) != RLCV_MAGIC)             return false;
+    if (rd16(b + 4) != RLCV_FORMAT)        return false;
+
+    uint16_t frames = rd16(b + 6);
+    if (frames == 0 || frames > RLCV_MAX_FRAMES) return false;
+    if (rd16(b + 8)  != VBAND_W)            return false;
+    if (rd16(b + 10) != VBAND_H)            return false;
+    if (rd16(b + 12) == 0)                 return false;
+
+    size_t table = (size_t)frames * 8;
+    if (table / 8 != frames)               return false;   /* overflow */
+    if (RLCV_HDR_BYTES + table > size)     return false;
+
+    for (uint16_t i = 0; i < frames; i++) {
+        uint32_t off = rd32(b + RLCV_HDR_BYTES + (size_t)i * 8);
+        uint32_t len = rd32(b + RLCV_HDR_BYTES + (size_t)i * 8 + 4);
+        if (len == 0)                                  return false;
+        if (off < RLCV_HDR_BYTES + table)              return false;
+        if ((size_t)off + len > size)                  return false;
+    }
+    return true;
+}
+
+/* Map the splash partition and adopt its contents if they are playable.
+ * Every failure path is non-fatal and leaves s_vid NULL. */
+static void splash_video_init(void)
+{
+    const esp_partition_t *part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_UNDEFINED, "splash");
+    if (!part) {
+        ESP_LOGW(TAG, "splash: no 'splash' partition — plain band");
+        return;
+    }
+
+    const void *map = NULL;
+    esp_err_t err = esp_partition_mmap(part, 0, part->size,
+                                       ESP_PARTITION_MMAP_DATA, &map, &s_vid_map);
+    if (err != ESP_OK || !map) {
+        ESP_LOGW(TAG, "splash: mmap failed (%s) — plain band", esp_err_to_name(err));
+        return;
+    }
+
+    if (!splash_video_validate((const uint8_t *)map, part->size)) {
+        ESP_LOGW(TAG, "splash: no valid RLCV asset — plain band "
+                      "(flash one with ./build_remote.sh splash <file>)");
+        esp_partition_munmap(s_vid_map);
+        s_vid_map = 0;
+        return;
+    }
+
+    const uint8_t *b = (const uint8_t *)map;
+
+    /* 16-byte aligned for the decoder, and in PSRAM: 115 KB of internal RAM
+     * for a boot decoration would be taken from tasks that need it. */
+    s_vid_rgb = heap_caps_aligned_alloc(16, (size_t)VBAND_W * VBAND_H * 3,
+                                        MALLOC_CAP_SPIRAM);
+    if (!s_vid_rgb) {
+        ESP_LOGW(TAG, "splash: frame buffer alloc failed — plain band");
+        esp_partition_munmap(s_vid_map);
+        s_vid_map = 0;
+        return;
+    }
+
+    s_vid          = b;
+    s_vid_size     = part->size;
+    s_vid_frames   = rd16(b + 6);
+    s_vid_interval = rd16(b + 12);
+    s_vid_cur      = -1;
+
+    ESP_LOGI(TAG, "splash: %u frames, %ux%u, %u ms/frame (%.1f s)",
+             s_vid_frames, VBAND_W, VBAND_H, s_vid_interval,
+             (double)s_vid_frames * s_vid_interval / 1000.0);
+}
+
+/* Decode one frame into s_vid_rgb. Returns 0 on success; on failure the
+ * caller keeps whatever was there, so a bad frame shows the last good one
+ * rather than garbage on the boot screen. */
+static int splash_video_decode(int idx)
+{
+    const uint8_t *tab = s_vid + RLCV_HDR_BYTES + (size_t)idx * 8;
+    uint32_t off = rd32(tab);
+    uint32_t len = rd32(tab + 4);
+
+    jpeg_dec_config_t cfg = DEFAULT_JPEG_DEC_CONFIG();
+    cfg.output_type = JPEG_PIXEL_FORMAT_RGB888;   /* R,G,B low->high: the
+                                                   * framebuffer's own order,
+                                                   * so the blit is a memcpy */
+    jpeg_dec_handle_t dec = NULL;
+    if (jpeg_dec_open(&cfg, &dec) != JPEG_ERR_OK) return -1;
+
+    jpeg_dec_io_t io = {
+        .inbuf     = (uint8_t *)(s_vid + off),
+        .inbuf_len = (int)len,
+        .outbuf    = s_vid_rgb,
+    };
+    jpeg_dec_header_info_t info = { 0 };
+
+    int rc = -1;
+    if (jpeg_dec_parse_header(dec, &io, &info) == JPEG_ERR_OK &&
+        info.width == VBAND_W && info.height == VBAND_H &&
+        jpeg_dec_process(dec, &io) == JPEG_ERR_OK) {
+        rc = 0;
+    }
+    jpeg_dec_close(dec);
+
+    if (rc != 0 && !s_vid_logged) {
+        s_vid_logged = true;   /* once: this runs at 10 Hz */
+        ESP_LOGW(TAG, "splash: frame %d failed to decode", idx);
+    }
+    return rc;
+}
+
+static void draw_splash_band(int64_t elapsed_ms)
+{
+    if (!s_vid || !s_vid_rgb) {
+        fill_rect(VBAND_X, VBAND_Y, VBAND_W, VBAND_H, C_VBAND_EMPTY);
+        return;
+    }
+
+    /* Hold on the last frame rather than looping. The splash is not a
+     * 10 s screen — an unlinked remote stays on it — and a landing clip
+     * restarting every ten seconds forever would be a far worse thing to
+     * leave switched on in a case than a still of two landed boosters. */
+    int idx = (int)(elapsed_ms / s_vid_interval);
+    if (idx < 0)                     idx = 0;
+    if (idx >= (int)s_vid_frames)    idx = (int)s_vid_frames - 1;
+
+    if (idx != s_vid_cur && splash_video_decode(idx) == 0) {
+        s_vid_cur = idx;
+    }
+
+    for (int y = 0; y < VBAND_H; y++) {
+        memcpy(s_fb + ((size_t)(VBAND_Y + y) * DW + VBAND_X) * 3,
+               s_vid_rgb + (size_t)y * VBAND_W * 3,
+               (size_t)VBAND_W * 3);
+    }
+    mark_dirty(VBAND_X, VBAND_Y, VBAND_W, VBAND_H);
+}
+
+/* Header block. The version string is deliberately NOT here: it moved onto the
+ * copyright line at the foot of the screen in 1.2.10, which had room for it
+ * and reads as the same kind of small print. That freed the row this block
+ * used to spend on it, and the row went to the video band's margins.
+ *
+ * Those margins are the point of the current geometry. The band is a
+ * photograph dropped into a text layout, and butted straight against the
+ * credit above and the status line below it looked like a rendering fault
+ * rather than a frame. VBAND_Y and VBAND_H are now chosen so there are 15
+ * blank rows above the band and 15 below — a clear line of black on each
+ * side, which is what makes it read as deliberate. Anything that moves the
+ * header, the band or the headline must preserve both gaps. */
 static void draw_splash_static(void)
 {
     fill_rect(0, 0, DW, DH, C_BLACK);
-    draw_text_centred(26, "ESP32 WIRELESS ROCKET", 3, C_WHITE);
-    draw_text_centred(64, "LAUNCH CONTROLLER", 3, C_WHITE);
-    draw_text_centred(106, "v" RLC_VERSION_STRING, 2, C_SELECTED);
+    draw_text_centred(10, "ESP32 WIRELESS ROCKET", 3, C_WHITE);
+    draw_text_centred(38, "LAUNCH CONTROLLER", 3, C_WHITE);
 
 #if CONFIG_RLC_REMOTE_FAULT_INJECTION
     /* A fault-injection build lies to its operator by construction, so the
      * boot screen SHALL say so before anything else can be believed. The
      * compile #warning, the boot banner and the flash-time warning are all on
      * the developer's terminal; this is the only one of the four an operator
-     * standing at a firing point can see. It displaces the club credit
-     * deliberately — an abnormal build should not look normal. */
+     * standing at a firing point can see. It displaces the club credit — and,
+     * since 1.2.9, the video band with it — deliberately: an abnormal
+     * build should not look normal, least of all prettier. Sized and placed
+     * to occupy the band's rows exactly, margins included. */
     draw_frame(0, 0, DW, DH, 6, C_FAULT);
-    fill_rect(24, 130, DW - 48, 58, C_FAULT);
-    draw_text_centred(138, "!! FAULT INJECTION BUILD !!", 2, C_WHITE);
-    draw_text_centred(164, "NOT SAFE FOR LIVE USE", 2, C_WHITE);
+    fill_rect(24, VBAND_Y + 8, DW - 48, VBAND_H - 16, C_FAULT);
+    draw_text_centred(VBAND_Y + 18, "!! FAULT INJECTION BUILD !!", 2, C_WHITE);
+    draw_text_centred(VBAND_Y + 44, "NOT SAFE FOR LIVE USE", 2, C_WHITE);
 #else
-    fill_rect(90, 138, DW - 180, 1, C_DGREY);
-    draw_text_centred(152, "VRO - VLAAMSE RAKET ORGANISATIE", 2, C_INFO);
+    draw_text_centred(70, "VRO - VLAAMSE RAKET ORGANISATIE", 2, C_INFO);
 #endif
 
-    /* The credit and the progress bar sit on the status band and are drawn
-     * per-frame in the dynamic half; the band would otherwise erase them. */
+    /* The copyright line and the progress bar are drawn per-frame in the
+     * dynamic half, not here. */
 }
 
+/* `attempt` is the remote's live LINK_REQUEST count and is NOT bounded.
+ *
+ * This used to read "Attempt N / LINK_REQUEST_MAX_RETRIES", clamped to the
+ * maximum with the bar pinned at 100%. Every part of that was wrong.
+ * LINK_REQUEST_MAX_RETRIES was never a give-up count — it is the threshold at
+ * which tick_remote() drops to LINK_REQUEST_SLOW_INTERVAL_MS, and the remote
+ * goes on retrying forever either side of it. Rendering a backoff threshold as
+ * a denominator promised an end that never came, and the clamp then froze the
+ * counter at "5 / 5" while the unit was in fact still working. A boot screen
+ * that stops moving while the firmware has not stopped trying reads as a hung
+ * remote, which is the one thing this screen must not do.
+ *
+ * So: no denominator, no clamp, and past the threshold an indeterminate sweep
+ * instead of a full bar — the number keeps climbing, which is the clearest
+ * available proof that the remote is still trying. The headline says what the
+ * silence means; the counter says it has not given up.
+ */
 static void draw_splash_dynamic(const disp_data_t *d, int attempt,
-                                int max_attempts, int64_t hold_until_ms)
+                                int64_t hold_until_ms)
 {
     char buf[40];
-    if (max_attempts <= 0) max_attempts = LINK_REQUEST_MAX_RETRIES;
-    if (attempt > max_attempts) attempt = max_attempts;
+    int64_t elapsed = now_ms() - s_boot_ms;
 
-    bool linked = (d->link.state == RLC_LINK_STATE_LINKED);
+    if (attempt < 1) attempt = 1;
 
-    /* A refusal is not the same as silence, and the operator cannot tell them
-     * apart from a retry counter. Say which it is. */
+#if !CONFIG_RLC_REMOTE_FAULT_INJECTION
+    draw_splash_band(elapsed);
+#endif
+
+    bool linked   = (d->link.state == RLC_LINK_STATE_LINKED);
+    bool backedoff = (attempt >= LINK_REQUEST_MAX_RETRIES);
+
+    /* A refusal is not the same as silence, and neither is the same as a base
+     * that has simply not been switched on yet. Say which it is. */
     const char *headline;
     uint32_t    headline_fg;
     if (linked) {
         headline = "Connected to base";  headline_fg = C_GREEN;
     } else if (d->link.last_reject == LINK_REJECT_BUSY) {
         headline = "Base busy - armed or firing"; headline_fg = C_WARN;
+    } else if (backedoff) {
+        headline = "No response from base"; headline_fg = C_WARN;
     } else {
         headline = "Connecting to base..."; headline_fg = C_WHITE;
     }
@@ -1441,25 +1733,39 @@ static void draw_splash_dynamic(const disp_data_t *d, int attempt,
     if (linked) {
         snprintf(buf, sizeof(buf), "RSSI %d dBm", d->link.rssi_avg_dbm);
     } else {
-        snprintf(buf, sizeof(buf), "Attempt %d / %d", attempt, max_attempts);
+        snprintf(buf, sizeof(buf), "Attempt %d", attempt);
     }
     draw_text_centred_bg(228, buf, 2, C_WHITE, C_BLACK);
 
-    /* Once linked, the bar runs out the remaining splash hold so the operator
-     * can see how long the screen stays up (SPLASH_MIN_DURATION_MS). */
-    int pct;
-    if (linked) {
-        int64_t left = hold_until_ms - now_ms();
-        if (left < 0) left = 0;
-        pct = 100 - (int)((left * 100) / SPLASH_MIN_DURATION_MS);
-    } else {
-        pct = (attempt * 100) / max_attempts;
-    }
     /* NO status band while booting. The operator has not begun a sequence yet,
      * so it answers a question nobody is asking — and it sat on top of the
      * progress bar, which is the one thing this screen exists to show. */
-    draw_bar(90, 262, 300, 20, pct, linked ? C_GREEN : C_SELECTED, C_BLACK);
-    draw_text_centred_bg_in(0, DW, DH - 26, "(C) 2026 David Steeman", 2,
+    if (linked) {
+        /* Once linked, the bar runs out the remaining splash hold so the
+         * operator can see how long the screen stays up. */
+        int64_t left = hold_until_ms - now_ms();
+        if (left < 0) left = 0;
+        int pct = 100 - (int)((left * 100) / SPLASH_MIN_DURATION_MS);
+        draw_bar(90, 262, 300, 20, pct, C_GREEN, C_BLACK);
+    } else if (backedoff) {
+        draw_bar_sweep(90, 262, 300, 20,
+                       (int)((elapsed / DISPLAY_FRAME_MS) & 0x7FFF),
+                       C_SELECTED, C_BLACK);
+    } else {
+        /* Below the threshold the bar does measure something real: progress
+         * through the fast-retry phase, after which the cadence changes. */
+        draw_bar(90, 262, 300, 20,
+                 (attempt * 100) / LINK_REQUEST_MAX_RETRIES,
+                 C_SELECTED, C_BLACK);
+    }
+
+    /* The version rides on the copyright line rather than owning a row of its
+     * own — same small print, and the row it used to cost is now the band's
+     * top margin. It is still on the boot screen, which is what matters: the
+     * strict version check makes "which firmware is this unit running" a
+     * question an operator has to be able to answer without a serial cable. */
+    draw_text_centred_bg_in(0, DW, DH - 26,
+                            "(C) 2026 David Steeman  v" RLC_VERSION_STRING, 2,
                             C_GREY, C_BLACK);
 }
 
@@ -1514,8 +1820,6 @@ static screen_t screen_for_state(const disp_data_t *d)
 }
 
 /* ── Display task ─────────────────────────────────────────────── */
-
-#define DISPLAY_FRAME_MS  100   /* 10 Hz — FSD §10.3 requires >= 5 Hz */
 
 /* ── DS-01: runtime display health check (FSD §5.5.6) ──────────────
  *
@@ -1607,7 +1911,6 @@ static void display_task(void *arg)
         char     err_text[64];
         memcpy(err_text, s_req.error_text, sizeof(err_text));
         int      splash_att   = s_req.splash_attempt;
-        int      splash_max   = s_req.splash_max;
         bool     overlay_on   = (s_req.overlay_until_ms > now_ms());
         bool     overlay_nack = s_req.overlay_is_nack;
         char     overlay_txt[40];
@@ -1694,8 +1997,8 @@ static void display_task(void *arg)
             case SCR_SPLASH:
                 draw_splash_dynamic(&d,
                                     splash_att > 0 ? splash_att
-                                                   : (int)d.link.linkreq_attempts + 1,
-                                    splash_max, splash_until_ms);
+                                                   : (int)d.link.linkreq_attempts,
+                                    splash_until_ms);
                 break;
             case SCR_MAIN:
                 draw_main_dynamic(&d);
@@ -1719,7 +2022,7 @@ static void display_task(void *arg)
              * inset. */
             case SCR_ERROR:
                 if (full) draw_error_screen(err_text);
-                draw_status_band(&d, BAND_Y, 8, true);
+                draw_status_band(&d, VBAND_Y, 8, true);
                 break;
             /* No band on FW_MISMATCH: the link never reaches LINKED, so
              * system_status() can only return SYS_UNKNOWN — always grey, no
@@ -1890,6 +2193,8 @@ int display_init(void)
     memset(s_fb, 0, (size_t)DW * DH * 3);
     memset(s_shadow, 0xFF, (size_t)DW * DH * 3);
     dirty_clear();
+    splash_video_init();   /* non-fatal: falls back to a plain band */
+
     s_boot_ms = now_ms();
 
     /* §9.13 step 6: health check — panel ID read-back.
@@ -1964,12 +2269,11 @@ int display_start_task(void)
     return 0;
 }
 
-void display_splash(int attempt, int max_attempts)
+void display_splash(int attempt)
 {
     if (!s_req_mutex) return;
     xSemaphoreTake(s_req_mutex, portMAX_DELAY);
     s_req.splash_attempt = attempt;
-    s_req.splash_max     = max_attempts;
     xSemaphoreGive(s_req_mutex);
 }
 

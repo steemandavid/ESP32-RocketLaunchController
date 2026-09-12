@@ -317,6 +317,7 @@ void remote_app_main(void)
     /* Housekeeping loop — watchdog + LED status feeds + status log */
     int64_t last_log_ms = 0;
     int64_t last_led_ms = 0;
+    uint16_t last_linkreq = 0;   /* handshake-retry blip, see below */
     while (1) {
         rlc_watchdog_feed();
 
@@ -353,6 +354,33 @@ void remote_app_main(void)
             /* Arm switch on: the selected channel breathes, so the operator
              * sees exactly which igniter the next long-press would arm. */
             rlc_rgb_led_set_key_warning(arm_switch_is_armed());
+
+            /* 1.2.8: one 40 ms blip per handshake attempt while unlinked.
+             *
+             * A remote switched on with no base in range never links, never
+             * times out and never stops retrying — it just sits on the splash
+             * (STATE_LINKING maps to the splash screen, so this is its
+             * steady state, not a boot phase) drawing full current until the
+             * battery is flat. The screen says so, but the screen is in a
+             * case or face-down in a bag. The blip is the audible half: it
+             * tells the operator the remote is awake and still hunting, so
+             * they can decide to switch it off.
+             *
+             * LINKING only, deliberately not LINK_LOST. LINK_LOST already
+             * sounds BUZZER_ALARM_LINK_LOST continuously (§12.1) — a far
+             * louder reminder than this — and layering a blip under a running
+             * alarm would fight it for the pattern player.
+             *
+             * Compared with `>`, not `!=`, and the previous value is stored
+             * unconditionally: rlc_link.c zeroes the counter on a successful
+             * handshake, and that reset must not itself sound like an
+             * attempt. A latched VERSION_MISMATCH cannot reach here at all —
+             * tick_remote() stops sending, so the counter stops moving. */
+            if (led_ls.state == RLC_LINK_STATE_LINKING &&
+                led_ls.linkreq_attempts > last_linkreq) {
+                buzzer_play(BUZZER_BEEP_LINK_TRY);
+            }
+            last_linkreq = led_ls.linkreq_attempts;
 
             last_led_ms = now;
         }

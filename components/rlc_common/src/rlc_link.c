@@ -967,7 +967,17 @@ static void tick_remote(void)
         s_state == RLC_LINK_STATE_LOST) {
         /* 7: after LINK_REQUEST_MAX_RETRIES fast attempts, back off to
          * LINK_REQUEST_SLOW_INTERVAL_MS (FSD §6.4.1 — the constant existed
-         * but was only ever printed, never applied). */
+         * but was only ever printed, never applied).
+         *
+         * 1.2.8: this ternary was a no-op for the whole life of the project —
+         * both intervals read 2000, so it chose between two identical values.
+         * SLOW is now genuinely 5000; see the reasoning, and what this does
+         * and does not buy, in rlc_config.h.
+         *
+         * Neither branch ever stops. LINK_REQUEST_MAX_RETRIES is the point
+         * where the cadence changes, not where the remote gives up, and no
+         * caller may present it as a limit — the boot splash did, and read as
+         * a hung unit for it (FSD §10.2.1). */
         uint32_t interval = (s_linkreq_attempts >= LINK_REQUEST_MAX_RETRIES)
                           ? LINK_REQUEST_SLOW_INTERVAL_MS
                           : LINK_REQUEST_INTERVAL_MS;

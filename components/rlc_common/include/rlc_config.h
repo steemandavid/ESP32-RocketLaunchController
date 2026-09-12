@@ -29,9 +29,37 @@
  * ordering again if either moves. */
 #define STATUS_STALE_TIMEOUT_MS        5000
 
+/* Handshake retry cadence. LINK_REQUEST_MAX_RETRIES is a BACKOFF THRESHOLD,
+ * not a give-up count: the remote retries forever either side of it, fast
+ * below and slow above (rlc_link.c tick_remote). Nothing anywhere stops.
+ *
+ * SLOW was 5000 in FSD v1.3-v1.8 but has read 2000 in this header since the
+ * initial scaffolding commit — the documented backoff was never actually
+ * implemented — and the FSD table was later edited down to 2000 to match the
+ * code rather than the code fixed to match the spec. With both intervals
+ * equal the ternary in tick_remote() chose between two identical values, so
+ * the threshold's only live effect was a one-shot "NO LINK" log line and a
+ * (wrong) denominator on the boot splash.
+ *
+ * Restored to 5000 in 1.2.8. This does not undo FSD v1.14's deliberate move
+ * to aggressive retries: that was about linking quickly when both units are
+ * powered up together, and the whole fast phase (5 x 2 s = 10 s) is intact.
+ * The backoff only engages after ten seconds of silence, by which point the
+ * base is demonstrably not there.
+ *
+ * Cost: up to 3 s of extra reconnect latency in LINK_LOST, where the counter
+ * also starts from zero and so gets the same 10 s fast phase first. Accepted
+ * because link loss is not a silent failure — the base independently fails
+ * safe (SS 6.4.2), and the remote is already alarming on its own screen.
+ *
+ * NOT a meaningful battery saving, and SHALL NOT be described as one. The
+ * radio is configured WIFI_PS_NONE with no PM or tickless idle, so the
+ * receive chain draws continuously whatever the TX cadence; a ~40-byte frame
+ * every 5 s instead of every 2 s is far below the noise floor of that. See
+ * the 1.2.8 note in rlc_version.h for what does move the number. */
 #define LINK_REQUEST_INTERVAL_MS       2000
 #define LINK_REQUEST_MAX_RETRIES       5
-#define LINK_REQUEST_SLOW_INTERVAL_MS  2000
+#define LINK_REQUEST_SLOW_INTERVAL_MS  5000
 
 #define CMD_ACK_TIMEOUT_MS             500
 #define CMD_RETRY_COUNT                1

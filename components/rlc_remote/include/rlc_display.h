@@ -68,13 +68,17 @@ int display_start_task(void);
 
 /**
  * Display the splash screen with version and connection status.
- * The task keeps this screen up for BOOT/LINKING; the arguments only
- * refresh the attempt counter/progress bar.
+ * The task keeps this screen up for BOOT/LINKING; the argument only
+ * refreshes the attempt counter. Leaving it unset (the normal case) makes
+ * the task read the live count from the link manager instead.
  *
- * @param attempt       Current link attempt number
- * @param max_attempts  Maximum attempts
+ * There is deliberately no maximum: LINK_REQUEST_MAX_RETRIES is a backoff
+ * threshold, not a give-up count, and the remote retries the handshake
+ * indefinitely. See draw_splash_dynamic().
+ *
+ * @param attempt  Current link attempt number
  */
-void display_splash(int attempt, int max_attempts);
+void display_splash(int attempt);
 
 /**
  * Display firmware version mismatch error (latched until reboot).

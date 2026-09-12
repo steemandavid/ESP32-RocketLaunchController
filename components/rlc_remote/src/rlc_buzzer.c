@@ -168,6 +168,17 @@ static void buzzer_task(void *arg)
                     play_steps(steps, 1, false);
                     break;
                 }
+                /* Deliberately the shortest pattern in the table, and shorter
+                 * than BEEP_PING_FAIL: this one repeats every few seconds for
+                 * as long as the remote is switched on without a base, so it
+                 * has to stay a tick rather than become a nag — and it must
+                 * not be mistakable for a ping failure, which means something
+                 * quite different (a link that exists and is degrading). */
+                case BUZZER_BEEP_LINK_TRY: {
+                    buzzer_step_t steps[] = {{40, true}};
+                    play_steps(steps, 1, false);
+                    break;
+                }
                 case BUZZER_BEEP_CONTINUITY_LOST: {
                     buzzer_step_t steps[] = {
                         {200, true}, {100, false},

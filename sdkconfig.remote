@@ -1,3 +1,10 @@
 # Remote unit build configuration
 # CONFIG_RLC_UNIT_BASE is not set
 CONFIG_RLC_UNIT_REMOTE=y
+
+# Partition table — overrides sdkconfig.defaults' SINGLE_APP for this unit
+# only. The 1 MB factory partition of the single-app table cannot hold the
+# app plus the splash video band; the base is left on the default table.
+# CONFIG_PARTITION_TABLE_SINGLE_APP is not set
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_remote.csv"

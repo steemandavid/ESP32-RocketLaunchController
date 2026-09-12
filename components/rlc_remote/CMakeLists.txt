@@ -18,5 +18,5 @@ endif()
 idf_component_register(
     SRCS ${REMOTE_SRCS}
     INCLUDE_DIRS "include"
-    REQUIRES rlc_common driver esp_timer
+    REQUIRES rlc_common driver esp_timer spi_flash esp_partition espressif__esp_new_jpeg
 )
