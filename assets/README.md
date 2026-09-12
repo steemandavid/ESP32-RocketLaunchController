@@ -30,28 +30,46 @@ different camera at 235 s — any window must end before it.
 ### Exact recipe
 
     tools/mkvideoband.py fh.webm -o splash_falconheavy.bin \
-        --start 222.0 --duration 10 \
-        --anchor 0.50 --anchor-end 0.60 --anchor-settle 0.50 \
-        --brightness 0.80 --contrast 1.05 --quality 82
+        --start 222.0 --duration 10 --track \
+        --zoom 1.0 --zoom-end 2.6 --zoom-settle 0.55
 
-`--anchor-end` is not cosmetic. The band keeps only ~30% of a 16:9 frame's
-height and the boosters fall through roughly 45% of it, so a fixed crop cannot
-hold both the descent and the touchdown.
+`--track` and the push-in are what make this shot work, and both took a
+couple of wrong turns worth recording.
 
-**Getting the landing in frame is the fiddly part, and the first cut got it
-wrong.** The source camera tracks and zooms during the landing: the ground line
-sits at ~63-65% of frame height at t=226-227 s and rises to ~55% by t=228 s. A
-band that is not low enough for the earlier, lower ground line puts the pads on
-its bottom edge, and the boosters then descend *out of* the strip instead of
-landing in it — which is exactly what the 1.2.9 cut (`--anchor-end 0.62
---anchor-settle 0.65`) did. Settling at 0.50 lands the pan on the touchdown
-itself rather than after it, and the band spans roughly 42-72% of frame height
-through the landing, with ground visible beneath the pads.
+**Tracking.** The band is 6:1 and keeps only ~30% of a 16:9 frame's height at
+zoom 1, while the boosters fall through far more than that and the camera pans
+*and* zooms to follow them. No fixed or hand-panned crop holds the subject for
+ten seconds; `--track` follows it per frame.
 
-The grading (`--brightness`, `--contrast`, and the `--cap` default of `0x9A`)
-is mandatory, not taste: this sits behind white title text on the boot screen
-of a launch controller and the text has to win on contrast. Ungraded footage
-screams over it.
+The detector keys on **brightness, not colour**. Warmth (R−B) is the obvious
+choice and is a trap: the flames are blown out to near-white, so R ≈ B, and an
+R−B test locks onto dark red vegetation instead. The plumes are simply the
+brightest things in the shot, and a threshold that floats with the frame mean
+finds them in both dusk and daylight.
 
-Result: 199,110 B, 1,982 B/frame average, 2,620 B peak — 9.5% of the 2 MB
+Once the engines cut and the smoke thins there is **nothing left to track**,
+and the detector will happily lock onto sunlit roads and buildings near the
+horizon — which it did, throwing the crop to the bottom of the frame for the
+last two seconds. `--track-area` holds the crop when the detected subject
+falls below a floor. Holding is not a fallback here, it is correct: the pads
+do not move.
+
+**The push-in uses a smoothstep, not an ease-out.** An ease-out zoom does
+almost all its travel in the first moment and then creeps, so the shot is
+already tight before anything has happened — the opposite of what a push-in is
+for. `--zoom-settle 0.55` aims the end of the move at the touchdown itself.
+
+The zoom can be this aggressive (1.0 → 2.6) only because the subject *shrinks*:
+the two boosters span ~37% of frame height while still high and far apart, and
+under 8% at touchdown once the camera has widened. Early frames clip the upper
+booster's nose, which is unavoidable — a 6:1 letterbox cannot hold two rockets
+separated diagonally without zooming out past the point of the exercise. The
+4K source means even zoom 2.6 still oversamples the 480-pixel band about 3×.
+
+The grading (`--saturation`, `--brightness`, `--contrast`, and the `--cap`
+default of `0x9A`) is mandatory, not taste: this sits behind white title text
+on the boot screen of a launch controller and the text has to win on contrast.
+Ungraded footage screams over it.
+
+Result: 209,416 B, 2,086 B/frame average, 3,345 B peak — 10.0% of the 2 MB
 partition.
