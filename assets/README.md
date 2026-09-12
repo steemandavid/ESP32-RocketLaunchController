@@ -31,7 +31,8 @@ different camera at 235 s — any window must end before it.
 
     tools/mkvideoband.py fh.webm -o splash_falconheavy.bin \
         --start 222.0 --duration 10 --track \
-        --zoom 1.0 --zoom-end 2.6 --zoom-settle 0.55
+        --zoom 1.0 --zoom-end 2.6 --zoom-settle 0.55 --zoom-final 1.15 \
+        --track-bias-y -0.10
 
 `--track` and the push-in are what make this shot work, and both took a
 couple of wrong turns worth recording.
@@ -54,10 +55,22 @@ last two seconds. `--track-area` holds the crop when the detected subject
 falls below a floor. Holding is not a fallback here, it is correct: the pads
 do not move.
 
+**Selection is the bounding-box centre, not the centroid.** The two agree
+while the subject is two symmetrical plumes and diverge badly once it is a
+smoke column: the area-weighted centroid is dragged down into the dense base of
+the cloud, so the crop sits low, fills its lower half with ground and cuts the
+top off the billow.
+
 **The push-in uses a smoothstep, not an ease-out.** An ease-out zoom does
 almost all its travel in the first moment and then creeps, so the shot is
 already tight before anything has happened — the opposite of what a push-in is
 for. `--zoom-settle 0.55` aims the end of the move at the touchdown itself.
+
+**`--zoom-final` pulls back out afterwards**, for two reasons. The subject
+keeps growing — the smoke column quickly becomes far larger than the tight
+framing that suited two descending boosters, so holding the peak zoom crops its
+top off. And the firmware loops the clip (fw 1.2.11), so ending near the
+opening width is what stops the wrap being a visible jump.
 
 The zoom can be this aggressive (1.0 → 2.6) only because the subject *shrinks*:
 the two boosters span ~37% of frame height while still high and far apart, and
@@ -71,5 +84,5 @@ default of `0x9A`) is mandatory, not taste: this sits behind white title text
 on the boot screen of a launch controller and the text has to win on contrast.
 Ungraded footage screams over it.
 
-Result: 209,416 B, 2,086 B/frame average, 3,345 B peak — 10.0% of the 2 MB
+Result: 175,281 B, 1,744 B/frame average, 2,996 B peak — 8.4% of the 2 MB
 partition.

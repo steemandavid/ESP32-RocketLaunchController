@@ -1434,11 +1434,14 @@ static void draw_error_screen(const char *text)
  * space were never the constraint — the wire is.
  *
  * The band is blitted whole every frame rather than diffed by hand; flush()'s
- * shadow comparison decides what actually goes out. That matters more than it
- * looks: STATE_LINKING maps to the splash screen, so a remote with no base in
- * range sits here indefinitely. Once the clip ends the frame index sticks at
- * the last frame, the decode is skipped, the blit writes identical pixels and
- * the per-row memcmp rejects all of them — an ended clip costs nothing at all.
+ * shadow comparison decides what actually goes out, so nothing here needs a
+ * hand-maintained erase list.
+ *
+ * The clip loops (1.2.11, by operator preference). STATE_LINKING maps to the
+ * splash screen, so a remote with no base in range sits here indefinitely and
+ * the loop runs for as long as it is powered — a decode and ~46 ms of band
+ * over SPI every 100 ms. Within budget, but not free the way the previous
+ * hold-on-last-frame was.
  *
  * The asset is deliberately NOT embedded in the app binary. It lives in its
  * own partition so it can be reflashed (tools/mkvideoband.py, then
@@ -1624,13 +1627,21 @@ static void draw_splash_band(int64_t elapsed_ms)
         return;
     }
 
-    /* Hold on the last frame rather than looping. The splash is not a
-     * 10 s screen — an unlinked remote stays on it — and a landing clip
-     * restarting every ten seconds forever would be a far worse thing to
-     * leave switched on in a case than a still of two landed boosters. */
-    int idx = (int)(elapsed_ms / s_vid_interval);
-    if (idx < 0)                     idx = 0;
-    if (idx >= (int)s_vid_frames)    idx = (int)s_vid_frames - 1;
+    /* Loop, by operator preference (1.2.11). This replaces a deliberate hold
+     * on the last frame, and the tradeoff is worth stating rather than
+     * rediscovering: STATE_LINKING maps to this screen, so a remote switched
+     * on with no base in range sits here indefinitely, and looping means it
+     * decodes a frame and pushes ~46 ms of band over SPI every 100 ms for as
+     * long as it is powered — where a held last frame cost nothing at all,
+     * the blit writing pixels flush()'s per-row memcmp then rejected. It is
+     * within budget (it is the same load the clip's first ten seconds already
+     * carry, measured with room to spare) but it is no longer free.
+     *
+     * The cut is graded to pull back to roughly its opening width, so the
+     * wrap is not a visible jump. Any replacement asset should do the same. */
+    int64_t f = elapsed_ms / s_vid_interval;
+    if (f < 0) f = 0;
+    int idx = (int)(f % (int64_t)s_vid_frames);
 
     if (idx != s_vid_cur && splash_video_decode(idx) == 0) {
         s_vid_cur = idx;

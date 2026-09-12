@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.65
+**Version:** 1.66
 **Date:** 2026-09-12
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -79,6 +79,7 @@
 | 1.63 | 2026-09-12 | **§10.2.1 boot splash animation; firmware 1.2.7 → 1.2.8.** The splash gains a procedurally-drawn background scene — two side boosters descending onto their pads through a graded night sky over the 10 s hold, with plumes, deploying legs, staggered touchdowns and settling dust — in a new band at `y 116..190`, with the static header block moved up to open it (dynamic field positions unchanged). Recorded in §10.2.1 as a *procedural* scene and why it SHALL NOT become video playback: the ILI9488 is 18-bit-only over SPI, so a full frame is 460,800 B = 184 ms against a 100 ms frame period — the wire is the constraint, not decode cost or flash space, and full-panel playback would saturate the panel for exactly the window the link handshake runs in. Scene colours are bounded below `0x9A` on every channel so the title and version text keep the contrast, and the starfield is static because scattered single-pixel changes widen §10.3's per-row transmit runs for nothing. A `CONFIG_RLC_REMOTE_FAULT_INJECTION` build draws no scene. Also in this revision: **the splash stops presenting the handshake as bounded.** `LINK_REQUEST_MAX_RETRIES` is a backoff threshold, not a give-up count, and rendering it as the denominator of `Attempt N / 5` — clamped, bar pinned at 100% — froze the boot screen while the firmware was still retrying, reading as a hung remote. Now an unbounded `Attempt N`, with a `No response from base` headline and an indeterminate sweep past the threshold; `display_splash()` loses its `max_attempts` argument. And **`LINK_REQUEST_SLOW_INTERVAL_MS` is restored to 5000** (§14.1): it had read 2000 since the initial scaffolding commit, equal to the fast interval, so §6.4.1's backoff chose between two identical values and had never once taken effect — and this document's constants table had been edited down to match the code instead of the code being fixed to match v1.3–v1.8. The fast phase is untouched, so v1.14's aggressive-retry intent stands; the cost is up to 3 s of extra reconnect latency in LINK_LOST, where the base already fails safe independently. **Explicitly not a battery saving** — `rlc_espnow.c` sets `WIFI_PS_NONE` with no PM or tickless idle, so the receive chain draws continuously whatever the transmit cadence — and recorded as such in §10.2.1 and §14.1 so it is not cited as one later. Also **new `BEEP_LINK_TRY` (§12.1)**: a 40 ms blip per handshake attempt while `LINKING`, so a remote left switched on with no base in range says so audibly instead of flattening its pack behind a screen nobody is looking at — this, not the retry interval, is the actual battery measure. No protocol change; version bumped because a changed binary sharing a version number is what the strict check exists to prevent. |
 | 1.64 | 2026-09-12 | **§10.2.1 boot splash: procedural scene replaced by a video band; firmware 1.2.8 → 1.2.9.** v1.63's drawn boosters were rejected on appearance and their code is removed entirely. The splash now plays a letterboxed **480x80 JPEG frame sequence at 10 Hz** (`y 112..191`) from a new `splash` flash partition. The remote leaves `CONFIG_PARTITION_TABLE_SINGLE_APP` for `partitions_remote.csv` (3 MB factory + 2 MB `splash`, memory-mapped, no filesystem); **the base keeps the single-app table**, being out of scope. The asset is deliberately not embedded in the binary, so footage can be reflashed without touching the image that runs the fire path — `./build_remote.sh flash` now writes bootloader + partition table + app, and `./build_remote.sh splash <file>` writes the asset alone. New `tools/mkvideoband.py` builds the container and performs the mandatory grading (desaturate, darken, hard-cap every channel at `0x9A`) so the title text keeps its contrast. Every failure path — missing partition, missing, blank or corrupt asset, wrong dimensions, undecodable frame — degrades to a plain dark band and a normally-booting remote; the container is validated whole at init. The clip holds on its last frame rather than looping, because an unlinked remote sits on this screen indefinitely. Restated unchanged: full-panel playback remains impossible at 184 ms/frame against a 100 ms period, and SHALL NOT be attempted. |
 | 1.65 | 2026-09-12 | **§10.2.1 splash layout and cut corrections; firmware 1.2.9 → 1.2.10.** Three operator-reported fixes, all cosmetic. **(1)** The v1.64 cut missed the landing: its crop pan settled *after* touchdown, putting the pads on the band's bottom edge so the boosters descended out of the strip instead of landing in it. Re-cut with the pan settling on the touchdown itself; §10.2.1 now records why this is fiddly (the source camera tracks, so the ground line moves from ~63-65% of frame height to ~55% during the landing) so the next re-cut does not rediscover it. **(2)** The band now SHALL keep 15 blank rows above and below it — butted straight against the credit and the status line, it read as a rendering fault rather than a frame. **(3)** The version string leaves its own row for the copyright line (`(C) 2026 David Steeman  v<version>`), which is what pays for those margins; it SHALL stay on the boot screen in some form, because the strict version check makes the running firmware something an operator must be able to read without a serial cable. The fault-injection banner is keyed off the band geometry instead of its own literals, so it keeps occupying exactly the band's rows if the band moves again. |
+| 1.66 | 2026-09-12 | **§10.2.1 splash band loops; tracking and zoom reworked; firmware 1.2.10 → 1.2.11.** **(1)** The clip now loops instead of holding its last frame, by operator preference. The spec records what that costs — a held frame was free (decode skipped, identical pixels rejected by §10.3's memcmp), a loop is a decode plus ~46 ms of band over SPI every 100 ms for as long as an unlinked remote is powered — and adds a requirement that a looping asset end at roughly its opening framing so the wrap does not pop. **(2)** Subject tracking now selects the **bounding-box centre** of the bright blobs rather than their area-weighted centroid: the two agree for symmetrical plumes but diverge badly for a smoke column, where the centroid is dragged into the dense base, sitting the crop low, filling its lower half with ground and cutting the top off the billow — exactly the defect reported against v1.65. **(3)** Tracking gains a **search window**: after first lock only blobs near the current position are considered, which is what lets it keep tracking thinning smoke instead of jumping to sunlit roads near the horizon, and replaces the cruder area-floor hold. **(4)** The zoom becomes a three-point move — wide, in to the touchdown, back out as the smoke column grows past any tight framing — which also leaves the clip ending near its opening width for the loop. |
 
 ## Table of Contents
 
@@ -2800,12 +2801,21 @@ descend *out of* the strip rather than landing in it — the defect in the v1.64
 cut, corrected in v1.65 by settling the crop pan on the touchdown itself
 rather than after it.
 
-**The clip SHALL hold on its last frame, not loop.** `STATE_LINKING` maps to
-the splash screen, so an unlinked remote sits on it indefinitely; a landing
-clip restarting every ten seconds forever is a worse thing to leave switched on
-than a still of two landed boosters. Once held, the decode is skipped and the
-blit writes identical pixels, which §10.3's per-row `memcmp` rejects — an ended
-clip costs nothing on the wire.
+**The clip loops (v1.66, firmware 1.2.11).** Through 1.2.10 it held on its
+last frame, on the reasoning that `STATE_LINKING` maps to the splash screen so
+an unlinked remote sits on it indefinitely. Changed by operator preference; the
+cost is recorded here rather than left to be rediscovered. A held frame was
+free — decode skipped, blit writing identical pixels that §10.3's per-row
+`memcmp` rejected. Looping costs a JPEG decode and ~46 ms of band over SPI
+every 100 ms for as long as the remote is powered without a base. That is
+within budget, being exactly the load the clip's first ten seconds already
+carried, but it is permanent rather than transient — and it sits alongside
+`BEEP_LINK_TRY` (§12.1), whose purpose is to get an idle unlinked remote
+switched off.
+
+**A looping asset SHALL end at roughly its opening framing** so the wrap is not
+a visible jump. The shipped cut pulls the zoom back out for this reason; a
+replacement that ends tight will pop.
 
 **Fault-injection banner (v1.51, firmware 1.2.1).** When the remote is built
 with `CONFIG_RLC_REMOTE_FAULT_INJECTION` the splash screen SHALL carry an

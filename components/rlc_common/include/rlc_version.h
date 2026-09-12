@@ -7,7 +7,30 @@
 
 #pragma once
 
-/* 1.2.10 (2026-09-12): splash layout — the band gets margins, the version
+/* 1.2.11 (2026-09-12): the splash band loops.
+ *
+ * 1.2.9 deliberately held the last frame instead, reasoning that an unlinked
+ * remote sits on this screen indefinitely and a landing clip restarting
+ * forever is a worse thing to leave switched on than a still. The operator
+ * asked for the loop; this records what it costs so the decision is not
+ * silently re-litigated later.
+ *
+ * A held frame was genuinely free: the decode was skipped, the blit wrote
+ * identical pixels and flush()'s per-row memcmp rejected every one. Looping
+ * means a JPEG decode and ~46 ms of band over SPI every 100 ms for as long as
+ * the remote is powered without a base. That is within budget — it is exactly
+ * the load the clip's first ten seconds already carried, measured on target
+ * with no watchdog margin lost — but it is now permanent rather than
+ * transient, and it sits alongside BEEP_LINK_TRY (1.2.8), which exists to get
+ * an idle unlinked remote switched OFF.
+ *
+ * The asset is cut to pull back to roughly its opening framing, so the wrap
+ * is not a visible jump. A replacement asset that ends tight will pop.
+ *
+ * Remote-only, display. No protocol change, but the version moves because the
+ * binary did. Flash both units.
+ *
+ * 1.2.10 (2026-09-12): splash layout — the band gets margins, the version
  * gets off its own row, and the cut finally contains the landing.
  *
  * Three operator-driven corrections to 1.2.9, all cosmetic, no protocol
@@ -1234,5 +1257,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  10
-#define RLC_VERSION_STRING "1.2.10"
+#define RLC_VERSION_PATCH  11
+#define RLC_VERSION_STRING "1.2.11"

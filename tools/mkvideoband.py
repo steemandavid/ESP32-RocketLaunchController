@@ -105,19 +105,16 @@ def selected_frames(path, start, step, want):
 
 # ── subject tracking ───────────────────────────────────────────────
 
-def find_subject(img):
-    """Locate the rocket plumes in one frame. Returns (x, y, area) in
-    fractions of frame size, or None.
+def find_blobs(img):
+    """Return the bright blobs in one frame as (cx, cy, x0, y0, x1, y1, area),
+    all in fractions of frame size. Selection between them is policy and lives
+    in smooth_track().
 
     The plumes are the brightest thing in the shot and are blown out to near
     white, so brightness — not colour — is the discriminator. (Warmth, R-B,
     looks like the obvious choice and is a trap: clipped white flame has
     R ~= B, so an R-B test finds dark red vegetation instead.) The threshold
     floats with the frame's own mean so dusk footage and daylight both work.
-
-    Bright blobs within 20% of the largest are merged before taking the
-    centroid, which is what keeps the point between two descending boosters
-    rather than snapping to whichever is momentarily brighter.
     """
     import numpy as np
     import cv2
@@ -131,47 +128,68 @@ def find_subject(img):
     mask = (luma > thr).astype(np.uint8)
 
     n, _lab, stats, cent = cv2.connectedComponentsWithStats(mask, 8)
-    if n <= 1:
-        return None
-    areas = stats[1:, cv2.CC_STAT_AREA]
-    keep = [i + 1 for i, ar in enumerate(areas) if ar >= max(8, 0.20 * areas.max())]
-    if not keep:
-        return None
+    out = []
+    for i in range(1, n):
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        if area < 8:
+            continue
+        x0 = stats[i, cv2.CC_STAT_LEFT]
+        y0 = stats[i, cv2.CC_STAT_TOP]
+        out.append((cent[i][0] / ANALYSIS_W, cent[i][1] / ANALYSIS_H,
+                    x0 / ANALYSIS_W, y0 / ANALYSIS_H,
+                    (x0 + stats[i, cv2.CC_STAT_WIDTH]) / ANALYSIS_W,
+                    (y0 + stats[i, cv2.CC_STAT_HEIGHT]) / ANALYSIS_H,
+                    area))
+    return out
 
-    total = sum(int(stats[i, cv2.CC_STAT_AREA]) for i in keep)
-    cx = sum(cent[i][0] * stats[i, cv2.CC_STAT_AREA] for i in keep) / total
-    cy = sum(cent[i][1] * stats[i, cv2.CC_STAT_AREA] for i in keep) / total
-    return cx / ANALYSIS_W, cy / ANALYSIS_H, total
 
+def smooth_track(per_frame, search, max_step, alpha):
+    """Turn per-frame blob lists into a crop path that can be watched.
 
-def smooth_track(points, area_floor, max_step, alpha):
-    """Turn raw per-frame detections into a crop path that can be watched.
+    Selection, then three guards.
 
-    Three guards, each earning its place on real footage:
+    SELECTION is the **bounding-box centre** of the kept blobs, not their
+    area-weighted centroid. Both agree while the subject is two symmetrical
+    plumes. They diverge badly once it becomes a smoke cloud: the centroid is
+    dragged down into the dense base of the cloud, so the crop sits low, fills
+    its lower half with ground and cuts the top off the billow. The box centre
+    tracks what the subject actually occupies.
 
-    area_floor — once the engines cut and the smoke thins, there is no subject
-    left to track, and the detector will happily lock onto sunlit roads or
-    buildings near the horizon instead. Below the floor the path HOLDS. That is
-    not a fallback, it is correct: the pads do not move.
+    SEARCH WINDOW — after the first lock, only blobs whose centre lies within
+    `search` of the current path position are considered. This is what makes
+    tracking survivable after engine cut-off: the smoke is still the brightest
+    thing nearby, but sunlit roads and buildings near the horizon are brighter
+    than thinning smoke, and ungated the detector will happily jump to them and
+    throw the framing to the bottom of the frame. Gating keeps it on the pad.
 
-    max_step — bounds how far the crop may travel per frame, so a single bad
-    detection cannot throw the framing.
-
-    alpha — exponential smoothing, because a centroid that jitters by a pixel
-    turns into a band that visibly shakes.
+    max_step bounds travel per frame, so one bad detection cannot throw the
+    framing. alpha is exponential smoothing, because a centre that jitters by a
+    pixel becomes a band that visibly shakes.
     """
     out, cur = [], None
-    for p in points:
-        if p is not None and p[2] >= area_floor:
-            tx, ty = p[0], p[1]
+    for blobs in per_frame:
+        if blobs:
             if cur is None:
-                cur = [tx, ty]
+                pool = blobs
             else:
-                nx = cur[0] + (tx - cur[0]) * alpha
-                ny = cur[1] + (ty - cur[1]) * alpha
-                nx = min(cur[0] + max_step, max(cur[0] - max_step, nx))
-                ny = min(cur[1] + max_step, max(cur[1] - max_step, ny))
-                cur = [nx, ny]
+                pool = [b for b in blobs
+                        if abs(b[0] - cur[0]) <= search
+                        and abs(b[1] - cur[1]) <= search]
+            if pool:
+                biggest = max(b[6] for b in pool)
+                keep = [b for b in pool if b[6] >= 0.20 * biggest]
+                x0 = min(b[2] for b in keep); x1 = max(b[4] for b in keep)
+                y0 = min(b[3] for b in keep); y1 = max(b[5] for b in keep)
+                tx, ty = (x0 + x1) / 2, (y0 + y1) / 2
+
+                if cur is None:
+                    cur = [tx, ty]
+                else:
+                    nx = cur[0] + (tx - cur[0]) * alpha
+                    ny = cur[1] + (ty - cur[1]) * alpha
+                    nx = min(cur[0] + max_step, max(cur[0] - max_step, nx))
+                    ny = min(cur[1] + max_step, max(cur[1] - max_step, ny))
+                    cur = [nx, ny]
         out.append(tuple(cur) if cur else None)
 
     # Frames before the first detection get the first known position, so the
@@ -194,24 +212,44 @@ def ease_to(progress, start, end, settle):
     return start + (end - start) * (1.0 - (1.0 - p) ** 2)
 
 
-def smoothstep_to(progress, start, end, settle):
-    """Smoothstep from start to end, completing at `settle`, then holding.
+def _smoothstep(p):
+    p = min(1.0, max(0.0, p))
+    return p * p * (3.0 - 2.0 * p)
 
-    Used for the zoom. An ease-out push-in does almost all its travel in the
-    first moment and then creeps, so the shot is already tight before the
-    subject has done anything — the opposite of what a push-in is for. A
-    smoothstep stays wide while the subject is still far away and large in
-    frame, then moves, then settles on the moment that matters.
+
+def zoom_at(progress, start, peak, settle, final):
+    """Three-point zoom: `start` -> `peak` by `settle`, then -> `final` by the
+    end of the clip. Smoothstepped throughout.
+
+    A smoothstep, not an ease-out: an ease-out push-in does almost all its
+    travel in the first moment and then creeps, so the shot is already tight
+    before the subject has done anything — the opposite of what a push-in is
+    for. Smoothstep stays wide while the subject is still far away and large
+    in frame, then moves, then settles on the moment that matters.
+
+    The pull-back afterwards is not symmetry for its own sake. The subject
+    keeps growing after touchdown — a smoke column quickly becomes far larger
+    than the tight framing that suited two descending boosters — so holding the
+    peak zoom crops the top off it. Pulling back also leaves the clip ending at
+    roughly the width it started, which is what lets it loop without a visible
+    jump.
     """
-    if end is None or settle <= 0:
+    if peak is None:
         return start
-    p = min(1.0, progress / settle)
-    return start + (end - start) * (p * p * (3.0 - 2.0 * p))
+    if progress <= settle or settle >= 1.0:
+        return start + (peak - start) * _smoothstep(progress / max(settle, 1e-6))
+    if final is None:
+        return peak
+    return peak + (final - peak) * _smoothstep((progress - settle) / (1.0 - settle))
 
 
-def crop_band(img, cx, cy, zoom):
+def crop_band(img, cx, cy, zoom, bias_y=0.0):
     """Cut a 6:1 window of width (source width / zoom) centred on (cx, cy),
-    clamped inside the frame, and resize it to the band."""
+    clamped inside the frame, and resize it to the band.
+
+    `bias_y` shifts the window as a fraction of its own height — negative is
+    up. Subjects are rarely centred on what the detector finds: a rising smoke
+    column wants headroom, not ground."""
     sw, sh = img.size
     cw = min(sw, sw / max(zoom, 1e-6))
     ch = cw / BAND_ASPECT
@@ -220,7 +258,7 @@ def crop_band(img, cx, cy, zoom):
         cw = ch * BAND_ASPECT
 
     x = min(sw - cw, max(0, cx * sw - cw / 2))
-    y = min(sh - ch, max(0, cy * sh - ch / 2))
+    y = min(sh - ch, max(0, cy * sh - ch / 2 + bias_y * ch))
     box = (int(round(x)), int(round(y)), int(round(x + cw)), int(round(y + ch)))
     return img.crop(box).resize((BAND_W, BAND_H), Image.LANCZOS)
 
@@ -260,12 +298,19 @@ def main():
                          "Aim this at the moment that matters — the touchdown "
                          "— not at the end of the clip.")
 
+    ap.add_argument("--zoom-final", type=float, default=None,
+                    help="pull back out to this zoom by the end of the clip, "
+                         "for a subject that keeps growing after the moment "
+                         "(and to let the clip loop cleanly)")
     ap.add_argument("--track", action="store_true",
                     help="follow the brightest subject (the plumes) instead "
                          "of using a fixed/panned anchor")
-    ap.add_argument("--track-area", type=int, default=300,
-                    help="hold the crop when the detected subject falls below "
-                         "this many analysis pixels (default: 300)")
+    ap.add_argument("--track-search", type=float, default=0.12,
+                    help="only consider blobs within this fraction of the "
+                         "frame of the current position (default: 0.12)")
+    ap.add_argument("--track-bias-y", type=float, default=0.0,
+                    help="shift the crop vertically by this fraction of its "
+                         "own height; negative is up (default: 0)")
     ap.add_argument("--track-step", type=float, default=0.012,
                     help="max crop movement per frame, frame fractions")
     ap.add_argument("--track-alpha", type=float, default=0.35,
@@ -289,27 +334,29 @@ def main():
     if args.track:
         raw = []
         for _i, img in selected_frames(args.video, args.start, step, want):
-            raw.append(find_subject(img))
+            raw.append(find_blobs(img))
         if not raw:
             sys.exit("no frames taken — check --start against the clip length")
-        track = smooth_track(raw, args.track_area, args.track_step,
+        track = smooth_track(raw, args.track_search, args.track_step,
                              args.track_alpha)
-        held = sum(1 for p, r in zip(track, raw)
-                   if r is None or r[2] < args.track_area)
-        print(f"tracked {len(raw)} frames, {len(raw) - held} locked, {held} held")
+        blind = sum(1 for r in raw if not r)
+        print(f"tracked {len(raw)} frames, {len(raw) - blind} with blobs, "
+              f"{blind} blind")
 
     # ── pass 2: crop, grade, encode ──
     frames = []
     for i, img in selected_frames(args.video, args.start, step, want):
         prog = i / max(1, want - 1)
-        zoom = smoothstep_to(prog, args.zoom, args.zoom_end, args.zoom_settle)
+        zoom = zoom_at(prog, args.zoom, args.zoom_end, args.zoom_settle,
+                       args.zoom_final)
         if track is not None:
             cx, cy = track[min(i, len(track) - 1)]
         else:
             cx = 0.5
             cy = ease_to(prog, args.anchor, args.anchor_end, args.anchor_settle)
-        frames.append(grade(crop_band(img, cx, cy, zoom), args.saturation,
-                            args.brightness, args.contrast, args.cap))
+        frames.append(grade(crop_band(img, cx, cy, zoom, args.track_bias_y),
+                            args.saturation, args.brightness, args.contrast,
+                            args.cap))
 
     if not frames:
         sys.exit("no frames taken — check --start against the clip length")
