@@ -120,7 +120,39 @@ Requires **ESP-IDF v5.4.1** and an ESP32-S3 (16 MB flash, 8 MB OCT PSRAM).
 ./build_remote.sh flash -p PORT # override the serial port
 
 ./build_base.sh flash --inject  # TEST ONLY — see below
+
+./build_remote.sh splash FILE   # flash ONLY the boot video band asset
 ```
+
+### The remote's boot video band
+
+The remote's boot splash plays a 480x80 letterboxed clip of the Falcon Heavy
+side boosters landing (FSD §10.2.1). It is not full-panel video and cannot
+become one: the ILI9488 is 18-bit-only over SPI, so a full 480x320 frame is
+460,800 B — 184 ms at 20 MHz against a 100 ms frame period.
+
+The asset lives in its **own `splash` flash partition**, not in the firmware
+binary, so footage can be re-cut and reflashed in seconds without rebuilding or
+touching the image that runs the fire path:
+
+```bash
+tools/mkvideoband.py clip.mp4 -o splash.bin --track --zoom 1.0 --zoom-end 2.6
+./build_remote.sh splash splash.bin
+```
+
+`assets/splash_falconheavy.bin` is the shipped asset; `assets/README.md` records
+its source (NASA imagery, public domain in the US), its licence and the exact
+recipe. The tool's grading — desaturate, darken, hard-cap every channel at
+`0x9A` — is mandatory, not taste: the band sits behind white title text and the
+text has to win.
+
+This required the **remote** to leave `CONFIG_PARTITION_TABLE_SINGLE_APP` for
+`partitions_remote.csv` (3 MB factory + 2 MB `splash`); its 1 MB factory
+partition could not hold the app plus the asset. Consequently
+`./build_remote.sh flash` writes bootloader + partition table + app, not app
+alone. **The base keeps the single-app table** — it has no asset, and leaving
+its layout alone keeps a pad-side unit out of scope. That does leave the base
+app at ~830 KB in a 1 MB partition (~19% headroom), which is worth watching.
 
 **After flashing both units, reset the one you flashed first.** Both units run a
 strict version check, and `VERSION_MISMATCH` is latched — `tick_remote()`
@@ -272,7 +304,7 @@ so the "pad is live" signal is never diluted into a data display.
 | 2 | Input/output and debouncing | Complete |
 | 3 | State machines and command processing | Complete — G2 arming suite 18/18, G3 fire tests all pass or discharged |
 | 4 | Display | Verified on target 2026-08-27 — 9/9 pass; status band added and its 7 states verified |
-| 5 | Hardening and final testing | **Complete — release fw 1.2.0, 2026-08-28; currently fw 1.2.7.** §15.4 safety tests 14/19 (incl. T-S06 partial); bug #20 closed. Only T-S10 and T-S18 genuinely open, both blocked on physical access: a soldered display and a soldered key-sense wire. Phase 5 code review closed out 2026-08-28 in fw 1.1.30 (1 Critical, 6 Major, 13 Minor) and **verified on target the same day — 11 tests, 11 PASS** (`Test_Report_Phase5_Review_Fixes.md`), taking firmware to 1.1.32. **MAJ-01 and CRIT-01 closed on target later the same day** (fw 1.1.35, `Test_Report_Phase5_OnTarget_20260828.md`) — two more live defects found and fixed on the way (raw-NACK toast, battery-critical disarm); bug #29 regression suite T-A16/T-A17/T-A18 all PASS, **cleared for live fire**. Final-build audit clean (zero injection/harness symbols in both stock ELFs); both units on stock 1.2.0. **fw 1.2.1 (2026-08-30)** adds the remote's fault-injection splash banner (display-only, no protocol change); **fw 1.2.2 (2026-09-01)** removes the main screen's continuity legend and gives its space to the status band; **fw 1.2.3 (2026-09-01)** adds the base's one-chirp boot-complete siren test (`SIREN_BOOT_TEST`) — both units flashed together, link verified; **fw 1.2.4 (2026-09-10)** adds the igniter-connected blip (`SIREN_IGNITER_CONNECTED`) and **fw 1.2.5 (same day)** its marginal counterpart (`SIREN_IGNITER_MARGINAL`, two blips) — base-only and audible-only, both units flashed together, link verified, **T-A21 and T-A22 PASS** on target; **fw 1.2.6 (same day)** records the remote arm key's undocumented NC contact on GPIO 2 — pin claimed, contacts cross-checked (ARM KEY SWITCH FAULT), FSD spare-pin list corrected to 6; **fw 1.2.7 (same day)** makes that fault persist on the display (status band REMOTE field reads KEY FAULT) and renames the ARM/FIRE refusals that used to say "TURN ARM KEY FIRST" while the key was already turned; both units flashed together, link verified (**T-A23 outstanding**) |
+| 5 | Hardening and final testing | **Complete — release fw 1.2.0, 2026-08-28; currently fw 1.2.11.** §15.4 safety tests 14/19 (incl. T-S06 partial); bug #20 closed. Only T-S10 and T-S18 genuinely open, both blocked on physical access: a soldered display and a soldered key-sense wire. Phase 5 code review closed out 2026-08-28 in fw 1.1.30 (1 Critical, 6 Major, 13 Minor) and **verified on target the same day — 11 tests, 11 PASS** (`Test_Report_Phase5_Review_Fixes.md`), taking firmware to 1.1.32. **MAJ-01 and CRIT-01 closed on target later the same day** (fw 1.1.35, `Test_Report_Phase5_OnTarget_20260828.md`) — two more live defects found and fixed on the way (raw-NACK toast, battery-critical disarm); bug #29 regression suite T-A16/T-A17/T-A18 all PASS, **cleared for live fire**. Final-build audit clean (zero injection/harness symbols in both stock ELFs); both units on stock 1.2.0. **fw 1.2.1 (2026-08-30)** adds the remote's fault-injection splash banner (display-only, no protocol change); **fw 1.2.2 (2026-09-01)** removes the main screen's continuity legend and gives its space to the status band; **fw 1.2.3 (2026-09-01)** adds the base's one-chirp boot-complete siren test (`SIREN_BOOT_TEST`) — both units flashed together, link verified; **fw 1.2.4 (2026-09-10)** adds the igniter-connected blip (`SIREN_IGNITER_CONNECTED`) and **fw 1.2.5 (same day)** its marginal counterpart (`SIREN_IGNITER_MARGINAL`, two blips) — base-only and audible-only, both units flashed together, link verified, **T-A21 and T-A22 PASS** on target; **fw 1.2.6 (same day)** records the remote arm key's undocumented NC contact on GPIO 2 — pin claimed, contacts cross-checked (ARM KEY SWITCH FAULT), FSD spare-pin list corrected to 6; **fw 1.2.7 (same day)** makes that fault persist on the display (status band REMOTE field reads KEY FAULT) and renames the ARM/FIRE refusals that used to say "TURN ARM KEY FIRST" while the key was already turned; both units flashed together, link verified (**T-A23 outstanding**). **fw 1.2.8–1.2.11 (2026-09-12)** rework the boot splash: a Falcon Heavy landing video band in a new `splash` partition (1.2.9, after a procedurally-drawn attempt in 1.2.8 was rejected), layout and cut corrections (1.2.10), and looping (1.2.11) — plus two long-standing link fixes that came out of the same work: the splash no longer presents `LINK_REQUEST_MAX_RETRIES` as a give-up count (it is a backoff threshold; the frozen "Attempt 5 / 5" was the steady-state display of a remote that could not find its base), `LINK_REQUEST_SLOW_INTERVAL_MS` is a real 5000 ms for the first time since the initial commit, and a new `BEEP_LINK_TRY` blip tells an operator their remote is awake and still hunting. Both units flashed 1.2.11 and linked (rssi −61, 0 missed pings) |
 
 Known open items before any field use:
 

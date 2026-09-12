@@ -1,5 +1,260 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-12 — boot splash: Falcon Heavy landing video band (fw 1.2.7 → 1.2.11)
+
+Started as "the boot splash is boring, could we have an animated background —
+a 10 s video of two Falcon Heavy boosters landing, subdued so it doesn't scream
+over the text", plus a complaint that the splash's "Attempt 5 / 5" was
+confusing because the remote keeps trying anyway. Both were done, and the
+second turned out to be hiding two real defects.
+
+### The constraint that shaped everything
+
+The ILI9488 is **18-bit-only over SPI**, so `flush_run()` ships 3 bytes/pixel at
+`DISPLAY_SPI_CLOCK_HZ` (20 MHz). A full 480x320 frame is **460,800 B = 184 ms**
+against a 100 ms frame period. Full-panel video is not slow here, it is
+*impossible* — and it would saturate the panel for exactly the window the link
+handshake runs in. Decode cost and flash space were never the constraint.
+
+A 480x80 band is 115,200 B = **46 ms**, which fits with room to spare. That is
+the whole design.
+
+### Route taken (two attempts)
+
+| fw | What | Outcome |
+|---|---|---|
+| 1.2.8 | Procedurally-drawn scene: sky gradient, starfield, pads, booster sprites, plumes, legs, dust | **Rejected on sight** — "looks like crap". Code removed entirely in 1.2.9 |
+| 1.2.9 | Real footage in a 480x80 band, JPEG sequence at 10 Hz from a new `splash` partition | Kept |
+| 1.2.10 | Cut missed the touchdown; band had no margins; version line moved to the copyright line | Kept |
+| 1.2.11 | Loops; tracking and framing reworked | Current |
+
+### Asset storage and flash layout
+
+The asset is **not** embedded in the firmware binary. It lives in its own
+partition so footage can be re-cut and reflashed in seconds without rebuilding
+or touching the image that runs the fire path.
+
+```
+# partitions_remote.csv  (REMOTE ONLY)
+nvs,        data, nvs,       0x9000,   0x6000,
+phy_init,   data, phy,       0xf000,   0x1000,
+factory,    app,  factory,   0x10000,  0x300000,   # 3 MB (was 1 MB)
+splash,     data, undefined, ,         0x200000,   # 2 MB, memory-mapped
+```
+
+The 1 MB single-app factory partition held an 863 KB app — no room. **The base
+keeps `CONFIG_PARTITION_TABLE_SINGLE_APP`**: it has no asset, and leaving its
+layout alone kept a pad-side unit out of scope. This works because
+`sdkconfig.remote` / `sdkconfig.base` are per-unit fragments copied over
+`sdkconfig`.
+
+Consequences:
+- `./build_remote.sh flash` now writes **bootloader + partition table + app**
+  (0x0 / 0x8000 / 0x10000), not app alone.
+- `./build_remote.sh splash <file>` writes the asset alone, via `parttool.py`.
+- Base flashing is unchanged (app only at 0x10000).
+- Base app is ~830 KB in a 1 MB partition — **~19% headroom, worth watching**.
+
+Dependency added: `espressif/esp_new_jpeg` in `main/idf_component.yml`.
+RGB888 output is R,G,B low→high — the framebuffer's own order, so the blit is a
+`memcpy`.
+
+### The asset
+
+`assets/splash_falconheavy.bin` — Falcon Heavy demo flight, 6 Feb 2018, the two
+side boosters landing at LZ-1/LZ-2. Source `Falcon_Heavy_test_flight.webm` from
+Wikimedia Commons: **NASA imagery, public domain in the US**, credited to
+Charles A. Babir via images.nasa.gov. Provenance, licence and exact recipe in
+`assets/README.md`.
+
+```bash
+tools/mkvideoband.py fh.webm -o splash_falconheavy.bin \
+    --start 222.0 --duration 10 --track \
+    --zoom 1.0 --zoom-end 2.6 --zoom-settle 0.55 --zoom-final 1.15 \
+    --track-bias-y -0.10
+```
+
+175,281 B, 1,744 B/frame avg, 2,996 B peak — **8.4% of the 2 MB partition**.
+Quality is nowhere near the constraint.
+
+**The landing runs 215.5 s to ~234 s of the source, with a camera cut at 235 s
+to a crowd shot — any window must end before it.**
+
+### Things the footage taught (all in `assets/README.md`)
+
+- **Track on brightness, not warmth.** R−B is the obvious discriminator for
+  rocket exhaust and is a trap: the flames are blown out to near-white so
+  R ≈ B, and an R−B test locks onto dark red vegetation instead.
+- **Select the bounding-box centre, not the area-weighted centroid.** They
+  agree for two symmetrical plumes and diverge badly for a smoke column, where
+  the centroid is dragged into the dense base of the cloud — crop sits low,
+  fills its lower half with ground, cuts the top off the billow. This was the
+  exact defect reported against 1.2.10.
+- **Gate the tracker to a search window.** Once the engines cut, sunlit roads
+  near the horizon are brighter than thinning smoke and the detector jumps to
+  them, throwing the framing to the bottom of the frame.
+- **Zoom with a smoothstep, not an ease-out.** An ease-out push-in does nearly
+  all its travel in the first moment then creeps, so the shot is tight before
+  anything has happened.
+- **The camera tracks and zooms during the landing** — ground line ~63-65% of
+  frame height at t=226-227 s, rising to ~55% by t=228 s. A band not low enough
+  for the earlier line puts the pads on its bottom edge.
+- **Pull the zoom back out at the end.** The subject keeps growing; and ending
+  near the opening width is what stops the loop wrapping with a visible jump.
+
+Grading (desaturate, darken, hard-cap every channel at `0x9A`) is **mandatory,
+not taste** — the band sits behind white title text and the text has to win.
+
+### Two long-standing defects found along the way
+
+**1. The splash presented the handshake as bounded.** It read `Attempt N / 5`,
+clamped, bar pinned at 100%, while the firmware retried forever.
+`LINK_REQUEST_MAX_RETRIES` is a **backoff threshold, not a give-up count**.
+Because `STATE_LINKING` maps to the splash screen, this was the *steady-state
+display of a remote that could not find its base*, not a boot-time glitch — a
+screen frozen while the unit is still working reads as a hung remote. Now an
+unbounded `Attempt N`, a `No response from base` headline, and an indeterminate
+sweep past the threshold. `display_splash()` lost its `max_attempts` argument.
+
+**2. `LINK_REQUEST_SLOW_INTERVAL_MS` had never once taken effect.** It read
+2000 in `rlc_config.h` since the initial scaffolding commit — *equal to the fast
+interval* — so §6.4.1's backoff ternary chose between two identical values. The
+FSD table had been edited down to 2000 to match the code rather than the code
+fixed to match v1.3–v1.8 (5000). Restored to 5000; the fast phase is untouched
+so v1.14's aggressive-retry intent stands. Confirmed on target:
+
+```
+attempt 1..5 at 1909, 3919, 5919, 7919, 9919 ms   ← 2 s fast phase
+NO LINK — 5 attempts failed, retrying every 5000 ms
+attempt 6 at 14919, attempt 7 at 19919            ← 5000 ms apart
+```
+
+**This is NOT a battery saving** and is recorded as such in three places so it
+is not cited as one later: `rlc_espnow.c` sets `WIFI_PS_NONE` with no PM or
+tickless idle, so the receive chain draws continuously whatever the transmit
+cadence. A ~40-byte frame every 5 s instead of every 2 s is order-0.1 mA against
+a draw dominated by the always-on radio and the display backlight.
+
+**The actual battery measure** (operator's idea, and a better one than dimming
+the backlight): new **`BEEP_LINK_TRY`**, a 40 ms blip per handshake attempt
+while `LINKING`, so a remote left switched on with no base in range says so
+audibly instead of flattening its pack behind a screen nobody is looking at.
+`LINKING` only — `LINK_LOST` already sounds a continuous alarm, and a one-shot
+layered under a running alarm only contends for the pattern player.
+
+### Splash layout (fw 1.2.10+)
+
+| Element | y | Note |
+|---|---|---|
+| `ESP32 WIRELESS ROCKET` | 10 | scale 3 |
+| `LAUNCH CONTROLLER` | 38 | scale 3 |
+| `VRO - VLAAMSE RAKET ORGANISATIE` | 70 | scale 2, ends y85 |
+| *(blank)* | 86–100 | **15-row margin, load-bearing** |
+| **video band** | 101–180 | 480x80 |
+| *(blank)* | 181–195 | **15-row margin, load-bearing** |
+| headline | 196 | `Connecting to base...` / `No response from base` / `Connected to base` |
+| attempt / RSSI | 228 | unbounded `Attempt N` |
+| progress bar | 262 | fill, or indeterminate sweep past the threshold |
+| `(C) 2026 David Steeman  v1.2.11` | DH−26 | version moved here from its own row |
+
+The version stays on the boot screen deliberately: the strict version check
+makes "which firmware is this running" something an operator must be able to
+answer without a serial cable.
+
+### Looping tradeoff (fw 1.2.11)
+
+Operator asked for the loop, replacing a deliberate hold-on-last-frame. Recorded
+so it is not silently re-litigated: a held frame was **free** (decode skipped,
+blit writing identical pixels that `flush()`'s per-row `memcmp` rejected).
+Looping costs a JPEG decode plus ~46 ms of band over SPI **every 100 ms for as
+long as the remote is powered without a base**. Within budget — the same load
+the first ten seconds already carried, verified over 26 s on target with no
+watchdog margin lost — but permanent, and it sits alongside `BEEP_LINK_TRY`
+whose purpose is getting an idle unlinked remote switched off.
+
+### Robustness
+
+Every failure degrades to a plain dark band and a normally-booting remote:
+missing partition, missing/blank/corrupt asset, wrong dimensions, undecodable
+frame. The RLCV container is validated **whole at init** — magic, format, frame
+count, dimensions, interval, and every frame offset/length against the partition
+size — so the 10 Hz path indexes the frame table without re-checking bounds, and
+an erased all-`0xFF` partition is rejected as cleanly as a corrupt one.
+**Verified on target both ways** (empty partition first, then the asset).
+
+A `CONFIG_RLC_REMOTE_FAULT_INJECTION` build draws no band at all; its red
+banner is now keyed off the band geometry rather than its own literals.
+
+### Serial ports used
+
+| Unit | Port | MAC | Note |
+|---|---|---|---|
+| Remote | `usb-1a86_USB_Single_Serial_5B5E043219-if00` | `ac:a7:04:e2:f2:8c` | COM adapter, as normal |
+| Base | `usb-Espressif_USB_JTAG_serial_debug_unit_44:1B:F6:81:F1:70-if00` | `44:1b:f6:81:f1:70` | **native USB** — its COM adapter (`5B5E042156`) did not enumerate |
+
+**Correction to the port notes:** that native-USB by-id has been recorded as
+"Remote native USB". It is not — `44:1B:F6:81:F1:70` is **base chip #4**, the
+board promoted from remote to base on 2026-08-20. Confirmed twice this session:
+`esptool read_mac` on the port, and the remote's own
+`rlc_espnow: peer added: 44:1b:f6:81:f1:70`.
+
+### Verification
+
+- Host tests **497 checks, 0 failures** before every build.
+- Remote 1.2.11 + asset: `splash: 100 frames, 480x80, 100 ms/frame (10.0 s)`,
+  no decode failures, no watchdog trips across 26 s.
+- Empty-partition path: `splash: no valid RLCV asset — plain band`, normal boot.
+- Both units flashed 1.2.11 and **linked**: `LINK_ACK accepted`,
+  `LINKING -> IDLE`, rssi −61, 0 missed pings, 0 tx failures.
+
+### Files
+
+| File | Change |
+|---|---|
+| `components/rlc_remote/src/rlc_display.c` | Band player (mmap, validate, decode, blit); splash layout; unbounded attempt counter; `draw_bar_sweep()`; procedural scene added then removed |
+| `components/rlc_remote/include/rlc_display.h` | `display_splash()` loses `max_attempts` |
+| `components/rlc_common/include/rlc_config.h` | `LINK_REQUEST_SLOW_INTERVAL_MS` 2000 → **5000** + the history of why it was dead |
+| `components/rlc_common/src/rlc_link.c` | Backoff comment: the ternary was a no-op for the project's whole life |
+| `components/rlc_remote/{include,src}/rlc_buzzer.*` | New `BUZZER_BEEP_LINK_TRY` (40 ms) |
+| `components/rlc_remote/src/rlc_remote_main.c` | Blip on handshake attempt while `LINKING` |
+| `components/rlc_remote/CMakeLists.txt` | `spi_flash esp_partition espressif__esp_new_jpeg` |
+| `partitions_remote.csv` | **new** |
+| `sdkconfig.remote` | Custom partition table |
+| `main/idf_component.yml` | `espressif/esp_new_jpeg` |
+| `build_remote.sh` | Flashes bootloader + ptable + app; new `splash <file>` |
+| `tools/mkvideoband.py` | **new** — RLCV builder, tracking, zoom, grading |
+| `assets/` | **new** — asset + provenance/recipe |
+| `RLC_Functional_Specification_v1_14.md` | v1.62 → **v1.66** |
+| `README.md`, `Development_Progress.md` | Boot band, flash procedure, fw rows 1.2.8–1.2.11 |
+
+### Commits
+
+- `4dfc551` feat: fw 1.2.10 — boot splash plays a Falcon Heavy landing band (FSD v1.65)
+- `4e0f4b7` feat(splash): track the landing and push in on the touchdown
+- `3ad19bf` feat: fw 1.2.11 — splash band loops; track the cloud, not the flame (FSD v1.66)
+
+### Notes / follow-ups
+
+- **Base app headroom:** ~830 KB in a 1 MB partition (~19%). The remote now has
+  3 MB. If the base gets close, it needs the same treatment.
+- **Early frames clip the upper booster's nose.** Unavoidable in a 6:1
+  letterbox holding two diagonally separated rockets. Detecting the dark
+  booster bodies to extend the tracked box was tried and abandoned — at that
+  distance they are thin and anti-aliased against bright sky and no threshold
+  separates them from the treeline. The honest fix is tighter footage.
+- **Loop cost is permanent** while unlinked (see above). Reverting to
+  hold-on-last-frame is a one-line change in `draw_splash_band()`.
+- **Untested on the real panel:** whether 15 blank rows read as a margin at
+  arm's length, and whether the dusk footage is bright enough outdoors.
+  `--brightness` + `./build_remote.sh splash` is a ~10 s loop, no firmware
+  rebuild.
+- **`fh.webm` (190 MB) is not in the repo** — it is in the session scratchpad.
+  Re-download from Wikimedia Commons if the band needs re-cutting; the URL and
+  recipe are in `assets/README.md`.
+- Base's COM adapter `usb-1a86_USB_Single_Serial_5B5E042156-if00` did not
+  enumerate this session (charge-only cable or hub port suspected — the board
+  was alive on RF throughout). Native USB was used instead.
+
 ## 2026-09-10 — second range test: 430 m at −91 dBm; d⁴ prediction retired
 
 David flew a second range test in the same geometry class as the 2026-08-25
