@@ -621,6 +621,20 @@ static void handle_link_ack(const uint8_t *payload, uint16_t plen)
         s_peer_num_channels = NUM_CHANNELS;
     }
 
+    /* CM-08 / RLC-REVIEW-ALL-010 C-INF7: a duplicate LINK_ACK for the session
+     * we are already in must not re-reset it. reset_session() zeroes this
+     * side's rx sequence counter while the base keeps its own, so until the
+     * next full handshake every subsequent PING read as a replay. A
+     * *different* token still resets — that is a genuinely new session
+     * (e.g. after a base reboot) and the old counters are stale anyway.
+     * Peer fw / num_channels above were already refreshed, so a plain
+     * return is complete. */
+    if (s_state == RLC_LINK_STATE_LINKED &&
+        ack->session_token == s_session_token) {
+        ESP_LOGI(TAG, "duplicate LINK_ACK for current session — ignored");
+        return;
+    }
+
     reset_session(ack->session_token);
     s_linkreq_attempts = 0;  /* Reset retry counter on successful link */
     ESP_LOGI(TAG, "LINK_ACK accepted, token=0x%08lx", (unsigned long)ack->session_token);
@@ -724,7 +738,12 @@ static void process_frame(const link_rx_item_t *it)
                     ESP_LOGW(TAG, "PING invalid session, dropped");
                     return;
                 }
-                /* Sequence check — allow 0 seq after reset. */
+                /* Sequence check. RLC-REVIEW-ALL-010 C-MIN1: the old comment
+                 * here said "allow 0 seq after reset", which described the
+                 * pre-CM-05 behaviour. Since CM-05, seq_is_replay() rejects
+                 * seq <= last unconditionally — a 0 is only ever a wrap or a
+                 * replay, never legitimate — so the session-token check above
+                 * is the sole gate on a fresh handshake. */
                 if (seq_is_replay(hdr.sequence_number)) {   /* CM-05 */
                     ESP_LOGW(TAG, "PING replay seq %lu", (unsigned long)hdr.sequence_number);
                     return;
@@ -933,18 +952,24 @@ static void process_frame(const link_rx_item_t *it)
  * timeout, or log — link_task holds that same mutex across process_frame()
  * including its own esp_now_send(), so blocking here while the link is
  * already failing is an ABBA against Wi-Fi-internal locks. Instead it only
- * latches a flag; link_task consumes it within its 50 ms poll below. */
-static volatile bool s_send_failure_pending = false;
+ * latches a flag; link_task consumes it within its 50 ms poll below.
+ *
+ * RLC-REVIEW-ALL-010 C-INF6: the flag is a counter now, manipulated with
+ * atomics. As a bool it had a read-then-clear window — a notification set
+ * between the poll's check and the handler's clear was silently dropped,
+ * and the espnow layer resets its failure count after firing, so a second
+ * firing needed 5 fresh failures. A counter cannot lose a notification. */
+static volatile uint32_t s_send_failure_pending = 0;
 
 static void espnow_send_failure_handler(void)
 {
-    s_send_failure_pending = true;
+    __atomic_fetch_add(&s_send_failure_pending, 1, __ATOMIC_RELAXED);
 }
 
-/* Runs on link_task: apply a latched send-failure notification. */
+/* Runs on link_task: apply latched send-failure notifications. */
 static void handle_send_failure(void)
 {
-    s_send_failure_pending = false;
+    __atomic_exchange_n(&s_send_failure_pending, 0, __ATOMIC_RELAXED);
     lock();
     if (s_state == RLC_LINK_STATE_LINKED) {
         ESP_LOGE(TAG, "5 consecutive send failures — immediate link loss");
@@ -1099,12 +1124,9 @@ static void link_task(void *arg)
 
 /* ── Public API ────────────────────────────────────────────────── */
 
-static void espnow_recv_trampoline(const uint8_t *src_mac,
-                                    const uint8_t *data, int len, int rssi,
-                                    int64_t received_ms)
-{
-    rlc_link_on_rx(src_mac, data, len, rssi, received_ms);
-}
+/* C-INF10: rlc_link_on_rx's signature matches rlc_espnow_recv_cb_t exactly,
+ * so it is registered directly — the pass-through trampoline that used to
+ * sit here added a level of indirection and nothing else. */
 
 int rlc_link_init(rlc_link_role_t role, const uint8_t *peer_mac)
 {
@@ -1120,7 +1142,7 @@ int rlc_link_init(rlc_link_role_t role, const uint8_t *peer_mac)
         return -1;
     }
 
-    rlc_espnow_register_recv_cb(espnow_recv_trampoline);
+    rlc_espnow_register_recv_cb(rlc_link_on_rx);
     rlc_espnow_register_send_failure_cb(espnow_send_failure_handler);
 
     if (xTaskCreatePinnedToCore(link_task, "rlc_link", 4096, NULL, 6, &s_link_task, 0) != pdPASS) {

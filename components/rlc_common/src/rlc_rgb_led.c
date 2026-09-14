@@ -327,7 +327,11 @@ int rlc_rgb_led_init(void)
         return -1;
     }
 
-    ESP_LOGI(TAG, "RGB LED initialised on GPIO %d (%d pixels)", PIN_RGB_LED, s_pixel_count);
+    /* C-INF10: log the default count, not s_pixel_count — callers set the
+     * real count via rlc_rgb_led_set_pixel_count() after init (both units
+     * do), which the old line reported before it was true. */
+    ESP_LOGI(TAG, "RGB LED initialised on GPIO %d (default 1 pixel; caller "
+                  "sets the real count)", PIN_RGB_LED);
     return 0;
 }
 

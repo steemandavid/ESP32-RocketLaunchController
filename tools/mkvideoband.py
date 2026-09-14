@@ -11,8 +11,10 @@ Two things here are not decoration:
 
 GRADING. The band sits behind white title text on the boot screen of a launch
 controller, and the text has to win. Every frame is desaturated, darkened and
-then hard-capped so no channel exceeds --cap (default 0x9A), the same bound the
-firmware documents. Footage that looks good on a monitor will scream here.
+then tonally compressed onto 0..--cap (default 0x9A), the same bound the
+firmware documents — the LUT rescales the whole range (white maps exactly to
+cap), not a clip that only touches hot pixels. Footage that looks good on a
+monitor will scream here.
 
 FRAMING. The band is 3:1 and keeps ~59% of a 16:9 frame's height at --zoom 1,
 so a rocket landing — a tall subject moving a long way down the frame, shot by
@@ -357,7 +359,11 @@ def grade(img, saturation, brightness, contrast, cap):
     img = ImageEnhance.Color(img).enhance(saturation)
     img = ImageEnhance.Brightness(img).enhance(brightness)
     img = ImageEnhance.Contrast(img).enhance(contrast)
-    # Hard ceiling, applied last so nothing above can reintroduce a hot pixel.
+    # Linear rescale of the tonal range onto 0..cap, applied last so nothing
+    # above can reintroduce a hot pixel (white maps exactly to cap; the min()
+    # only sweeps up integer-rounding dust). RLC-REVIEW-ALL-010 C-INF8: this
+    # was documented as a pure hard ceiling — it is not; every pixel is
+    # darkened, which is the intended look.
     lut = [min(cap, i * cap // 255) for i in range(256)] * 3
     return img.point(lut)
 
@@ -377,7 +383,8 @@ def main():
     ap.add_argument("--brightness", type=float, default=0.80)
     ap.add_argument("--contrast", type=float, default=1.05)
     ap.add_argument("--cap", type=int, default=0x9A,
-                    help="max value per channel (default: 154 = 0x9A)")
+                    help="white point: the tonal range is rescaled onto "
+                         "0..cap (default: 154 = 0x9A)")
 
     ap.add_argument("--zoom", type=float, default=1.0,
                     help="1.0 = full source width (default: 1.0)")

@@ -17,8 +17,12 @@
 #include "rlc_protocol.h"
 
 /**
- * Initialise the base FSM. Creates the event queue and registers it
- * with the link manager. Must be called AFTER rlc_link_init().
+ * Initialise the base FSM. Creates the event queue (the application
+ * registers it with the link manager afterwards — see rlc_base_main.c,
+ * M8/BF-07). Ordering: base_fsm_init() runs BEFORE rlc_link_init() so the
+ * FSM's queue exists before any task that could post to it — do NOT
+ * "fix" this order to match older docs; BF-07 exists because queue-after-
+ * task dropped a boot-window weld fault.
  *
  * @return 0 on success, -1 on error
  */

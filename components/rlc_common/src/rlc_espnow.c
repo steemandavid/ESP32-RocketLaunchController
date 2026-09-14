@@ -84,12 +84,32 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info,
     }
 }
 
+/* RLC-REVIEW-ALL-010 C-INF5: shared by the send callback and the synchronous
+ * esp_now_send() error path below — a frame that esp_now_send() refuses to
+ * queue never reaches the callback, and before this it never counted toward
+ * the §6.4.1a 5-consecutive-failure immediate link loss either. Must stay
+ * non-blocking, lock-free and log-free: it also runs in Wi-Fi task context. */
+static void count_tx_failure(void)
+{
+    s_consecutive_send_failures++;
+    s_send_failure_total++;
+
+    if (s_consecutive_send_failures >= ESPNOW_SEND_FAIL_THRESHOLD &&
+        s_send_failure_cb) {
+        /* 2.7: Wi-Fi task context — the callback must not block (no
+         * mutexes, no timed queue sends, no logging). The link manager
+         * only latches a flag and performs the link-loss transition on
+         * its own task. The link-loss line is logged there, once. */
+        s_send_failure_cb();
+        s_consecutive_send_failures = 0;
+    }
+}
+
 static void espnow_send_cb(const uint8_t *mac, esp_now_send_status_t status)
 {
     if (status == ESP_NOW_SEND_SUCCESS) {
         s_consecutive_send_failures = 0;
     } else {
-        s_consecutive_send_failures++;
         /* m7: no ESP_LOGW here. This runs in Wi-Fi task context, and the
          * per-failure line fired hardest exactly when the link was already
          * struggling — logging takes the stdout lock and can block on a full
@@ -97,17 +117,7 @@ static void espnow_send_cb(const uint8_t *mac, esp_now_send_status_t status)
          * rlc_espnow_get_send_failure_total() and printed by each unit's
          * housekeeping status line instead; the threshold crossing is logged
          * once, on link_task. */
-        s_send_failure_total++;
-
-        if (s_consecutive_send_failures >= ESPNOW_SEND_FAIL_THRESHOLD &&
-            s_send_failure_cb) {
-            /* 2.7: Wi-Fi task context — the callback must not block (no
-             * mutexes, no timed queue sends, no logging). The link manager
-             * only latches a flag and performs the link-loss transition on
-             * its own task. The link-loss line is logged there, once. */
-            s_send_failure_cb();
-            s_consecutive_send_failures = 0;
-        }
+        count_tx_failure();
     }
 
     if (s_send_cb) {
@@ -238,6 +248,11 @@ int rlc_espnow_send(const uint8_t *peer_mac, const uint8_t *data, int len)
     esp_err_t ret = esp_now_send(peer_mac, data, len);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "send failed: %s", esp_err_to_name(ret));
+        /* C-INF5: count it — the send callback never fires for a frame that
+         * was never queued, so without this a persistent synchronous failure
+         * (e.g. NO_MEM) could never trip the 5-consecutive immediate link
+         * loss and only the 1.5 s heartbeat drought would notice. */
+        count_tx_failure();
         return -1;
     }
     return 0;

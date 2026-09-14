@@ -189,21 +189,23 @@ void remote_app_main(void)
     rlc_rgb_led_set_brightness(RGB_LED_BRIGHTNESS_REMOTE);
     rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
 
+    /* MIN-11 / RLC-REVIEW-ALL-010 R-MIN5: the buzzer comes up before the
+     * self-tests and the display check, not after them. A total display
+     * failure at boot is the one fault with no screen to report itself on,
+     * and a self-test failure used to halt on the LED alone because
+     * buzzer_init() ran later — the only faults where the audible channel
+     * was both the last one available and not yet switched on. GPIO only,
+     * so it has no ordering constraints of its own. */
+    buzzer_init();
+
     /* §9.13: Boot self-tests (CRC32-C, struct offsets) */
     if (rlc_selftest_run() != 0) {
-        /* Display is not up yet — LED + log only, so no display_error(). */
+        /* Display is not up yet — LED + buzzer + log, so no display_error(). */
         ESP_LOGE(TAG, "self-tests FAILED — halting");
         rlc_rgb_led_set_pattern(LED_PATTERN_ERROR);
+        buzzer_play(BUZZER_ALARM_CRITICAL);
         vTaskDelay(portMAX_DELAY);
     }
-
-    /* MIN-11: the buzzer comes up before the display check, not after it.
-     * A total display failure at boot is the one fault with no screen to
-     * report itself on, and it used to halt on the LED alone because
-     * buzzer_init() ran later — the only fault where the audible channel was
-     * both the last one available and not yet switched on. GPIO only, so it
-     * has no ordering constraints of its own. */
-    buzzer_init();
 
     /* §9.13 step 6: display init + health check (ID read-back).
      * FSD §15.4 T-S10: a display failure at boot must halt in ERROR. */

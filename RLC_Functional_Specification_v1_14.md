@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.69
+**Version:** 1.70
 **Date:** 2026-09-14
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -83,6 +83,7 @@
 | 1.67 | 2026-09-14 | *(superseded within the same day by v1.68 — see that row. Recorded the first, withdrawn attempt at the 480x160 band and the 40 MHz clock.)* |
 | 1.68 | 2026-09-14 | **§10.2.1 boot splash band enlarged to the top half with the title and credit overlaid on it; `DISPLAY_SPI_CLOCK_HZ` raised to 40 MHz; firmware 1.2.11 → 1.2.17.** **(1) Geometry.** The band goes from a 480x80 strip at `y 112` to **480x160 edge to edge at `y 0..159`**, in three steps as the frame budget allowed (480x128 at 20 MHz, then 480x160 once the clock was raised). The title moves onto the band as a **single line, `ROCKET LAUNCH CONTROLLER`** — dropping "ESP32 WIRELESS" from the boot screen, an operator-requested change to the displayed product name that also brings the splash into agreement with the firmware-mismatch screen — and the club credit moves to the foot of the band. Rows **56..119 are left text-free and full strength**, and the spec now requires a cut to place the touchdown there; the shipped asset is re-framed (`--track-bias-y -0.08`) to do so. A `_Static_assert` rejects a title too wide for the panel, and two more tie the credit to the scrim that carries it. **(2) Text over footage.** White-on-footage is not white-on-black, and the `0x9A` grading cap alone cannot carry it. Two ramped scrims (top rows for the title, bottom rows for the credit) plus an eight-neighbour glyph outline; the grading cap SHALL NOT be lowered to compensate. The scrims are **baked into the asset** — they ran per-frame in the framebuffer for one revision at ~14 ms/frame of PSRAM read-modify-write — making the firmware's `VBAND_SCRIM_*` a contract with `mkvideoband.py`. **This is the one asset mismatch that does not fail safe:** the validator checks dimensions, not scrim geometry. **(3) The budget is CPU, not just wire.** Measured: `flush()` 99 ms for 480x128 at 20 MHz (74 ms transfer, the rest per-row `memcmp`, bounce copy and shadow update), decode 12 ms, blit 9 ms. The asset rate is **5 Hz**, below the display rate, with early-outs so frames on which the clip has not advanced cost almost nothing — 73 ms average, ~120 ms when it advances. 10 Hz would overrun every frame for ~7 Hz in practice at ~86% of core 1. **(4) A latent starvation bug, found by a reboot loop.** `xTaskDelayUntil()` returns `pdFALSE` without blocking when its deadline has passed, and re-basing to now leaves the next frame to overrun identically — so a *consistently* slow frame degenerates into a loop that never yields, `display_task` (prio 2) starves `buzzer_task` (prio 1) on core 1, and the remote rebooted on the 5 s task watchdog ~6 s into every boot. `display_task` now yields `DISPLAY_FRAME_MIN_YIELD_MS` after any overrun, bounding its share of the core regardless of frame cost. **(5) The 40 MHz clock, and a cautionary tale.** 20 MHz is the ILI9488 write-cycle limit; the fitted clone sustains 40 MHz, verified by looking at the panel after a clean single-variable change. A first attempt was withdrawn having proved nothing: it shipped with a second `spi_bus_add_device()` handle sharing the same `spics_io_num`, which **stole the CS pin from the first device** — every write ran with CS unasserted, the panel ignored its init sequence and sat white, while reads on the second handle reported a healthy, correctly-identified panel. Hence two standing rules: the display SHALL use exactly one SPI device handle, and a clock change SHALL be judged by looking at the panel, never by the boot log. **(6) DEFECT, CLOSED IN v1.69:** panel-ID read-back is unreliable at 40 MHz (`0x3F603B80` vs `0x2A403300`) and *stably* so, meaning `display_health_check()` passes on consistently wrong data and is blind on a unit that fires igniters. Fixed in v1.69 (firmware 1.2.18) by clocking reads at 10 MHz on a second device, with CS driven manually on both. **(7) Tooling.** `mkvideoband.py` now seeks to `--start` instead of decoding from t=0 (a run over the 4K source went from ~6 min to ~30 s, which is what made framing iteration possible at all) and bakes both scrims; new `tools/rlcv_repack.py` re-times a band losslessly, because sampling at 5 Hz re-tracks rather than re-times. Display-only throughout; no protocol change. |
 | 1.69 | 2026-09-14 | **§10.2.1 panel-ID read-back fixed at 40 MHz; firmware 1.2.17 → 1.2.18.** Closes the defect v1.68 shipped with. The ILI9488 read cycle is 150 ns (6.7 MHz) against a 50 ns write cycle, so register reads do not survive the 40 MHz pixel clock: the ID read back `0x3F603B80` against `0x2A403300`. **The corruption was stable**, so `display_health_check()` — which compares later reads against the boot read — passed on consistently wrong data, and the §5.5.6 undriven-bus test was judging a value the panel never sent; the check was blind on a unit that fires igniters. Reads now use a second SPI device at new `DISPLAY_SPI_READ_CLOCK_HZ` (10 MHz). **This is only safe because CS is now driven manually on both devices** (`spics_io_num = -1`): the v1.68 rule "exactly one SPI device handle" is replaced by the more precise one — no device may use hardware CS while another shares the pin, since ESP-IDF routes each device's own CS signal to the requested pin and the second silently steals it, which is exactly what whited out the panel in 1.2.12. Moving CS into `spi_xfer()`/`spi_xfer_rd()` is not a behaviour change: hardware CS already asserted per transaction. Verified on target — ID reads `0x2A403300` with the band running at 40 MHz, health checks passing, both units linked. Display-only, no protocol change. |
+| 1.70 | 2026-09-14 | **Full-project review fixes (`Code_Review_AllPhases_20260914_1451.md`, RLC-REVIEW-ALL-010); firmware 1.2.18 → 1.2.19.** The review verdict was PASS WITH NOTES (0 Critical, 2 Major, 11 Minor, 16 Info; fire path verified sound, zero regressions of prior fixes). **The two Majors, both fixed:** (R-MAJ1) the remote's `wait_for_ack()` silently consumed `EVT_DISPLAY_FAULT` — posted exactly once per power cycle, so a display fault arriving during the ≤500 ms ARM/FIRE ACK wait meant the §5.5.6 response never ran anywhere and a fire sequence could proceed on a dead panel; it is handled inline now like `EVT_LINK_LOST`. (R-MAJ2) the inline battery-critical in the same function entered terminal ERROR without sending CMD_DISARM/CEASE_FIRE — the one path the 1.1.35 CRIT-01 'b' fix never covered; with the ARM ACK lost on an accepted arm, the base held the relay for its full 10 s ARM_TIMEOUT. Also: `ERR_WATCHDOG_RESET` is set at last (§13.2 — `esp_reset_reason()` at boot; a TWDT reboot now shows as WATCHDOG RESET instead of err=0x00); link-loss during arm-verify NACKs `NACK_COMM_DEGRADED` (the one §7.2.2 canceller left unanswered); the armed channel degrading to MARGINAL gets a dedicated advisory; CMD_FIRE refused with arm sense LOW NACKs `ARM_SENSE_FAULT` (the true fault) instead of `BASE_SWITCH_OFF`; `EVT_DISPLAY_FAULT` is deferred-and-retried rather than lost on a full FSM queue; a first-frame splash decode failure leaves the plain band rather than blitting uninitialised PSRAM; the buzzer comes up before the self-tests; `do_disarm_and_idle()` re-syncs the encoder selection (prior INF-06); synchronous `esp_now_send()` errors count toward §6.4.1a; the send-failure notification is an atomic counter (no read-then-clear race); a duplicate LINK_ACK no longer re-resets the current session (CM-08 closed). **Spec text brought level with the code:** §14.4 now carries the real 40/10 MHz display clocks (it still advertised the 20 MHz clock the 1.2.12 failure story hinges on) and drops the never-implemented `DISPLAY_ROTATION`; §6.4.1b/§7.2.4 bless dead-man wire-time stamping as built; §6.4.2 replaces the per-miss beep with the edge beep as built; §8.2.3 blesses the fire-press-in-IDLE refusal feedback; §9.10 drops the phantom `siren_task` row and records actual stack sizes; §9.13 records the remote's encoder-before-ADC boot-order deviation. No protocol change; both units must be flashed together. |
 
 ## Table of Contents
 
@@ -1742,7 +1743,7 @@ ESP-NOW's `esp_now_send()` can fail at the MAC layer (no ACK from peer at the Wi
 
 The ESP-NOW receive callback (`esp_now_recv_cb_t`) SHALL post received frames to a FreeRTOS queue (depth >= 16) for processing by the appropriate task. The callback SHALL NOT perform message parsing or state machine operations directly — it SHALL only copy the frame data, sender MAC, and RSSI into a queue entry. If the queue is full, the frame is dropped and a warning is logged.
 
-**Exception:** the dead-man timestamp (last CMD_FIRE received time) SHALL be updated directly in the receive callback after matching `msg_type == CMD_FIRE` from the header (see §7.2.4). This is a single atomic timestamp write and does not require queue processing.
+**Exception:** the dead-man timestamp (last CMD_FIRE received time) SHALL be captured at wire-receive time in the receive callback after matching `msg_type == CMD_FIRE` from the header (see §7.2.4), and carried through the receive and FSM queues with the event so the freshness guard measures airtime, not queue latency. (v1.70: blesses the implementation as built since C3 — the callback stamps `received_ms` on the queue item and the FSM consumes `evt->data.cmd.received_ms`; the timestamp is still written once, atomically, in callback context.)
 
 #### 6.4.2 Heartbeat Protocol
 
@@ -1758,7 +1759,7 @@ Once linked, the remote sends a `PING` message every 500 ms. The base responds w
 
 **RSSI tracking:** the remote shall record the RSSI from each received frame (PONG, STATUS_UPDATE, ACK, NACK). The display shall show the average RSSI of the 3 most recently received frames.
 
-**Missed ping action (remote):** on each individual ping failure, the remote buzzer shall emit a single short beep (80 ms). There is no strip indication per miss — the beep is the indicator, RSSI and ping RTT are on the display, and sustained failures raise the amber link alarm wink (§11.2).
+**Missed ping action (remote):** on the *transition into* the degraded state (the first failed ping after a run of successes), the remote buzzer shall emit a single short beep (80 ms). One beep on the edge rather than per miss (v1.70, blessing the RM-07 resolution in fw 1.1.9): a beep on every miss runs together into a continuous tone that cannot be told from an alarm, and the information a per-miss beep would add over the edge beep is nil — RSSI and ping RTT are on the display, and sustained failures raise the amber link alarm wink (§11.2).
 
 **PONG validation:** the remote shall verify that the `ping_timestamp` echoed in the PONG matches the timestamp sent in the corresponding PING. A PONG with a mismatched timestamp is discarded silently and does NOT count as a successful ping. The failure counter continues.
 
@@ -1970,7 +1971,7 @@ current can reach the fire bus with nothing commanding it.
 
 - Trigger: Pre-fire countdown timer elapsed.
 - Guard (ALL must be true):
-  1. The base must have received at least one `CMD_FIRE` message within the last `FIRE_AUTHORIZATION_TIMEOUT_MS` (500 ms). **Implementation note:** The last-CMD_FIRE-received timestamp SHALL be updated in the ESP-NOW receive callback (see §6.4.1b), not deferred to the state machine task. This ensures the timestamp is not delayed by lower-priority task scheduling.
+  1. The base must have received at least one `CMD_FIRE` message within the last `FIRE_AUTHORIZATION_TIMEOUT_MS` (500 ms). **Implementation note:** The last-CMD_FIRE-received timestamp SHALL be captured at wire-receive time in the ESP-NOW receive callback (see §6.4.1b), not deferred to the state machine task. This ensures the timestamp is not delayed by lower-priority task scheduling. (v1.70: the capture happens in callback context and the stamped value travels with the event through the queues — freshness measures airtime, never queue latency.)
   2. **Link health: the last frame from the peer was received within `HEARTBEAT_INTERVAL_MS + HEARTBEAT_TIMEOUT_MS` (1000 ms).** This uses the sum of the ping interval and pong timeout to allow for scheduling jitter while ensuring the link has not missed a full heartbeat cycle. This prevents energising the igniter at the exact moment the link dies. **This is a freshness test and SHALL NOT be folded into guard 4's failure-rate test** (v1.44): a rate of 2 misses in 10 is 20 %, which passes guard 4, and still means roughly 1.5 s of silence. Note the base is the PONG *sender*, so its equivalent of "last PONG received" is the last well-formed frame received from the remote — the PING each PONG answers (`rlc_link_ms_since_contact()`). Implemented in firmware 1.1.9; before that this guard was treated as implicitly covered by the failure-rate check and did not exist.
   3. **Key switch still ON** (key switch sense §5.4.3b reads HIGH) **AND arm relay still closed** (arm sense §5.4.3 reads HIGH — defence-in-depth re-verification of relay contact integrity).
   4. **Link quality is acceptable** — `ERR_COMM_DEGRADED` is NOT set (ping failure rate ≤ 30% in last 10 pings). A degraded link risks dead-man timeout false aborts during firing.
@@ -2283,7 +2284,7 @@ deliberately, and the spec now says what the firmware does:
 - Exceptions:
   - Encoder press with arm switch OFF → display "Turn ARM key first". No command sent.
   - **Encoder press during pending ACK wait → cancel pending command, send CMD_DISARM, return to IDLE.**
-  - Fire button pressed while in IDLE → ignored (no buzzer, no display change).
+  - Fire button pressed while in IDLE → refused with feedback (triple beep + "NOT ARMED - ARM FIRST" toast, per §7.2.9a; v1.70 — was "ignored" before fw 1.1.19).
   - STATUS_UPDATE shows base in ERROR → display "BASE ERROR" prominently. Refuse ARM commands.
 
 #### 8.2.4 ARMED → PRE_FIRE
@@ -2543,9 +2544,9 @@ All FreeRTOS tasks SHALL be assigned priorities according to the following table
 | `rlc_link` | 6 | 0 | 4096 | Link manager: PING/PONG response, link-loss detection, frame validation. (Named `heartbeat_task` in this table before v1.44; priority is 6, not 5, so that it drains ahead of `continuity_task`.) |
 | `continuity_task` | 5 | 0 | 4096 | ADC continuity sampling, band classification |
 | `state_machine_task` | 4 | 0 | 8192 | Base FSM, command processing, relay control |
-| `battery_task` | 3 | 0 | 2048 | Battery ADC sampling (1000 ms) |
+| `battery_task` | 3 | 0 | 3072 | Battery ADC sampling (1000 ms) |
 | `status_update_task` | 3 | 0 | 4096 | Periodic and event-driven STATUS_UPDATE |
-| `siren_task` | 2 | 1 | 2048 | Siren pattern generation |
+| *(siren)* | n/a | n/a | n/a | No task: the siren is driven by `esp_timer` callbacks from `rlc_siren.c` per §12.3 (v1.70 — this row listed a `siren_task` that never existed in the implementation). |
 | `rgb_led_task` | 1 (lowest) | 1 | 2048 | RGB LED pattern engine |
 
 **Remote unit tasks:**
@@ -2553,12 +2554,12 @@ All FreeRTOS tasks SHALL be assigned priorities according to the following table
 | Task | Priority | Core | Stack (bytes) | Description |
 |---|---|---|---|---|
 | `espnow_rx` | 8 | any | 4096 | ESP-NOW receive worker — see the base table. |
-| `fire_button_task` | 7 (highest safety) | 0 | 2048 | Fire button debounce, fresh-press detection |
-| `arm_switch_task` | 6 | 0 | 2048 | Arm switch debounce polling (10 ms) |
+| `fire_button_task` | 7 (highest safety) | 0 | 3072 | Fire button debounce, fresh-press detection |
+| `arm_switch_task` | 6 | 0 | 3072 | Arm switch debounce polling (10 ms) |
 | `rlc_link` | 6 | 0 | 4096 | Link manager: PING send, PONG validation, link-loss detection. (Named `heartbeat_task` before v1.44; priority is 6, not 5.) |
 | `state_machine_task` | 4 | 0 | 8192 | Remote FSM, command sending, ACK handling |
 | `cmd_fire_repeat_task` | 4 | 0 | 2048 | Repeated CMD_FIRE at 200 ms during PRE_FIRE/FIRING |
-| `battery_task` | 3 | 0 | 2048 | Battery ADC sampling |
+| `battery_task` | 3 | 0 | 4096 | Battery ADC sampling |
 | `encoder_task` | 3 | 0 | 4096 | Rotary encoder button polling (the quadrature decode itself is in the GPIO ISR) |
 | `display_task` | 2 | 1 | 8192 | Display refresh, partial updates |
 | `buzzer_task` | 1 | 1 | 2048 | Buzzer pattern player |
@@ -2628,6 +2629,16 @@ base sounds `SIREN_BOOT_TEST` (§12.2): one 200 ms chirp. It is deliberately the
 the chirp is a positive claim that the unit is up, and a base that halts sounds
 `SIREN_ERROR` instead and never chirps. Base only — the remote has no
 equivalent, its splash screen already evidencing boot.
+
+**Remote boot-order deviation (v1.70).** The remote does not follow the table's
+step order literally, and the deviation is a hardware requirement rather than
+an oversight: its rotary encoder shares pins with the ADC (encoder GPIO 4/5 are
+ADC1_CH3/CH4), so `encoder_init()` MUST run before `rlc_battery_init()` (CI-06,
+with an in-code comment making the order un-re-orderable by accident). In the
+implementation the encoder and its button come up before step 4, and the
+display (step 6) comes up before the ADC/ESP-NOW steps that precede it in the
+table. The mandatory-failure semantics of each step are unchanged; only the
+sequence differs, and it differs for the base as specified.
 
 ---
 
@@ -3602,10 +3613,10 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | Constant | Default Value | Description |
 |---|---|---|
 | `DISPLAY_SPI_HOST` | `SPI2_HOST` | SPI peripheral to use |
-| `DISPLAY_SPI_CLOCK_HZ` | 20000000 | SPI clock frequency (20 MHz) |
+| `DISPLAY_SPI_CLOCK_HZ` | 40000000 | SPI clock for writes (40 MHz; above the ILI9488 datasheet limit but verified on the fitted clone — see §5.5.6 and the v1.68/v1.69 history) |
+| `DISPLAY_SPI_READ_CLOCK_HZ` | 10000000 | SPI clock for register reads (10 MHz) — the ILI9488 read cycle is 150 ns, so reads cannot run at the write clock (v1.69) |
 | `DISPLAY_WIDTH` | 480 | Pixels |
 | `DISPLAY_HEIGHT` | 320 | Pixels |
-| `DISPLAY_ROTATION` | 1 | Landscape |
 
 ### 14.5 Continuity Sensing Configuration
 

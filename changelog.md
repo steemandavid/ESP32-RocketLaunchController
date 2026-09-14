@@ -1,5 +1,84 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-14 — full-project code review RLC-REVIEW-ALL-010 + all findings fixed (fw 1.2.18 → 1.2.19)
+
+`/codereviewer` over the entire codebase — Phases 0–5 plus post-release
+fw 1.2.1–1.2.18, at `f853bb6`, against FSD v1.69. Three parallel review
+tracks (base unit, remote unit, common+tools+build). Verdict: **PASS WITH
+NOTES — 0 Critical · 2 Major · 11 Minor · 16 Info**. Fire path verified
+sound end to end (two-break rule holds on every code path; dead-man,
+ARM_TIMEOUT backstop, link-loss disarm, brown-out, TWDT fail-safes all
+traced); **zero regressions** of the 2026-08-27/28 review fixes. Output:
+`Code_Review_AllPhases_20260914_1451.md`. The operator then asked for all
+findings to be fixed, which became **fw 1.2.19** (FSD v1.70).
+
+### The 2 MAJOR findings — both fixed in `wait_for_ack()` (rlc_remote_fsm.c)
+
+1. **R-MAJ1, `EVT_DISPLAY_FAULT` silently dropped** during an ARM/FIRE ACK
+   wait — the display task posts it exactly once per power cycle, the
+   "other events" branch discarded it, so the §5.5.6 handler (CMD_DISARM +
+   ERROR) never ran anywhere; a FIRE ACK landing moments later could run a
+   full pulse on a dead panel. Now handled inline exactly like the DS-01
+   pre-handler (cease-fire if applicable, disarm ch or 0xFF, ERROR).
+2. **R-MAJ2, battery-critical in the ACK wait entered ERROR without
+   CMD_DISARM/CEASE_FIRE** — the one path the 1.1.35 CRIT-01 'b' fix never
+   covered. With the ARM ACK lost on an accepted arm, the base held the
+   relay for its full 10 s ARM_TIMEOUT while the remote sat in terminal,
+   unrecoverable ERROR. Now mirrors the ARMED handler.
+
+### Other fixes in 1.2.19
+
+- **B-MIN1:** `ERR_WATCHDOG_RESET` was defined but never set anywhere;
+  `base_fsm_init()` now checks `esp_reset_reason()` and latches the flag,
+  so a TWDT reboot shows as "WATCHDOG RESET" on the remote instead of
+  err=0x00. New host-test stub `tests/host/stubs/esp_system.h`.
+- **B-MIN2:** link-loss during arm-verify now NACKs `NACK_COMM_DEGRADED`
+  (was the one §7.2.2 canceller left unanswered).
+- **B-MIN3:** armed channel degrading to MARGINAL gets a dedicated
+  advisory line (new `armed_channel_went_marginal()`).
+- **B-INF5:** CMD_FIRE with arm sense LOW NACKs `ARM_SENSE_FAULT` (the
+  true fault) instead of `BASE_SWITCH_OFF`.
+- **R-MIN4:** `EVT_DISPLAY_FAULT` send is deferred-and-retried every frame
+  (`s_fault_send_pending`) instead of lost forever on a full FSM queue.
+- **R-MIN3:** first-frame splash decode failure leaves the plain band
+  instead of blitting uninitialized PSRAM.
+- **R-MIN5:** `buzzer_init()` moved before the self-tests, so a self-test
+  halt is audible (same class as MIN-11).
+- **R-MIN6 / INF-06:** `do_disarm_and_idle()` re-syncs
+  `s_selected_channel` from the encoder.
+- **C-INF5:** synchronous `esp_now_send()` errors count toward the §6.4.1a
+  5-consecutive-failure immediate link loss (shared `count_tx_failure()`).
+- **C-INF6:** the send-failure notification is an atomic counter — the
+  bool's read-then-clear race could lose one.
+- **C-INF7 / CM-08:** a duplicate LINK_ACK for the current session no
+  longer re-resets it (was replay-rejecting every PING until the next
+  handshake).
+- **B-INF4 / C-MIN1 / C-MIN2:** the three stale comments that invited
+  refactor regressions corrected (rlc_base_fsm.h init order, "allow 0 seq
+  after reset", guard-callback "silently ignored" docs).
+- **C-MIN4 / C-INF8 / C-INF9:** `rlcv_repack.py` validates header, table
+  and frame bounds; `mkvideoband.py` `grade()` docs describe the linear
+  rescale it actually is; `build_remote.sh splash` checks the partition
+  table exists and the asset fits before touching the port.
+- **C-INF10 / R-INF10:** recv trampoline removed (`rlc_link_on_rx`
+  registered directly); RGB init no longer logs a pixel count that isn't
+  true yet; dead `DISPLAY_ROTATION` constant removed.
+
+### FSD v1.70 — spec text brought level with the code
+
+§14.4 now carries the real 40/10 MHz display clocks (it still advertised
+the 20 MHz clock the 1.2.12 failure story hinges on); §6.4.1b/§7.2.4 bless
+dead-man wire-time stamping as built; §6.4.2 replaces the per-miss beep
+with the edge beep; §8.2.3 blesses the fire-press-in-IDLE refusal
+feedback; §9.10 drops the phantom `siren_task` row and records actual
+stacks; §9.13 records the remote's encoder-before-ADC boot order.
+
+### Verification & state
+
+Host tests 497 checks, 0 failures; both units build clean. **NOT FLASHED —
+only the remote's COM port was connected; per the strict version check,
+flash BOTH units together when the base board is back on the bus.**
+
 ## 2026-09-14 — boot splash: band grows to the top half, text overlaid on it (fw 1.2.11 → 1.2.18)
 
 Started as a question — "how big could the splash video get, and could the

@@ -516,4 +516,6 @@ flashed from the same tree or they cannot communicate at all."
 #define DISPLAY_SPI_READ_CLOCK_HZ 10000000
 #define DISPLAY_WIDTH              480
 #define DISPLAY_HEIGHT             320
-#define DISPLAY_ROTATION           1
+/* RLC-REVIEW-ALL-010 R-INF10: DISPLAY_ROTATION (was 1) removed — it was
+ * never referenced; orientation is fixed by the MADCTL 0x68 in rlc_display.c.
+ * A knob that does not turn invites being "tuned". */

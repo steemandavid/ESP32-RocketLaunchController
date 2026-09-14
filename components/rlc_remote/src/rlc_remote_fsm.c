@@ -485,6 +485,11 @@ static void do_disarm_and_idle(void)
     }
     s_armed_channel = 0;
     set_prefire_start(0);
+    /* RLC-REVIEW-ALL-010 (prior INF-06): same 4.9 re-sync as
+     * do_enter_idle() — without it, a disarm via key-off (or any event
+     * that does not itself carry the channel) leaves the display cursor
+     * one detent behind what a long-press would arm. */
+    s_selected_channel = encoder_get_channel();
     rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
     buzzer_play(BUZZER_BEEP_LONG);
     ESP_LOGI(TAG, "DISARMED -> IDLE");
@@ -635,7 +640,8 @@ static void report_base_fault_end(void)
  * -1 = NACK received (reason in *nack_reason)
  * -2 = channel mismatch in ACK
  * -3 = state already transitioned by an inline-handled critical event
- *      (LINK_LOST or BATTERY_CRITICAL). Caller MUST NOT touch state. (R1)
+ *      (LINK_LOST, DISPLAY_FAULT, or BATTERY_CRITICAL). Caller MUST NOT
+ *      touch state. (R1)
  * -4 = interrupted by local operator input (arm switch off, fire button
  *      release, or encoder activity). Terminal for the pending command —
  *      callers must NOT retry (2.4: the retry loop's condition is
@@ -689,11 +695,46 @@ static int wait_for_ack(uint8_t expected_channel, uint32_t timeout_ms,
                     do_enter_link_lost();
                     return WAIT_FOR_ACK_STATE_HANDLED;  /* R1 */
                 }
+                /* RLC-REVIEW-ALL-010 R-MAJ1: the display task posts this
+                 * exactly once per power cycle (failed_reported latches in
+                 * rlc_display.c), so dropping it here means nobody ever runs
+                 * the §5.5.6 response — handle it exactly like the DS-01
+                 * pre-handler in process_event(): tell the base to stand
+                 * down, then enter terminal ERROR. The 0xFF disarm also
+                 * covers a pending ARM that the base accepted while its
+                 * ACK was lost. */
+                if (evt.type == EVT_DISPLAY_FAULT) {
+                    ESP_LOGE(TAG, "DISPLAY FAULT during ACK wait — disarming and entering ERROR");
+                    s_fire_repeat_active = false;
+                    if (s_state == STATE_PRE_FIRE || s_state == STATE_FIRING) {
+                        send_cmd_cease_fire();
+                    }
+                    if (s_armed_channel > 0) {
+                        send_cmd_disarm(s_armed_channel);
+                    } else {
+                        send_cmd_disarm(0xFF);
+                    }
+                    set_prefire_start(0);
+                    do_enter_error_text("DISPLAY FAULT");
+                    return WAIT_FOR_ACK_STATE_HANDLED;  /* R1 */
+                }
                 /* M5: Preserve critical events instead of silently discarding. */
                 if (evt.type == EVT_STATUS_UPDATE) {
                     cache_status(&evt.data.status_update.status);
                 }
+                /* RLC-REVIEW-ALL-010 R-MAJ2: mirror the ARMED handler's
+                 * CRIT-01 'b' fix — never enter terminal ERROR without
+                 * telling the base to stand down. The pending command's ACK
+                 * may have been lost on an ACCEPTED arm/fire, and after this
+                 * returns ERROR is unrecoverable, so this is the last chance
+                 * to disarm. */
                 if (evt.type == EVT_BATTERY_CRITICAL) {
+                    s_fire_repeat_active = false;
+                    if (s_armed_channel > 0) {
+                        send_cmd_disarm(s_armed_channel);
+                    } else {
+                        send_cmd_disarm(0xFF);
+                    }
                     do_enter_error_text("REMOTE BATTERY CRITICAL");
                     return WAIT_FOR_ACK_STATE_HANDLED;  /* R1 */
                 }

@@ -69,8 +69,10 @@ typedef struct {
 /**
  * Guard callback for LINK_REQUEST rejection during safety-critical states.
  * Return TRUE when the application is busy (ARMED/PRE_FIRE/FIRING/
- * POST_FIRE) — the LINK_REQUEST is then silently ignored (FSD §6.4.1).
- * Return false to accept. If not set (NULL), all LINK_REQUESTs are accepted.
+ * POST_FIRE) — the base then answers LINK_REJECT_BUSY so the remote can
+ * say why the handshake failed instead of retrying in silence (FSD §6.4.1,
+ * App D.1; fw 1.1.17 — it was a silent drop before that). Return false
+ * to accept. If not set (NULL), all LINK_REQUESTs are accepted.
  */
 typedef bool (*rlc_link_guard_cb_t)(void);
 
@@ -184,9 +186,10 @@ void rlc_link_set_remote_battery_mv(uint16_t mv);
 /**
  * Set the guard callback for LINK_REQUEST rejection.
  * When set, the callback is invoked before processing a LINK_REQUEST.
- * If it returns true (busy), the request is silently ignored.
+ * If it returns true (busy), the requester is answered with
+ * LINK_REJECT_BUSY (not dropped — the remote names the reason).
  * This allows the application state machine to block session resets
- * during ARMED/PRE_FIRE/FIRING/POST_FIRE (FSD §6.4.1).
+ * during ARMED/PRE_FIRE/FIRING/POST_FIRE (FSD §6.4.1, App D.1).
  */
 void rlc_link_set_guard(rlc_link_guard_cb_t cb);
 

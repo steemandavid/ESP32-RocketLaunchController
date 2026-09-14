@@ -42,10 +42,26 @@ if [ -n "$SPLASH_FILE" ]; then
         echo "Build one with: tools/mkvideoband.py <video> -o splash.bin"
         exit 1
     fi
+    # C-INF9: parttool needs a built partition table, and it must exist BEFORE
+    # we talk to the port — on a fresh clone or a wiped build/ the old failure
+    # was an opaque parttool error. The size check is the friendly guard;
+    # mkvideoband's --limit is the authoritative one.
+    PT_FILE="$BUILD_DIR/partition_table/partition-table.bin"
+    if [ ! -f "$PT_FILE" ]; then
+        echo "No partition table at $PT_FILE — run './build_remote.sh' once first."
+        exit 1
+    fi
+    ASSET_SIZE=$(stat -c%s "$SPLASH_FILE")
+    SPLASH_SIZE=$((2 * 1024 * 1024))   # partitions_remote.csv: splash, 2 MB
+    if [ "$ASSET_SIZE" -gt "$SPLASH_SIZE" ]; then
+        echo "Asset is $ASSET_SIZE B but the splash partition is $SPLASH_SIZE B."
+        echo "Re-encode smaller (tools/mkvideoband.py, shorter --duration or lower --quality)."
+        exit 1
+    fi
     source ~/esp/esp-idf/export.sh 2>/dev/null
-    echo "=== Writing splash asset $SPLASH_FILE to $PORT ==="
+    echo "=== Writing splash asset $SPLASH_FILE ($ASSET_SIZE B) to $PORT ==="
     python3 "$IDF_PATH/components/partition_table/parttool.py" \
-        --port "$PORT" --partition-table-file "$BUILD_DIR/partition_table/partition-table.bin" \
+        --port "$PORT" --partition-table-file "$PT_FILE" \
         write_partition --partition-name splash --input "$SPLASH_FILE"
     echo "Done. Power-cycle the remote to see it."
     exit 0

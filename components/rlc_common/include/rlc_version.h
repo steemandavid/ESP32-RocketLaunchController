@@ -1415,7 +1415,70 @@
  * no wire-protocol change — but the strict version check is on all three
  * components, so flash base and remote together or they will refuse to
  * link. */
+/* 1.2.19 (2026-09-14): fixes for the RLC-REVIEW-ALL-010 full-project review.
+ *
+ * Two MAJOR findings, both in the remote's wait_for_ack() — narrow windows
+ * during the ≤500 ms ARM/FIRE ACK wait where a safety event was consumed
+ * without the response the FSD mandates everywhere else:
+ *
+ *   R-MAJ1: EVT_DISPLAY_FAULT was silently dropped by the "other events"
+ *   branch. The display task posts it exactly once per power cycle, so a
+ *   fault arriving mid-wait meant the §5.5.6 handler (CMD_DISARM + ERROR)
+ *   never ran anywhere — a FIRE ACK landing moments later could run a full
+ *   pulse on a dead panel. Handled inline now, exactly like the DS-01
+ *   pre-handler in process_event().
+ *
+ *   R-MAJ2: the inline EVT_BATTERY_CRITICAL entered ERROR without sending
+ *   CMD_DISARM/CEASE_FIRE — the one path the CRIT-01 'b' fix (1.1.35) never
+ *   covered. With the ARM ACK lost on an accepted arm, the base held the
+ *   relay closed for its full 10 s ARM_TIMEOUT while the remote sat in
+ *   unrecoverable terminal ERROR. Now mirrors the ARMED handler.
+ *
+ * Both bounded by the base's own fail-safes (dead-man, ARM_TIMEOUT), but
+ * they sat on exactly the paths this project's review standard treats as
+ * defects.
+ *
+ * Also in this version, from the same review:
+ *   - ERR_WATCHDOG_RESET is set at last (B-MIN1): base_fsm_init() checks
+ *     esp_reset_reason() and latches the flag, so a TWDT reboot shows as
+ *     "WATCHDOG RESET" on the remote instead of err=0x00. Info-severity per
+ *     §13.2 — §9.1 already guarantees the reboot came up safe.
+ *   - Link-loss during arm-verify now NACKs (NACK_COMM_DEGRADED), the one
+ *     §7.2.2 canceller that was left unanswered (B-MIN2).
+ *   - The armed channel degrading to MARGINAL gets its own advisory line
+ *     instead of the generic per-channel band-change INFO (B-MIN3).
+ *   - CMD_FIRE refused with arm sense LOW now NACKs ARM_SENSE_FAULT, the
+ *     true fault, instead of BASE_SWITCH_OFF (B-INF5).
+ *   - EVT_DISPLAY_FAULT is retryable: a full FSM queue defers it to the
+ *     next frame instead of losing it for the power cycle (R-MIN4).
+ *   - A first-frame splash decode failure leaves the plain band instead of
+ *     blitting uninitialized PSRAM (R-MIN3).
+ *   - buzzer_init() runs before the self-tests, so a self-test halt is
+ *     audible (R-MIN5); do_disarm_and_idle() re-syncs the encoder channel
+ *     (R-MIN6, prior INF-06).
+ *   - Synchronous esp_now_send() errors count toward the §6.4.1a
+ *     5-consecutive-failure link loss (C-INF5); the send-failure
+ *     notification is an atomic counter and can no longer be lost to the
+ *     read-then-clear race (C-INF6).
+ *   - A duplicate LINK_ACK for the current session no longer re-resets it
+ *     (CM-08 at last): reset_session() zeroed the remote's rx counter while
+ *     the base kept its own, replay-rejecting every PING until the next
+ *     handshake.
+ *   - Stale comments that invited refactor regressions corrected
+ *     (rlc_base_fsm.h ordering, rlc_link.c "allow 0 seq", the guard
+ *     callback docs); the recv trampoline and the dead DISPLAY_ROTATION
+ *     constant are gone; rlcv_repack.py validates its input;
+ *     build_remote.sh splash checks the partition table and asset size.
+ *
+ * FSD v1.70 blesses the documented deviations the review re-litigated
+ * (dead-man wire-time stamping, edge beep on degraded link, remote boot
+ * order, fire-press-in-IDLE feedback) and corrects the §14.4 display clock
+ * table, which still advertised the 20 MHz clock the 1.2.12 failure story
+ * hinges on.
+ *
+ * Both units changed; the version check is strict — flash them together. */
+
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  18
-#define RLC_VERSION_STRING "1.2.18"
+#define RLC_VERSION_PATCH  19
+#define RLC_VERSION_STRING "1.2.19"

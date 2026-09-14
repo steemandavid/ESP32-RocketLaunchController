@@ -20,15 +20,42 @@ framing.
 """
 import struct, sys
 
-src, dst, step, interval = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+def die(msg):
+    print(f"rlcv_repack: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+if len(sys.argv) != 5:
+    die("usage: rlcv_repack.py in.bin out.bin STEP INTERVAL")
+src, dst = sys.argv[1], sys.argv[2]
+step, interval = int(sys.argv[3]), int(sys.argv[4])
+
+# RLC-REVIEW-ALL-010 C-MIN4: this used to slice without bounds checks, and a
+# Python slice clamps instead of failing — a corrupt or truncated input made
+# a silently short/corrupt output blob that only the firmware's RLCV header
+# check would catch. Validate everything the firmware will assume.
+if step <= 0:
+    die(f"STEP must be >= 1, got {step}")
+if interval <= 0:
+    die(f"INTERVAL must be >= 1, got {interval}")
+
 b = open(src, "rb").read()
+if len(b) < 16:
+    die(f"input too short for an RLCV header ({len(b)} B)")
 magic, fmt, n, W, H, old_iv, _ = struct.unpack("<4sHHHHHH", b[:16])
-assert magic == b"RLCV" and fmt == 1
+if magic != b"RLCV" or fmt != 1:
+    die(f"not an RLCV v1 container (magic={magic!r}, fmt={fmt})")
+if n == 0:
+    die("container declares zero frames")
+if len(b) < 16 + n*8:
+    die(f"frame table truncated ({len(b)} B < header+{n}*8)")
 
 keep = list(range(0, n, step))
 blobs = []
 for i in keep:
     off, ln = struct.unpack("<II", b[16 + i*8 : 16 + i*8 + 8])
+    if off + ln > len(b):
+        die(f"frame {i} runs past end of file (off={off}, len={ln}, "
+            f"file={len(b)} B)")
     blobs.append(b[off:off+ln])
 
 m = len(blobs)

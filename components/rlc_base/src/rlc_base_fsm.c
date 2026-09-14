@@ -28,6 +28,7 @@
 
 #include <string.h>
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
@@ -168,6 +169,19 @@ int base_fsm_init(void)
      * unit is still coming up. base_fsm_init() runs before continuity_task is
      * started, so the window is measured from before the first sweep. */
     s_chirp_inhibit_until_ms = now_ms() + SIREN_CONNECT_CHIRP_INHIBIT_MS;
+
+    /* RLC-REVIEW-ALL-010 B-MIN1 / FSD §13.2: ERR_WATCHDOG_RESET existed in
+     * the protocol but was never set — after a TWDT reboot the base reported
+     * err=0x00 and the operator could not tell a silent base reboot from a
+     * continuous session. §13.2 calls this Info-severity: §9.1 already
+     * guarantees the reboot came up safe (IDLE, relays de-energised), so the
+     * flag rides along in the first STATUS_UPDATE without entering ERROR. */
+    esp_reset_reason_t rr = esp_reset_reason();
+    if (rr == ESP_RST_WDT || rr == ESP_RST_INT_WDT || rr == ESP_RST_TASK_WDT) {
+        s_error_flags |= ERR_WATCHDOG_RESET;
+        ESP_LOGW(TAG, "last reset was a watchdog reset — flagging "
+                      "ERR_WATCHDOG_RESET (boot is safe per §9.1)");
+    }
 
     ESP_LOGI(TAG, "base FSM initialised");
     return 0;
@@ -401,6 +415,24 @@ static bool armed_channel_went_open(const rlc_fsm_event_t *evt)
            s_armed_channel != 0 &&
            evt->data.continuity.channel == s_armed_channel &&
            evt->data.continuity.band == CONT_OPEN;
+}
+
+/**
+ * True when this event says the *armed* channel's igniter has degraded to
+ * MARGINAL. RLC-REVIEW-ALL-010 B-MIN3: the band change itself is (and stays)
+ * informational — MARGINAL does not disarm, matching guard 2 — but a degrading
+ * igniter on the channel that is about to carry a fire pulse deserves its own
+ * advisory line rather than only the generic per-channel INFO in
+ * rlc_continuity.c, where it is indistinguishable from a pad-wiring blip on
+ * any other channel. Scoped like armed_channel_went_open(): the armed channel,
+ * and (via the ARMED-only call site) never FIRING/POST_FIRE.
+ */
+static bool armed_channel_went_marginal(const rlc_fsm_event_t *evt)
+{
+    return evt->type == EVT_CONTINUITY_CHANGED &&
+           s_armed_channel != 0 &&
+           evt->data.continuity.channel == s_armed_channel &&
+           evt->data.continuity.band == CONT_MARGINAL;
 }
 
 /* ── §12.2 igniter-connection blips (FSD §7.3.1) ─────────────────
@@ -650,10 +682,14 @@ static void process_event(const rlc_fsm_event_t *evt)
             }
         } else if (evt->type == EVT_LINK_LOST) {
             if (s_arm_verify_pending) {
-                relay_all_safe();
-                s_arm_verify_pending = false;
-                s_arm_verify_channel = 0;
-                s_arm_verify_start_ms = 0;
+                /* RLC-REVIEW-ALL-010 B-MIN2: this was the one §7.2.2-listed
+                 * canceller that dropped the pending ARM without a NACK, so
+                 * the remote's ARM timed out instead of getting a reason.
+                 * NACK_COMM_DEGRADED is the truthful comm-failure reason —
+                 * there is no LINK_LOST code, and if the link is fully gone
+                 * the remote's own link-loss handling supersedes whatever
+                 * this NACK would have said anyway. */
+                abort_arm_verify(NACK_COMM_DEGRADED);
             }
             do_enter_link_lost();
         } else if (evt->type == EVT_CONTINUITY_CHANGED) {
@@ -675,9 +711,12 @@ static void process_event(const rlc_fsm_event_t *evt)
                 send_nack(MSG_CMD_FIRE, evt->data.cmd.seq_number, NACK_WRONG_STATE);
                 return;
             }
-            /* Guard: arm sense still HIGH */
+            /* Guard: arm sense still HIGH. RLC-REVIEW-ALL-010 B-INF5: this
+             * fault is arm-relay feedback lost, not the key — NACK the true
+             * reason so the operator is not sent to check a key that is on.
+             * Action unchanged (disarm, safe). */
             if (!arm_sense_get_debounced()) {
-                send_nack(MSG_CMD_FIRE, evt->data.cmd.seq_number, NACK_BASE_SWITCH_OFF);
+                send_nack(MSG_CMD_FIRE, evt->data.cmd.seq_number, NACK_ARM_SENSE_FAULT);
                 do_disarm();
                 return;
             }
@@ -729,6 +768,12 @@ static void process_event(const rlc_fsm_event_t *evt)
             ESP_LOGW(TAG, "Continuity OPEN on armed ch %u during ARMED — disarm",
                      s_armed_channel);
             do_disarm_continuity_lost();
+        } else if (armed_channel_went_marginal(evt)) {
+            /* B-MIN3: advisory only — MARGINAL does not disarm (guard 2), but
+             * a degrading igniter on the fire path must not read like the
+             * routine per-channel band-change line. */
+            ESP_LOGW(TAG, "Armed ch %u degraded to MARGINAL — check the igniter "
+                          "before firing", s_armed_channel);
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
             do_enter_error(ERR_VBAT_CRITICAL);
         } else if (evt->type == EVT_LINK_LOST) {

@@ -1864,8 +1864,17 @@ static void draw_splash_band(int64_t elapsed_ms)
         return;
     }
 
-    if (idx != s_vid_cur && splash_video_decode(idx) == 0) {
-        s_vid_cur = idx;
+    if (idx != s_vid_cur) {
+        if (splash_video_decode(idx) == 0) {
+            s_vid_cur = idx;
+        } else if (s_vid_cur < 0) {
+            /* RLC-REVIEW-ALL-010 R-MIN3: the decode failed before ANY good
+             * frame, so s_vid_rgb is uninitialized PSRAM — blitting would
+             * show garbage where the documented behaviour is "last good
+             * frame", of which there is none yet. Leave the plain band;
+             * the title and dynamic fields still paint over it. */
+            return;
+        }
     }
 
     for (int y = 0; y < VBAND_H; y++) {
@@ -2191,6 +2200,12 @@ static bool display_health_check(void)
     return false;
 }
 
+/* RLC-REVIEW-ALL-010 R-MIN4: the health check latches failed_reported and
+ * posts EVT_DISPLAY_FAULT exactly once, so a full FSM queue used to lose
+ * the fault for the whole power cycle. This latch defers instead: the send
+ * is retried at the top of every frame until the FSM takes it. */
+static bool s_fault_send_pending = false;
+
 static void display_task(void *arg)
 {
     (void)arg;
@@ -2207,6 +2222,17 @@ static void display_task(void *arg)
     TickType_t last_wake = xTaskGetTickCount();
 
     while (1) {
+        /* R-MIN4 retry — zero-timeout so a still-full queue costs nothing. */
+        if (s_fault_send_pending) {
+            QueueHandle_t q = remote_fsm_get_queue();
+            rlc_fsm_event_t ev = {0};
+            ev.type = EVT_DISPLAY_FAULT;
+            if (!q || xQueueSend(q, &ev, 0) == pdTRUE) {
+                s_fault_send_pending = false;
+                ESP_LOGW(TAG, "EVT_DISPLAY_FAULT delivered on retry");
+            }
+        }
+
         disp_data_t d;
         snapshot(&d);
 
@@ -2369,7 +2395,10 @@ static void display_task(void *arg)
                     /* Short blocking send: this is a safety event, and
                      * display_task (prio 2) can afford to wait. */
                     if (xQueueSend(q, &ev, pdMS_TO_TICKS(10)) != pdTRUE) {
-                        ESP_LOGE(TAG, "FSM queue full — EVT_DISPLAY_FAULT dropped!");
+                        /* R-MIN4: no longer terminal — retried every frame
+                         * until the FSM drains its queue. */
+                        ESP_LOGE(TAG, "FSM queue full — EVT_DISPLAY_FAULT deferred");
+                        s_fault_send_pending = true;
                     }
                 }
             }
