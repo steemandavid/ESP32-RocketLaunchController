@@ -1,5 +1,198 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-14 — boot splash: band grows to the top half, text overlaid on it (fw 1.2.11 → 1.2.18)
+
+Started as a question — "how big could the splash video get, and could the
+title and club credit sit *on* it as an overlay?" — and ended with the band at
+480x160 across the top half of the panel, one-line title, credit at the foot,
+and the middle clear for the landing. Along the way it turned up a latent
+task-starvation bug that rebooted the remote, and a silent SPI trap that whited
+out the panel while the logs called it healthy.
+
+### Where it landed
+
+| | Before (1.2.11) | After (1.2.18) |
+|---|---|---|
+| Band | 480x80 at `y 112` | **480x160 at `y 0..159`**, edge to edge |
+| Rate | 10 Hz | **5 Hz** |
+| Title | `ESP32 WIRELESS ROCKET` / `LAUNCH CONTROLLER`, on black above the band | **`ROCKET LAUNCH CONTROLLER`**, one line, drawn *on* the band |
+| Credit | `y 70`, above the band | foot of the band (`y 138`) |
+| SPI clock | 20 MHz | **40 MHz** (reads at 10 MHz) |
+| Asset | 175,281 B | 159,464 B (7.6 % of partition) |
+
+Rows **56..119** are now text-free and full strength. That is where a cut must
+put the touchdown, and the shipped asset is framed (`--track-bias-y -0.08`) to
+do so.
+
+### The budget is CPU, not just wire — the original analysis was wrong
+
+The 1.2.9 doctrine said "decode cost and flash space were never the constraint,
+the wire is". True at 480x80, and it stopped being true when the band grew.
+`flush()` transmits with `spi_device_polling_transmit()`, so **transfer time is
+also core time**, and the transfer is not even the whole cost. Measured on
+target at 480x128 / 20 MHz:
+
+| | cost |
+|---|---|
+| JPEG decode | 12 ms |
+| blit to framebuffer | 9 ms |
+| **`flush()`** | **99 ms** (74 ms transfer + per-row `memcmp`, bounce copy, shadow update) |
+| titles + dynamic fields | ~33 ms |
+
+So 480x80 was already near the 10 Hz ceiling, and the fix for a bigger band is
+to advance it *less often*, not to shrink it. At 480x160 / 40 MHz / 5 Hz:
+**73 ms average, ~120 ms on frames where the clip advances.**
+
+10 Hz at this size was measured and rejected: every frame would overrun, giving
+~7 Hz in practice with `display_task` holding ~86 % of core 1 for as long as an
+unlinked remote is powered. A large cost for a small gain.
+
+### Two bugs worth not rediscovering
+
+**`xTaskDelayUntil()` does not guarantee a yield.** It returns `pdFALSE`
+*without blocking* when its deadline has already passed, and the existing guard
+re-based to now — which self-corrects for an *occasional* slow frame and
+degenerates into a free-running loop for a *consistently* slow one. With the
+bigger band, `display_task` (prio 2) became runnable 100 % of the time on core
+1 and `buzzer_task` (prio 1) never ran again; the remote rebooted on the 5 s
+task watchdog ~6 s into every boot:
+
+```
+E (6599) task_wdt: Task watchdog got triggered...
+E (6599) task_wdt:  - buzzer_task (CPU 1)
+E (6599) task_wdt: CPU 1: display_task
+```
+
+Fixed with an explicit `DISPLAY_FRAME_MIN_YIELD_MS` (20 ms) after any overrun,
+bounding the display's share of the core regardless of frame cost. This is a
+safety property, not pacing tidiness — the buzzer is how the remote tells an
+operator anything when the screen is the thing that is wrong.
+
+**A second SPI device sharing a CS pin steals it, silently.** Giving register
+reads their own slower clock via a second `spi_bus_add_device()` with the same
+`spics_io_num` does not work: ESP-IDF gives each device its **own** hardware CS
+signal and routes it to the requested pin, so the second re-routed the pin and
+took it from the first. Every write then ran with CS unasserted — the panel
+ignored its entire init sequence and sat backlit and unconfigured, a **solid
+white screen** — while reads on the second handle worked perfectly and reported
+`ID 0x2A403300 (healthy)`.
+
+The logs were clean because *the only path still working was the one being
+logged*. Standing rule from this: **a clock or bus change is judged by looking
+at the panel, never by the boot log.**
+
+### 40 MHz, and the read-back defect it exposed
+
+`DISPLAY_SPI_CLOCK_HZ` is now 40 MHz, above the ILI9488's specified 20 (50 ns
+write cycle). The fitted panel is a clone (`0x2A403300`) that sustains it, and
+it is what makes 480x160 fit at all (92 ms → 46 ms of transfer). Confirmed by
+eye over a full clip, after a clean single-variable change — the *first*
+attempt was withdrawn having proved nothing, because it shipped alongside the
+CS bug above.
+
+Register reads do **not** survive 40 MHz. The ILI9488 read cycle is 150 ns
+(6.7 MHz), so reads were already outside spec at 20 MHz and merely got away
+with it; at 40 MHz the panel ID read back `0x3F603B80` against `0x2A403300`.
+
+The corruption was **stable**, which is what made it a defect rather than
+noise: `display_health_check()` compares each read against the boot read, so
+both ends were wrong in the same way and it reported a healthy panel while
+reading noise, and the §5.5.6 undriven-bus test (`0x00000000` / `0xFFFFFFFF`)
+was judging a value the panel never sent. That check exists to catch a dead
+panel on a unit that fires igniters.
+
+Fixed in 1.2.18: reads run on a second SPI device at
+`DISPLAY_SPI_READ_CLOCK_HZ` (10 MHz), with `spics_io_num = -1` on **both**
+devices and CS driven by hand in `spi_xfer()` / `spi_xfer_rd()`. Not a
+behaviour change — hardware CS already asserted per transaction, including per
+row in `flush_run()`; it only moves who does it.
+
+```
+I (1579) rlc_disp: ILI9488 init: 480x320 RGB666 @ 40 MHz (reads 10 MHz), ID 0x2A403300 (healthy)
+```
+
+### Text over footage
+
+White-on-footage is a different problem from white-on-black: the `0x9A` grading
+cap bounds the clip, but a plume still arrives as a near-white field behind
+white glyphs. Carried by two **ramped** scrims (top rows for the title, bottom
+rows for the credit) plus an **eight-neighbour** glyph outline — `font5x7` is
+blocky enough that a four-neighbour ring leaks at the diagonals. Ramps not
+boxes: a hard-edged dark rectangle behind text is more obviously a patch than
+the contrast problem it solves.
+
+The grading cap was deliberately **not** lowered. Darkening the whole clip to
+suit its worst frame costs the picture everywhere to fix a problem confined to
+the text rows.
+
+The scrims are **baked into the asset**, not applied per frame. They ran in the
+framebuffer for exactly one revision at ~14 ms/frame of byte-wise
+read-modify-write in PSRAM, inside a display task with a 100 ms budget. The
+tool applies identical integer maths once, on a host.
+
+> **The one asset mismatch that does not fail safe.** `splash_video_validate()`
+> checks dimensions, not scrim geometry, so an asset built for a different text
+> layout plays happily with its dark stripes in the wrong place. Every other
+> asset failure — missing, blank, corrupt, wrong size, undecodable — degrades
+> to a plain dark band. Rebuild the asset whenever `VBAND_SCRIM_*` or the text
+> layout moves. A format/layout revision field would close this.
+
+### Tooling
+
+| Change | Why |
+|---|---|
+| `mkvideoband.py` seeks to `--start` | It decoded from t=0 on every run — two passes over 222 s of 4K to use 10 s of it, ~6 min a run. Now **~30 s**, which is what made framing iteration possible at all |
+| `mkvideoband.py` bakes both scrims | `--scrim-h/-keep`, `--scrim-bot-h/-keep`; must match the firmware's `VBAND_SCRIM_*` |
+| New `tools/rlcv_repack.py` | Re-times a band losslessly. `--fps 5` is **not** equivalent: tracking guards are per-frame, so sampling at 5 Hz re-tracks rather than re-times |
+
+Recipe is two steps — build at 10 Hz where the tracking was tuned, then
+re-time:
+
+```bash
+tools/mkvideoband.py fh.webm -o fh160.bin \
+    --start 222.0 --duration 10 --track \
+    --zoom 1.0 --zoom-end 1.9 --zoom-settle 0.55 --zoom-final 1.10 \
+    --track-bias-y -0.08
+tools/rlcv_repack.py fh160.bin splash_falconheavy_160.bin 2 200
+./build_remote.sh splash assets/splash_falconheavy_160.bin
+```
+
+### Verification
+
+Both units on **1.2.18**, flashed and linked — `LINK_ACK accepted`, rssi −34, 0
+missed, 0 tx failures, health checks passing on the correct ID over 40 s. The
+strict version check was seen doing its job on the way through:
+
+```
+E (1869) rlc_link: LINK REJECTED: FW MISMATCH base 1.2.17 / remote 1.2.18
+```
+
+Ports (by-id, per house rule): remote
+`usb-1a86_USB_Single_Serial_5B5E043219-if00`, base
+`usb-1a86_USB_Single_Serial_5B5E042156-if00` — base identity confirmed from its
+own boot banner before writing to it, not from the port name.
+
+### Notes and follow-ups
+
+- **`ESP32 WIRELESS` is gone from the boot screen.** The title is now just
+  `ROCKET LAUNCH CONTROLLER` — an operator-requested change to the displayed
+  product name, which also makes the splash agree with the firmware-mismatch
+  screen. A `_Static_assert` rejects a title too wide for the panel (432 px of
+  480 at scale 3; no room for a longer one).
+- **40 MHz is an overclock on a clone panel.** It fails visibly (tearing,
+  colour noise, shifted rows), not dangerously. Exit is 20 MHz with
+  `VBAND_H` 128; the top half must not be retained at 20 MHz.
+- **Source video is not in the repo** (199 MB). It was recovered from an
+  earlier session's scratchpad; re-download from Wikimedia Commons if needed —
+  see `assets/README.md`.
+- The superseded 480x80 asset stays in `assets/` for firmware ≤ 1.2.11; it is
+  rejected on dimensions by anything newer.
+- A `--inject` build still warns `draw_splash_band defined but not used`? No —
+  the whole playback path is now compiled out of a fault-injection build, which
+  also stops it mmapping the partition and allocating a 230 KB PSRAM buffer
+  nothing would read.
+
+
 ## 2026-09-12 — boot splash: Falcon Heavy landing video band (fw 1.2.7 → 1.2.11)
 
 Started as "the boot splash is boring, could we have an animated background —
