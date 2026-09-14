@@ -272,9 +272,12 @@
 #define RLC_COLOR_CONT_CONNECTED   0x006400   /* darkgreen  — low-resistance path present */
 #define RLC_COLOR_CONT_MARGINAL    0x90EE90   /* lightgreen — high resistance, may not fire */
 #define RLC_COLOR_CONT_OPEN        0xFFFF00   /* yellow     — no path, blocks arming */
-/* DEPRECATED with the CONT_SHORT band (2026-08-21). Retained only so a
- * value 3 from a pre-merge peer still resolves to a colour. */
-#define RLC_COLOR_CONT_SHORT       0xFF0000   /* red — no longer produced */
+/* SUSPECT (FSD v1.71, 2026-09-14): finite but unreasonably high resistance —
+ * corroded contacts, damaged lead. Steady orange, not a blink: blinking is
+ * reserved for alarms (the wink family), and this is a channel state. The
+ * value is the colour SHORT retired in 2026-08-21, revived for the band that
+ * took over its enum slot — same number, unrelated meaning. */
+#define RLC_COLOR_CONT_SUSPECT     0xFF8C00   /* darkorange — connected but bad joint, blocks arming */
 
 /* Alarm-wink colours. Deliberately chosen to be unmistakable for any
  * continuity colour above, so a wink can never be read as a channel state. */
@@ -342,8 +345,8 @@ flashed from the same tree or they cannot communicate at all."
  *
  * An open channel rests at ~3.19 V, far above this range, so the ADC
  * saturates at 4095. That is harmless (well inside the pin's absolute
- * maximum) and unambiguous: saturated means OPEN. CONT_OPEN_UV must
- * therefore stay below full scale. */
+ * maximum) and unambiguous: saturated means OPEN. CONT_SUSPECT_UV must
+ * therefore stay below full scale by more than its hysteresis (FSD v1.71). */
 #define CONT_ADC_ATTEN                 ADC_ATTEN_DB_0
 #define CONT_ADC_FULLSCALE_MV          950
 
@@ -380,13 +383,36 @@ flashed from the same tree or they cannot communicate at all."
  * refused rather than merely flagged. */
 /* 2026-08-23: 432000 -> 586000 µV, the same ~500 Ω boundary shifted by the
  * 217 Ω sense resistor. Full scale (950 mV) is now reached at ~1117 Ω rather
- * than ~1670 Ω; everything above the boundary is OPEN, so that costs nothing. */
-#define CONT_OPEN_UV                   586000  /* Above = OPEN (> ~500 Ω) */
+ * than ~1670 Ω.
+ * 2026-09-14 (FSD v1.71): above this boundary the channel cannot fire, but it
+ * is no longer directly OPEN — 586–928 mV is the new SUSPECT band (a finite,
+ * measurable resistance: corroded clips, damaged lead) and only readings past
+ * CONT_SUSPECT_UV are OPEN. The boundary itself and its hysteresis are
+ * unchanged; the band above it split. */
+#define CONT_OPEN_UV                   586000  /* Above = SUSPECT, then OPEN (> ~500 Ω) */
+
+/* SUSPECT/OPEN boundary (FSD v1.71, 2026-09-14). 928 mV ≈ raw 4000 of 4095,
+ * ~1.09 kΩ through the divider. Two constraints fixed this number:
+ *  - It must sit below full scale by MORE than its hysteresis, or a saturated
+ *    reading (a true open, pinned at exactly 950 mV) could never cross
+ *    threshold + hysteresis to reach OPEN: 928000 + 10000 = 938000, leaving
+ *    12 mV of margin. The ±10000 µV hysteresis is deliberately much narrower
+ *    than its siblings for exactly this reason — see CONT_HYSTERESIS_SUSPECT_UV.
+ *  - It must sit high enough that the SUSPECT window is worth reporting:
+ *    586–928 mV is 500 Ω–1.09 kΩ, which is where a few hundred ohms of
+ *    contact corrosion lands on top of an igniter's own 1–2 Ω. Above ~1.11 kΩ
+ *    the reading saturates and SUSPECT is indistinguishable from absent —
+ *    that is a hardware limit of the 0 dB range, not a choice. */
+#define CONT_SUSPECT_UV                928000  /* Above = OPEN (> ~1.09 kΩ, saturated) */
 
 /* Hysteresis bands (µV) — prevents oscillation at boundaries */
 #define CONT_HYSTERESIS_SHORT_UV       200     /* unused, see CONT_SHORT_UV */
 #define CONT_HYSTERESIS_MARGINAL_UV    5000
 #define CONT_HYSTERESIS_OPEN_UV        50000
+/* Narrow by necessity: the OPEN side of this boundary is pinned at full scale
+ * (950000 µV), so threshold + hysteresis must stay below it. Readings near
+ * saturation are also compressed toward 4095, which keeps them quiet. */
+#define CONT_HYSTERESIS_SUSPECT_UV     10000
 
 /* ── Rotary Encoder (Remote only, FSD §5.5.1) ─────────────────── */
 

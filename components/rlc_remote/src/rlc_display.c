@@ -90,7 +90,7 @@ static const char *TAG = "rlc_disp";
  * unit's 8-pixel strip always show the same colour for the same state. */
 #define C_GOOD       RLC_COLOR_CONT_CONNECTED
 #define C_OPEN       RLC_COLOR_CONT_OPEN
-#define C_SHORT      RLC_COLOR_CONT_SHORT
+#define C_SUSPECT    RLC_COLOR_CONT_SUSPECT
 #define C_MARGINAL   RLC_COLOR_CONT_MARGINAL
 
 /* Non-continuity accents (unchanged by the continuity palette) */
@@ -424,6 +424,17 @@ static void fill_triangle_up(int cx, int cy, int r, uint32_t colour)
     }
 }
 
+/* Filled diamond, half-diagonal r, centred on (cx, cy) — the SUSPECT glyph
+ * (FSD v1.71). Widens from the apex to the vertical middle, then narrows
+ * again, same row-span fill pattern as the triangle above it. */
+static void fill_diamond(int cx, int cy, int r, uint32_t colour)
+{
+    for (int dy = 0; dy <= 2 * r; dy++) {
+        int half = (dy <= r) ? dy : (2 * r - dy);
+        fill_rect(cx - half, cy - r + dy, 2 * half + 1, 1, colour);
+    }
+}
+
 
 /* ── Text ─────────────────────────────────────────────────────── */
 
@@ -574,7 +585,7 @@ static uint32_t continuity_colour(uint8_t band)
     switch (band) {
         case CONT_CONNECTED:     return C_GOOD;
         case CONT_MARGINAL: return C_MARGINAL;
-        case CONT_SHORT:    return C_SHORT;
+        case CONT_SUSPECT:  return C_SUSPECT;
         default:            return C_OPEN;
     }
 }
@@ -587,24 +598,25 @@ static const char *continuity_label(uint8_t band)
          * assertion the measurement cannot support. */
         case CONT_CONNECTED: return "CONNECTED";
         case CONT_MARGINAL:  return "MARGINAL";
-        case CONT_SHORT:     return "CONNECTED";  /* deprecated, folded in */
+        case CONT_SUSPECT:   return "SUSPECT";
         default:             return "OPEN";
     }
 }
 
 /* Continuity glyph per FSD §10.2.2:
- * CONNECTED = filled circle, MARGINAL = triangle, OPEN = empty circle.
+ * CONNECTED = filled circle, MARGINAL = triangle, OPEN = empty circle,
+ * SUSPECT = filled diamond (FSD v1.71 — the glyph retired with SHORT, revived
+ * for the band that took over its enum slot; same diamond, unrelated meaning).
  * Shape carries the meaning as well as colour, so the screen stays readable
- * for colour-blind operators. The diamond that marked SHORT is retired with
- * that band; a deprecated value from a pre-merge peer draws as CONNECTED. */
+ * for colour-blind operators. */
 static void draw_continuity_glyph(int cx, int cy, int r, uint8_t band)
 {
     uint32_t c = continuity_colour(band);
     switch (band) {
-        case CONT_CONNECTED:
-        case CONT_SHORT:    fill_circle(cx, cy, r, c);        break;
-        case CONT_MARGINAL: fill_triangle_up(cx, cy, r, c);   break;
-        default:            draw_circle(cx, cy, r, 3, c);     break;
+        case CONT_CONNECTED: fill_circle(cx, cy, r, c);        break;
+        case CONT_MARGINAL:  fill_triangle_up(cx, cy, r, c);   break;
+        case CONT_SUSPECT:   fill_diamond(cx, cy, r, c);       break;
+        default:             draw_circle(cx, cy, r, 3, c);     break;
     }
 }
 
@@ -1401,6 +1413,10 @@ static void draw_fire_complete_dynamic(const disp_data_t *d, uint8_t ch,
         verdict = "IGNITER ?";           verdict_col = C_GREY;
     } else if (band == CONT_OPEN) {
         verdict = "OPEN - LIKELY FIRED"; verdict_col = C_GREEN;
+    } else if (band == CONT_SUSPECT) {
+        /* FSD v1.71: finite but unreasonably high resistance — not "fired",
+         * not "connected". Residue, or a lead/clip fault; investigate. */
+        verdict = "SUSPECT - CHECK";     verdict_col = C_SUSPECT;
     } else if (band == CONT_MARGINAL) {
         verdict = "MARGINAL - CHECK";    verdict_col = C_WARN;
     } else {

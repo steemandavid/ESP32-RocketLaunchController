@@ -1126,7 +1126,7 @@ link. There is no wire between the firing point and the pad.</p>
     <tr><td><strong>Main status</strong></td><td>Normal idle screen: link and battery bar, the 8-channel continuity grid, selected channel, base/remote arm state, and a context-sensitive instruction line.</td></tr>
     <tr><td><strong>Armed</strong></td><td>Large channel number, red border, continuity of the armed channel, and <em>HOLD FIRE TO LAUNCH</em>.</td></tr>
     <tr><td><strong>Firing</strong></td><td>The pre-fire countdown at 100 ms resolution, then <em>IGNITION ACTIVE</em>. <em>HOLD FIRE BUTTON — RELEASE TO ABORT</em>.</td></tr>
-    <tr><td><strong>Fire complete</strong></td><td>Shown for 10 s after the base reports the pulse finished, with the igniter’s measured continuity: <em>OPEN – LIKELY FIRED</em>, <em>MARGINAL – CHECK</em>, or <em>STILL CONNECTED</em>. Cancelled early if the system re-arms or the link drops.</td></tr>
+    <tr><td><strong>Fire complete</strong></td><td>Shown for 10 s after the base reports the pulse finished, with the igniter’s measured continuity: <em>OPEN – LIKELY FIRED</em>, <em>◆ SUSPECT – CHECK</em>, <em>MARGINAL – CHECK</em>, or <em>STILL CONNECTED</em>. Cancelled early if the system re-arms or the link drops.</td></tr>
     <tr><td><strong>Link lost</strong></td><td>Amber. Shows real elapsed time since the last valid frame and the reconnection attempt count. Both counters keep advancing while the link is down.</td></tr>
     <tr><td><strong>Error</strong></td><td>The unit has latched an unrecoverable fault. <em>Power cycle required</em> — see §5.12.</td></tr>
     <tr><td><strong>Refusal toast</strong></td><td>A red overlay for 3 s naming why a command was refused, e.g. <span class="pill">ARM FAILED: BASE KEY OFF</span>. See §6.1.</td></tr>
@@ -1193,7 +1193,7 @@ this manual.</p>
 <h3><span class="num">3.5</span> Continuity indication</h3>
 
 <p>The base measures each igniter circuit with a test current of no more than
-1 mA and sorts the result into three bands. Shape carries the meaning as well as
+1 mA and sorts the result into four bands. Shape carries the meaning as well as
 colour, so the grid stays readable regardless of colour vision.</p>
 
 <table class="compact">
@@ -1201,7 +1201,8 @@ colour, so the grid stays readable regardless of colour vision.</p>
   <tbody>
     <tr><td style="font-size:13pt;color:#2e8b57">●</td><td><strong>CONNECTED</strong></td><td>below ~67 Ω</td><td>Current can flow. It does <em>not</em> mean the igniter is sound — a dead short reads the same. Arming is permitted.</td></tr>
     <tr><td style="font-size:13pt;color:#b8a30a">▲</td><td><strong>MARGINAL</strong></td><td>~67–500 Ω</td><td>A high-resistance connection. Arming is permitted but you should re-seat the clips before firing.</td></tr>
-    <tr><td style="font-size:13pt;color:#d97a06">○</td><td><strong>OPEN</strong></td><td>above ~500 Ω</td><td>No usable circuit. <strong>Arming is refused</strong>, and an armed channel going OPEN disarms the pad automatically.</td></tr>
+    <tr><td style="font-size:13pt;color:#ff8c00">◆</td><td><strong>SUSPECT</strong></td><td>~500 Ω–1.1 kΩ</td><td>Something is connected, but the resistance is far too high to fire — badly corroded clips, a damaged lead. <strong>Arming is refused</strong> with a specific "HIGH RESISTANCE" reason (fw 1.2.20), and it disarms an armed channel like OPEN. Fix the joint and try again.</td></tr>
+    <tr><td style="font-size:13pt;color:#d97a06">○</td><td><strong>OPEN</strong></td><td>above ~1.1 kΩ</td><td>No measurable circuit. <strong>Arming is refused</strong>, and an armed channel going OPEN disarms the pad automatically.</td></tr>
   </tbody>
 </table>
 
@@ -2043,7 +2044,8 @@ one is set.</p>
   <tbody>
     <tr><td>● CONNECTED</td><td>below ~67 Ω</td><td>Permitted</td></tr>
     <tr><td>▲ MARGINAL</td><td>~67–500 Ω</td><td>Permitted — re-seat first</td></tr>
-    <tr><td>○ OPEN</td><td>above ~500 Ω</td><td><strong>Refused</strong>; disarms an armed channel</td></tr>
+    <tr><td>◆ SUSPECT</td><td>~500 Ω–1.1 kΩ</td><td><strong>Refused</strong> (HIGH RESISTANCE); disarms an armed channel</td></tr>
+    <tr><td>○ OPEN</td><td>above ~1.1 kΩ</td><td><strong>Refused</strong>; disarms an armed channel</td></tr>
   </tbody>
 </table>
 

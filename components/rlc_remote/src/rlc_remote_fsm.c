@@ -1089,8 +1089,9 @@ static void process_event(const rlc_fsm_event_t *evt)
                 uint8_t ch = s_base_end_pending_ch;
                 s_base_end_pending_ch = 0;
                 if (!(s_last_status.channel_armed_bitmask & (1U << (ch - 1))) &&
-                    status_continuity_band(ch) == CONT_OPEN) {
-                    ESP_LOGW(TAG, "base ended sequence: ch %u OPEN — continuity",
+                    (status_continuity_band(ch) == CONT_OPEN ||
+                     status_continuity_band(ch) == CONT_SUSPECT)) {
+                    ESP_LOGW(TAG, "base ended sequence: ch %u OPEN/SUSPECT — continuity",
                              ch);
                     display_toast("CONTINUITY LOST - DISARMED");
                     buzzer_play(BUZZER_BEEP_CONTINUITY_LOST);
@@ -1277,15 +1278,18 @@ static void process_event(const rlc_fsm_event_t *evt)
             if (s_armed_channel > 0 &&
                 !(armed_mask & (1U << (s_armed_channel - 1)))) {
                 /* RM-07 / FSD §12.1: when the same frame shows the channel
-                 * OPEN, the disarm was the base's continuity-loss disarm
-                 * (§7.2.7) — the igniter left the circuit. Say so, with the
+                 * OPEN (or SUSPECT, FSD v1.71 — it disarms like OPEN and must
+                 * be reported like OPEN), the disarm was the base's
+                 * continuity-loss disarm (§7.2.7) — the igniter left the
+                 * circuit or its joint degraded past firing. Say so, with the
                  * distinctive BEEP_CONTINUITY_LOST pattern. Previously every
                  * base-initiated disarm produced the same BEEP_LONG, so a
                  * disconnected igniter was indistinguishable from an arm
                  * timeout, and BEEP_CONTINUITY_LOST was never played at all. */
-                bool cont_lost = (status_continuity_band(s_armed_channel) == CONT_OPEN);
+                uint8_t dis_band = status_continuity_band(s_armed_channel);
+                bool cont_lost = (dis_band == CONT_OPEN || dis_band == CONT_SUSPECT);
                 ESP_LOGW(TAG, "STATUS_UPDATE shows base disarmed%s",
-                         cont_lost ? " (continuity OPEN)" : "");
+                         cont_lost ? " (continuity OPEN/SUSPECT)" : "");
                 display_toast(cont_lost ? "CONTINUITY LOST - DISARMED"
                                         : "BASE DISARMED");
                 s_armed_channel = 0;
@@ -1352,12 +1356,15 @@ static void process_event(const rlc_fsm_event_t *evt)
                  * the cause, and for an igniter that left the circuit that is
                  * the thing worth hearing (BEEP_CONTINUITY_LOST). */
                 s_fire_repeat_active = false;
-                if (status_continuity_band(s_armed_channel) == CONT_OPEN) {
-                    buzzer_play(BUZZER_BEEP_CONTINUITY_LOST);
-                    display_toast("CONTINUITY LOST - DISARMED");
-                } else {
-                    buzzer_play(BUZZER_BEEP_TRIPLE);
-                    display_toast("BASE ENDED SEQUENCE");
+                {
+                    uint8_t dis_band = status_continuity_band(s_armed_channel);
+                    if (dis_band == CONT_OPEN || dis_band == CONT_SUSPECT) {
+                        buzzer_play(BUZZER_BEEP_CONTINUITY_LOST);
+                        display_toast("CONTINUITY LOST - DISARMED");
+                    } else {
+                        buzzer_play(BUZZER_BEEP_TRIPLE);
+                        display_toast("BASE ENDED SEQUENCE");
+                    }
                 }
                 do_enter_idle();
             }

@@ -374,8 +374,15 @@ static uint8_t guard_arm(const rlc_fsm_event_t *evt)
     /* Guard 1: Base key switch must be ON — key_sense HIGH */
     if (!key_sense_get_debounced()) return NACK_BASE_SWITCH_OFF;
 
-    /* Guard 2: Continuity not OPEN */
-    if (continuity_get_channel(ch) == CONT_OPEN) return NACK_NO_CONTINUITY;
+    /* Guard 2: Continuity must be able to fire — CONNECTED or MARGINAL.
+     * OPEN and SUSPECT both refuse (FSD v1.71); SUSPECT gets its own NACK so
+     * the operator is told the igniter reads *connected but unreasonably
+     * high* (go look at the clips) rather than absent. */
+    {
+        rlc_continuity_band_t band = continuity_get_channel(ch);
+        if (band == CONT_OPEN)    return NACK_NO_CONTINUITY;
+        if (band == CONT_SUSPECT) return NACK_CONT_SUSPECT;
+    }
 
     /* Guard 8: Battery above minimum */
     if (rlc_battery_get_voltage_mv() < BASE_VBAT_MIN_ARM_MV) return NACK_LOW_BATTERY;
@@ -389,7 +396,8 @@ static uint8_t guard_arm(const rlc_fsm_event_t *evt)
 /* ── Guard: continuity loss while armed (FSD §7.2.7) ─────────── */
 
 /**
- * True when this event says the *armed* channel's igniter has gone OPEN.
+ * True when this event says the *armed* channel's igniter has gone OPEN —
+ * or degraded to SUSPECT (FSD v1.71).
  *
  * Added 2026-08-26. Until then continuity was checked only at arm time
  * (guard_arm guard 2) and band changes were informational: FSD §7.3.1 called
@@ -400,21 +408,24 @@ static uint8_t guard_arm(const rlc_fsm_event_t *evt)
  * is not the accepted one; disconnection is exactly what happens when someone
  * is working at the pad, which is when being armed matters most.
  *
- * Only OPEN disarms, matching guard 2 — OPEN is the sole band that blocks
- * arming. MARGINAL and SHORT stay informational (§7.3.1 step 2).
+ * The disarm rule is "any band that blocks arming" — OPEN and, since v1.71,
+ * SUSPECT (500 Ω–1.09 kΩ will not fire an igniter either; it means the joint
+ * degraded rather than vanished, and the pad needs to know just as urgently).
+ * MARGINAL stays informational (§7.3.1 step 2).
  *
  * Deliberately NOT applied in FIRING or POST_FIRE. During FIRING the armed
  * channel's relay is on NO, so its NC sense line is physically disconnected
- * and reads OPEN *by design* — acting on that would abort every fire pulse
- * the instant it started. In POST_FIRE, OPEN is the success indicator: it
- * means the igniter fired (§7.3.1, post-fire igniter status).
+ * and reads OPEN (saturated) *by design* — acting on that would abort every
+ * fire pulse the instant it began. In POST_FIRE, OPEN is the success
+ * indicator: it means the igniter fired (§7.3.1, post-fire igniter status).
  */
 static bool armed_channel_went_open(const rlc_fsm_event_t *evt)
 {
     return evt->type == EVT_CONTINUITY_CHANGED &&
            s_armed_channel != 0 &&
            evt->data.continuity.channel == s_armed_channel &&
-           evt->data.continuity.band == CONT_OPEN;
+           (evt->data.continuity.band == CONT_OPEN ||
+            evt->data.continuity.band == CONT_SUSPECT);
 }
 
 /**
@@ -452,9 +463,12 @@ static bool armed_channel_went_marginal(const rlc_fsm_event_t *evt)
  * anything. Both are short and quiet enough not to be confused with the
  * 3 × 200 ms ERROR and CONTINUITY_LOST alerts.
  *
- * OPEN stays silent. Disconnection is not an event the operator needs told —
- * they are the one doing it — and the armed-channel case has its own, louder
- * treatment in §7.2.7.
+ * OPEN and SUSPECT stay silent (SUSPECT since FSD v1.71). Disconnection is
+ * not an event the operator needs told — they are the one doing it — and a
+ * SUSPECT reading is not a connection made; in both cases the next move is
+ * the same (look at the display, fix or re-make the joint), which silence
+ * already conveys by contrast with the blips. The armed-channel case has its
+ * own, louder treatment in §7.2.7.
  *
  * Called ONLY from the BOOT and IDLE arms of process_event(). That gate is the
  * design, not a convenience:
@@ -625,10 +639,19 @@ static void process_event(const rlc_fsm_event_t *evt)
                  * already changed it will never be reported again. Refuse here
                  * rather than arming and relying on an edge that has already
                  * been consumed. */
-                if (continuity_get_channel(ch) == CONT_OPEN) {
-                    ESP_LOGW(TAG, "ARM aborted — ch %u went OPEN during arm verify", ch);
-                    abort_arm_verify(NACK_NO_CONTINUITY);
-                    return;
+                {
+                    rlc_continuity_band_t band = continuity_get_channel(ch);
+                    if (band == CONT_OPEN) {
+                        ESP_LOGW(TAG, "ARM aborted — ch %u went OPEN during arm verify", ch);
+                        abort_arm_verify(NACK_NO_CONTINUITY);
+                        return;
+                    }
+                    if (band == CONT_SUSPECT) {
+                        ESP_LOGW(TAG, "ARM aborted — ch %u reads SUSPECT (high "
+                                      "resistance) during arm verify", ch);
+                        abort_arm_verify(NACK_CONT_SUSPECT);
+                        return;
+                    }
                 }
 
                 s_arm_verify_pending = false;
@@ -1033,8 +1056,8 @@ static void check_timers(void)
      * (on_io_change() logs, but cannot regenerate it).
      *
      * Re-reading the level cannot miss an edge. If the armed channel is OPEN
-     * it is OPEN on every tick until something changes it, so this converges
-     * within one 50 ms tick of any missed event.
+     * (or SUSPECT, FSD v1.71) it stays there on every tick until something
+     * changes it, so this converges within one 50 ms tick of any missed event.
      *
      * The event path stays the fast detector; this is the backstop. An
      * edge-triggered safety monitor should always have one.
@@ -1043,12 +1066,14 @@ static void check_timers(void)
      * NOT FIRING (the relay is on NO, so the sense line reads OPEN by design)
      * and NOT POST_FIRE (where OPEN means the igniter fired). */
     if ((s_state == STATE_ARMED || s_state == STATE_PRE_FIRE) &&
-        s_armed_channel != 0 &&
-        continuity_get_channel(s_armed_channel) == CONT_OPEN) {
-        ESP_LOGW(TAG, "Continuity OPEN on armed ch %u (level backstop) — disarm",
-                 s_armed_channel);
-        do_disarm_continuity_lost();
-        return;   /* state is now IDLE; the rest of this pass does not apply */
+        s_armed_channel != 0) {
+        rlc_continuity_band_t band = continuity_get_channel(s_armed_channel);
+        if (band == CONT_OPEN || band == CONT_SUSPECT) {
+            ESP_LOGW(TAG, "Continuity %s on armed ch %u (level backstop) — disarm",
+                     band == CONT_OPEN ? "OPEN" : "SUSPECT", s_armed_channel);
+            do_disarm_continuity_lost();
+            return;   /* state is now IDLE; the rest of this pass does not apply */
+        }
     }
 
     /* M1: Arm sense verification timeout */

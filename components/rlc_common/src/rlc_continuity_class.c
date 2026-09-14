@@ -1,10 +1,13 @@
 /**
  * RLC Continuity Band Classifier (shared, pure) — see rlc_continuity_class.h.
  *
- * Three bands only. SHORT was merged into CONNECTED on 2026-08-21 — the
+ * Four bands. SHORT was merged into CONNECTED on 2026-08-21 — the
  * distinction is below the measurement floor at the specified 1 mA test
  * current, so reporting it would be guessing. CONT_SHORT_UV is consequently
- * unused.
+ * unused. SUSPECT was split out of OPEN on 2026-09-14 (FSD v1.71) — the old
+ * OPEN territory above 500 Ω contains a measurable window (up to ~1.09 kΩ,
+ * where the 0 dB range saturates), and swallowing "connected but badly
+ * corroded" into "no igniter" threw away a reading the hardware can make.
  */
 
 #include "rlc_continuity_class.h"
@@ -15,6 +18,7 @@ rlc_continuity_band_t rlc_continuity_classify_initial(int32_t uv)
     /* First reading — simple thresholds, no hysteresis */
     if (uv < CONT_MARGINAL_UV)   return CONT_CONNECTED;
     if (uv < CONT_OPEN_UV)       return CONT_MARGINAL;
+    if (uv < CONT_SUSPECT_UV)    return CONT_SUSPECT;
     return CONT_OPEN;
 }
 
@@ -26,6 +30,7 @@ rlc_continuity_band_t rlc_continuity_classify_hysteresis(
         /* Up to MARGINAL? */
         if (uv > CONT_MARGINAL_UV + CONT_HYSTERESIS_MARGINAL_UV) {
             if (uv < CONT_OPEN_UV) return CONT_MARGINAL;
+            if (uv < CONT_SUSPECT_UV) return CONT_SUSPECT;
             return CONT_OPEN;
         }
         return CONT_CONNECTED;
@@ -34,23 +39,35 @@ rlc_continuity_band_t rlc_continuity_classify_hysteresis(
         /* Down to CONNECTED? */
         if (uv < CONT_MARGINAL_UV - CONT_HYSTERESIS_MARGINAL_UV)
             return CONT_CONNECTED;
-        /* Up to OPEN? */
-        if (uv > CONT_OPEN_UV + CONT_HYSTERESIS_OPEN_UV)
+        /* Up to SUSPECT? (586 mV is the boundary of the cannot-fire region,
+         * whichever band names it this week.) */
+        if (uv > CONT_OPEN_UV + CONT_HYSTERESIS_OPEN_UV) {
+            if (uv < CONT_SUSPECT_UV) return CONT_SUSPECT;
             return CONT_OPEN;
+        }
         return CONT_MARGINAL;
 
-    case CONT_OPEN:
-        /* Stay OPEN unless the reading drops below boundary - hysteresis */
+    case CONT_SUSPECT:
+        /* Down to MARGINAL? */
         if (uv < CONT_OPEN_UV - CONT_HYSTERESIS_OPEN_UV) {
             if (uv < CONT_MARGINAL_UV) return CONT_CONNECTED;
             return CONT_MARGINAL;
         }
-        return CONT_OPEN;
+        /* Up to OPEN? */
+        if (uv > CONT_SUSPECT_UV + CONT_HYSTERESIS_SUSPECT_UV)
+            return CONT_OPEN;
+        return CONT_SUSPECT;
 
-    case CONT_SHORT:
-        /* Deprecated band — a unit that booted before the merge, or a stale
-         * cached value, is folded into the current scheme on first update. */
-        return rlc_continuity_classify_initial(uv);
+    case CONT_OPEN:
+        /* Stay OPEN unless the reading drops below boundary - hysteresis */
+        if (uv < CONT_SUSPECT_UV - CONT_HYSTERESIS_SUSPECT_UV) {
+            if (uv < CONT_OPEN_UV) {
+                if (uv < CONT_MARGINAL_UV) return CONT_CONNECTED;
+                return CONT_MARGINAL;
+            }
+            return CONT_SUSPECT;
+        }
+        return CONT_OPEN;
     }
     return rlc_continuity_classify_initial(uv);
 }

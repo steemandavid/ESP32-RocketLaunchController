@@ -1478,7 +1478,47 @@
  *
  * Both units changed; the version check is strict — flash them together. */
 
+/* 1.2.20 (2026-09-14): fourth continuity band, CONT_SUSPECT (FSD v1.71).
+ *
+ * Operator request. Before this version everything above ~500 Ω reported
+ * OPEN, so an igniter connected through badly corroded clips or a damaged
+ * lead read identically to *no igniter at all* — the operator was told
+ * "NO CONTINUITY ON CH N" while staring at a physically connected igniter.
+ *
+ * The 0 dB ADC range can measure up to ~1.14 kΩ (950 mV full scale), so the
+ * old OPEN territory split at new CONT_SUSPECT_UV (928 mV ≈ 1.09 kΩ, raw
+ * ~4000): 500 Ω–1.09 kΩ is now SUSPECT ("connected, but the joint is bad —
+ * go look"), and OPEN is reserved for readings at or near saturation, where
+ * the resistance is not measurable at all. Honest limit, recorded in the
+ * FSD: above ~1.14 kΩ SUSPECT is indistinguishable from absent, and widening
+ * the window would need attenuation that collapses resolution where real
+ * igniters live.
+ *
+ * SUSPECT blocks arming exactly like OPEN (nothing above 500 Ω fires an
+ * igniter) but NACKs a dedicated NACK_CONT_SUSPECT (0x10, "HIGH RESISTANCE")
+ * so the refusal names the real fault, and it disarms per §7.2.7 when it
+ * appears on the armed channel — the rule is now "any band that blocks
+ * arming disarms". The remote's RM-07 continuity-lost discrimination accepts
+ * it alongside OPEN.
+ *
+ * Presentation on both units: steady orange (0xFF8C00 — the colour SHORT
+ * retired in 2026-08-21) and the retired diamond glyph ◆. Steady, not
+ * blinking: blinking means alarm. The siren stays silent for SUSPECT, as it
+ * already does for OPEN.
+ *
+ * Wire encoding: enum value 3 — the retired SHORT slot, empty since the
+ * 2026-08-21 merge — is repurposed for SUSPECT. No struct change, no
+ * protocol_version bump; safe because the strict firmware-version check
+ * means no pre-1.2.20 peer can ever be linked. The classifier's old
+ * fold-a-stale-value-3-into-CONNECTED logic is deleted with the reuse.
+ *
+ * CONT_SUSPECT_UV + CONT_HYSTERESIS_SUSPECT_UV (928000 + 10000) sits 12 mV
+ * under full scale so a saturated (true open) reading still crosses into
+ * OPEN — pinned by a boot self-test vector and a hysteresis self-test.
+ *
+ * Both units changed; the version check is strict — flash them together. */
+
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  19
-#define RLC_VERSION_STRING "1.2.19"
+#define RLC_VERSION_PATCH  20
+#define RLC_VERSION_STRING "1.2.20"

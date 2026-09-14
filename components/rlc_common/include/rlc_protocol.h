@@ -77,6 +77,13 @@ typedef enum {
      * burst looked exactly like RF loss. Deliberately distinct from
      * WRONG_STATE — the command was legal, the base just could not take it. */
     NACK_BASE_BUSY             = 0x0F,
+    /* Channel reads SUSPECT: finite but unreasonably high resistance
+     * (~500 Ω–1.09 kΩ). Added 2026-09-14 (FSD v1.71): before the fourth band,
+     * a corroded connection landed in OPEN and the operator was told "no
+     * continuity" while staring at a physically connected igniter. Deliberately
+     * distinct from NACK_NO_CONTINUITY — the igniter is there; the joint is
+     * not trustworthy. Blocks arming exactly like OPEN either way. */
+    NACK_CONT_SUSPECT          = 0x10,
 } rlc_nack_reason_t;
 
 /* ── Error Flags (bitmask in STATUS_UPDATE) ───────────────────── */
@@ -93,19 +100,23 @@ typedef enum {
 /* Enum values intentionally match 2-bit wire encoding in STATUS_UPDATE */
 
 typedef enum {
-    CONT_OPEN      = 0,  /* no low-resistance path — blocks arming */
+    CONT_OPEN      = 0,  /* no measurable path (saturated) — blocks arming */
     CONT_CONNECTED = 1,  /* a low-resistance path is present */
     CONT_MARGINAL  = 2,  /* high resistance — may not fire, warning only */
-
-    /* DEPRECATED 2026-08-21. Retained so the 2-bit wire encoding is
-     * unchanged and a pre-merge peer's value 3 still decodes, but the base
-     * no longer produces it. Bench measurement showed a dead short and a
-     * 1.5-1.9 ohm igniter differ by only 1-1.6 mV at the specified 1 mA
-     * test current — the same size as noise, run-to-run drift and the
-     * contact resistance of the shorting lead itself. Three experiments
-     * returned 0.77, 1.15 and 1.77 ohm for one physically fixed igniter.
-     * A band that cannot be measured must not be reported. */
-    CONT_SHORT     = 3,
+    /* Finite but unreasonably high resistance (~500 Ω–1.09 kΩ) — corroded
+     * contacts, a damaged lead. Added 2026-09-14 (FSD v1.71): splits the old
+     * OPEN territory at CONT_SUSPECT_UV, so "connected but bad joint" is no
+     * longer reported as "no igniter". Blocks arming like OPEN, NACKs
+     * NACK_CONT_SUSPECT.
+     *
+     * Value 3 is the retired SHORT slot, repurposed. SHORT was folded into
+     * CONNECTED on 2026-08-21 (a dead short and a 1.5-1.9 ohm igniter differ
+     * by 1-1.6 mV at 1 mA — unmeasurable), and the slot sat empty. Reusing it
+     * needs no wire-format change and is safe because strict firmware-version
+     * matching refuses to link any peer that is not this exact build, so no
+     * pre-v1.71 receiver can ever decode a value 3 from us. The old
+     * fold-a-stale-value-3-into-CONNECTED logic is deleted with the reuse. */
+    CONT_SUSPECT   = 3,
 } rlc_continuity_band_t;
 
 /* CONT_CONNECTED deliberately does NOT claim the igniter is good — only that
@@ -379,6 +390,7 @@ static inline const char *rlc_nack_reason_str(uint8_t reason)
         case NACK_COMM_DEGRADED:         return "COMM DEGRADED";
         case NACK_BASE_ERROR:             return "BASE IN ERROR";
         case NACK_BASE_BUSY:              return "BASE BUSY - RETRY";
+        case NACK_CONT_SUSPECT:           return "HIGH RESISTANCE";
         default:                          return "UNKNOWN ERROR";
     }
 }

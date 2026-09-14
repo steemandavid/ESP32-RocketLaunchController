@@ -118,7 +118,7 @@ static uint32_t band_colour(uint8_t band)
     switch (band) {
         case CONT_CONNECTED:     return RLC_COLOR_CONT_CONNECTED;
         case CONT_MARGINAL: return RLC_COLOR_CONT_MARGINAL;
-        case CONT_SHORT:    return RLC_COLOR_CONT_SHORT;
+        case CONT_SUSPECT:  return RLC_COLOR_CONT_SUSPECT;   /* FSD v1.71 */
         default:            return RLC_COLOR_CONT_OPEN;
     }
 }

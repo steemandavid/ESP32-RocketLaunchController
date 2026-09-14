@@ -479,7 +479,7 @@ static int test_integrity_crc(void)
 _Static_assert(CONT_OPEN == 0, "CONT_OPEN must be 0 (wire encoding)");
 _Static_assert(CONT_CONNECTED == 1, "CONT_CONNECTED must be 1 (wire encoding)");
 _Static_assert(CONT_MARGINAL == 2, "CONT_MARGINAL must be 2 (wire encoding)");
-_Static_assert(CONT_SHORT == 3, "CONT_SHORT must be 3 (wire encoding)");
+_Static_assert(CONT_SUSPECT == 3, "CONT_SUSPECT must be 3 (wire encoding)");
 
 /**
  * Classification tests call the PRODUCTION classifier
@@ -503,16 +503,21 @@ static int test_continuity_classification(void)
         { 260000,   CONT_CONNECTED }, /* Just under the boundary */
         { 261000,   CONT_MARGINAL }, /* At MARGINAL boundary (~67 ohm) */
         { 300000,   CONT_MARGINAL },
-        { 580000,   CONT_MARGINAL }, /* Still marginal, just under OPEN */
-        { 586000,   CONT_OPEN },     /* At OPEN boundary (~500 ohm) */
-        { 900000,   CONT_OPEN },
+        { 580000,   CONT_MARGINAL }, /* Still marginal, just under the cannot-fire region */
+        { 586000,   CONT_SUSPECT },  /* At the 500 ohm boundary — connected but bad joint (v1.71) */
+        { 700000,   CONT_SUSPECT },  /* ~640 ohm: a few hundred ohms of corrosion on an igniter */
+        { 900000,   CONT_SUSPECT },
+        { 927999,   CONT_SUSPECT },  /* Just under the SUSPECT/OPEN boundary */
+        { 928000,   CONT_OPEN },     /* At SUSPECT/OPEN boundary (~1.09 kOhm) */
+        { 950000,   CONT_OPEN },     /* Full scale — a saturated (true open) reading */
         { 3190000,  CONT_OPEN },     /* Open-circuit rest voltage */
     };
 
     /* Vectors are expressed against the config constants deliberately: they
      * caught the 2026-08-21 OPEN threshold move — and the 2026-08-23 sense
-     * resistor rebase — at boot rather than in the field. Keep them in step when the thresholds change. SHORT is absent
-     * because the band was merged into CONNECTED — see rlc_protocol.h. */
+     * resistor rebase — at boot rather than in the field. Keep them in step
+     * when the thresholds change. The v1.71 SUSPECT split added the
+     * 586–928 mV window and moved the OPEN boundary up with it. */
 
     const int count = sizeof(tests) / sizeof(tests[0]);
     for (int i = 0; i < count; i++) {
@@ -544,9 +549,10 @@ static int test_continuity_hysteresis(void)
 {
     int failures = 0;
 
-    /* Three bands since 2026-08-21 — the SHORT vectors that lived here were
-     * removed with the band itself (see rlc_protocol.h). What remains covers
-     * the two boundaries that are actually measurable. */
+    /* Four bands since v1.71 — the SHORT vectors that lived here were removed
+     * with the band itself (see rlc_protocol.h). What remains covers the three
+     * boundaries that are actually measurable, including the narrow
+     * SUSPECT/OPEN one whose OPEN side is pinned at full scale. */
 
     /* Test 1: CONNECTED just past MARGINAL — should hold within hysteresis */
     rlc_continuity_band_t band = CONT_CONNECTED;
@@ -575,24 +581,60 @@ static int test_continuity_hysteresis(void)
         failures++;
     }
 
-    /* Test 3: OPEN near the MARGINAL boundary — should hold within hysteresis */
-    band = CONT_OPEN;
+    /* Test 3: MARGINAL up into SUSPECT, and back down. The 500-ohm boundary
+     * (CONT_OPEN_UV) is the gate of the cannot-fire region, whichever band
+     * names it. Start from MARGINAL explicitly: the previous test ends in
+     * CONNECTED, from which a deep reading lands wherever the initial
+     * classifier says (correctly). */
+    band = CONT_MARGINAL;
+    band = test_classify_hysteresis(CONT_OPEN_UV + CONT_HYSTERESIS_OPEN_UV / 2, band);
+    if (band != CONT_MARGINAL) {
+        ESP_LOGE(TAG, "FAIL: hysteresis MARGINAL stability near SUSPECT — got %d, expected MARGINAL", band);
+        failures++;
+    }
+    band = test_classify_hysteresis(CONT_OPEN_UV + CONT_HYSTERESIS_OPEN_UV + 1, band);
+    if (band != CONT_SUSPECT) {
+        ESP_LOGE(TAG, "FAIL: hysteresis MARGINAL->SUSPECT — got %d, expected SUSPECT", band);
+        failures++;
+    }
     band = test_classify_hysteresis(CONT_OPEN_UV - CONT_HYSTERESIS_OPEN_UV / 2, band);
-    if (band != CONT_OPEN) {
-        ESP_LOGE(TAG, "FAIL: hysteresis OPEN stability — got %d, expected OPEN", band);
+    if (band != CONT_SUSPECT) {
+        ESP_LOGE(TAG, "FAIL: hysteresis SUSPECT stability near MARGINAL — got %d, expected SUSPECT", band);
         failures++;
     }
     band = test_classify_hysteresis(CONT_OPEN_UV - CONT_HYSTERESIS_OPEN_UV - 1, band);
     if (band != CONT_MARGINAL) {
-        ESP_LOGE(TAG, "FAIL: hysteresis OPEN->MARGINAL — got %d, expected MARGINAL", band);
+        ESP_LOGE(TAG, "FAIL: hysteresis SUSPECT->MARGINAL — got %d, expected MARGINAL", band);
         failures++;
     }
 
-    /* Test 4: a deprecated SHORT value from a pre-merge peer must fold into
-     * the current scheme rather than persisting. */
-    band = test_classify_hysteresis(1000, CONT_SHORT);
+    /* Test 4: SUSPECT/OPEN — the narrow boundary. A saturated reading (full
+     * scale, 950 mV) MUST cross into OPEN: this is the constraint that pins
+     * CONT_SUSPECT_UV + CONT_HYSTERESIS_SUSPECT_UV below full scale.
+     * Start from SUSPECT explicitly: from MARGINAL a near-saturated reading
+     * legitimately jumps straight to OPEN. */
+    band = CONT_SUSPECT;
+    band = test_classify_hysteresis(CONT_SUSPECT_UV + CONT_HYSTERESIS_SUSPECT_UV / 2, band);
+    if (band != CONT_SUSPECT) {
+        ESP_LOGE(TAG, "FAIL: hysteresis SUSPECT stability near OPEN — got %d, expected SUSPECT", band);
+        failures++;
+    }
+    band = test_classify_hysteresis(CONT_ADC_FULLSCALE_MV * 1000, band);
+    if (band != CONT_OPEN) {
+        ESP_LOGE(TAG, "FAIL: saturated reading must classify OPEN — got %d, expected OPEN", band);
+        failures++;
+    }
+    band = test_classify_hysteresis(CONT_SUSPECT_UV - CONT_HYSTERESIS_SUSPECT_UV - 1, band);
+    if (band != CONT_SUSPECT) {
+        ESP_LOGE(TAG, "FAIL: hysteresis OPEN->SUSPECT — got %d, expected SUSPECT", band);
+        failures++;
+    }
+
+    /* Test 5: a deep-fall from any band lands where the initial classifier
+     * says, not somewhere stale. */
+    band = test_classify_hysteresis(1000, CONT_SUSPECT);
     if (band != CONT_CONNECTED) {
-        ESP_LOGE(TAG, "FAIL: deprecated SHORT not folded — got %d, expected CONNECTED", band);
+        ESP_LOGE(TAG, "FAIL: SUSPECT deep-fall to CONNECTED — got %d, expected CONNECTED", band);
         failures++;
     }
 
@@ -614,12 +656,12 @@ static int test_continuity_bands_encoding(void)
      * ch1 in bits 1:0, ch2 in bits 3:2, ..., ch8 in bits 15:14 */
     rlc_continuity_band_t bands[8] = {
         CONT_CONNECTED,     /* ch1: 01 */
-        CONT_SHORT,    /* ch2: 11 */
+        CONT_SUSPECT,  /* ch2: 11 */
         CONT_OPEN,     /* ch3: 00 */
         CONT_MARGINAL, /* ch4: 10 */
         CONT_CONNECTED,     /* ch5: 01 */
         CONT_OPEN,     /* ch6: 00 */
-        CONT_SHORT,    /* ch7: 11 */
+        CONT_SUSPECT,  /* ch7: 11 */
         CONT_MARGINAL, /* ch8: 10 */
     };
 
@@ -632,12 +674,12 @@ static int test_continuity_bands_encoding(void)
      * Bits: 10_11_00_01_10_00_11_01 = 0xB24D */
     uint16_t expected = 0;
     expected |= (0x01UL << 0);   /* ch1: CONNECTED=1 */
-    expected |= (0x03UL << 2);   /* ch2: SHORT=3 */
+    expected |= (0x03UL << 2);   /* ch2: SUSPECT=3 */
     expected |= (0x00UL << 4);   /* ch3: OPEN=0 */
     expected |= (0x02UL << 6);   /* ch4: MARGINAL=2 */
     expected |= (0x01UL << 8);   /* ch5: CONNECTED=1 */
     expected |= (0x00UL << 10);  /* ch6: OPEN=0 */
-    expected |= (0x03UL << 12);  /* ch7: SHORT=3 */
+    expected |= (0x03UL << 12);  /* ch7: SUSPECT=3 */
     expected |= (0x02UL << 14);  /* ch8: MARGINAL=2 */
 
     if (packed != expected) {
@@ -665,13 +707,13 @@ static int test_continuity_bands_encoding(void)
         failures++;
     }
 
-    /* All SHORT should give 0xFFFF */
-    uint16_t all_short = 0;
+    /* All SUSPECT should give 0xFFFF (the retired SHORT slot, reused v1.71) */
+    uint16_t all_suspect = 0;
     for (int i = 0; i < 8; i++) {
-        all_short |= ((uint16_t)CONT_SHORT << (i * 2));
+        all_suspect |= ((uint16_t)CONT_SUSPECT << (i * 2));
     }
-    if (all_short != 0xFFFF) {
-        ESP_LOGE(TAG, "FAIL: all-SHORT should be 0xFFFF, got 0x%04X", all_short);
+    if (all_suspect != 0xFFFF) {
+        ESP_LOGE(TAG, "FAIL: all-SUSPECT should be 0xFFFF, got 0x%04X", all_suspect);
         failures++;
     }
 

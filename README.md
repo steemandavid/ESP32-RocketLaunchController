@@ -349,12 +349,16 @@ Known open items before any field use:
   `xTaskDelayUntil`. Diffing rather than per-field invalidation is deliberate: a
   missed invalidation leaves a stale pixel, and this screen shows ARMED. See
   `Test_Report_Phase4_Display.md` §6.
-- The continuity sense reports three bands — **CONNECTED**, **MARGINAL**,
-  **OPEN** — not four. A `SHORT` band was specified but proved unmeasurable at
+- The continuity sense reports four bands — **CONNECTED**, **MARGINAL**,
+  **SUSPECT**, **OPEN**. A `SHORT` band was specified but proved unmeasurable at
   the 1 mA test current: a dead short and a 1.5 Ω igniter differ by about a
   millivolt, which is the same size as the noise. The band is named CONNECTED
   rather than GOOD because it means only that current can flow, not that the
-  igniter is sound.
+  igniter is sound. `SUSPECT` (fw 1.2.20, FSD v1.71) split the old OPEN
+  territory: 500 Ω–1.09 kΩ is reported as "connected but unreasonably high
+  resistance" instead of "no igniter", and blocks arming like OPEN with its
+  own NACK (`0x10` HIGH RESISTANCE); OPEN is reserved for readings at/near
+  ADC saturation, where the resistance is not measurable at all.
 - The bug #18 firmware gate `FIRE_PROTECTED_CHANNEL_MASK` was widened from
   channel 1 only to **all eight channels** on 2026-08-23, once the protection BOM
   was complete everywhere: RC snubbers on all eight channel relays and the arm

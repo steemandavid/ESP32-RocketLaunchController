@@ -84,13 +84,13 @@ int main(void)
     /* ── T-L02: continuity map colours, per channel ── */
     printf("T-L02 continuity map colours\n");
     reset();
-    /* ch1=GOOD(01) ch2=MARGINAL(10) ch3=SHORT(11) ch4=OPEN(00), rest OPEN */
-    rlc_rgb_led_set_channel_bands(0x0000 | (CONT_CONNECTED<<0) | (CONT_MARGINAL<<2) | (CONT_SHORT<<4));
+    /* ch1=CONNECTED(01) ch2=MARGINAL(10) ch3=SUSPECT(11) ch4=OPEN(00), rest OPEN */
+    rlc_rgb_led_set_channel_bands(0x0000 | (CONT_CONNECTED<<0) | (CONT_MARGINAL<<2) | (CONT_SUSPECT<<4));
     at_ms(0);
     led_render_status(0);
-    expect_pix("ch1 GOOD -> darkgreen",  px(1), scaled(RLC_COLOR_CONT_CONNECTED, 100));
+    expect_pix("ch1 CONNECTED -> darkgreen",  px(1), scaled(RLC_COLOR_CONT_CONNECTED, 100));
     expect_pix("ch2 MARGINAL -> lightgreen", px(2), scaled(RLC_COLOR_CONT_MARGINAL, 100));
-    expect_pix("ch3 SHORT -> red",       px(3), scaled(RLC_COLOR_CONT_SHORT, 100));
+    expect_pix("ch3 SUSPECT -> orange",    px(3), scaled(RLC_COLOR_CONT_SUSPECT, 100));
     expect_pix("ch4 OPEN -> yellow",     px(4), scaled(RLC_COLOR_CONT_OPEN, 100));
     expect_pix("ch8 OPEN -> yellow",     px(8), scaled(RLC_COLOR_CONT_OPEN, 100));
 

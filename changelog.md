@@ -1,5 +1,112 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-14 — fourth continuity band CONT_SUSPECT (fw 1.2.19 → 1.2.20, FSD v1.71)
+
+Operator request, spec-first workflow: FSD updated and cross-checked, then
+implemented off the spec. Everything below is in **FSD v1.71** and
+**fw 1.2.20**; both units flashed and link-verified (rssi −25, 0 missed
+pings, both IDLE, all 12 boot self-test suites PASS on each).
+
+### What and why
+
+Before this version everything above ~500 Ω reported OPEN, so an igniter
+connected through badly corroded clips or a damaged lead read identically to
+*no igniter at all* — the operator got "NO CONTINUITY ON CH N" while staring
+at a physically connected igniter. The 0 dB ADC range measures up to
+~1.14 kΩ (950 mV full scale), so the old OPEN territory split at new
+**`CONT_SUSPECT_UV` = 928000 µV (~1.09 kΩ, raw ~4000)**:
+
+| Band | Range | Arming | NACK | Display | Siren |
+|---|---|---|---|---|---|
+| CONNECTED | < ~67 Ω | permitted | — | dark green ● | 1 blip |
+| MARGINAL | ~67–500 Ω | permitted (warning) | — | light green ▲ | 2 blips |
+| **SUSPECT** | **~500 Ω–1.09 kΩ** | **refused** | **`0x10` HIGH RESISTANCE** | **steady orange ◆** | **silent** |
+| OPEN | > ~1.09 kΩ / saturated | refused | `0x04` | yellow ○ | silent |
+
+Honest hardware limit (recorded in §5.4.2): above ~1.14 kΩ the reading
+saturates and SUSPECT is indistinguishable from absent. Widening the window
+would need attenuation, which collapses resolution where real igniters live —
+the band deliberately covers 500 Ω–1.09 kΩ only.
+
+### Key design decisions
+
+- **Enum value 3 — the retired SHORT slot — is repurposed.** No wire-format
+  change, no `protocol_version` bump; safe because strict firmware-version
+  matching means no pre-1.2.20 peer can ever be linked. The classifier's old
+  fold-a-stale-value-3-into-CONNECTED logic is deleted with the reuse.
+- **Disarm rule generalised** (§7.2.7): "any band that blocks arming
+  disarms" — OPEN and SUSPECT alike. The bug-#30 arm-verify re-check and the
+  50 ms level backstop both take SUSPECT, each with its own NACK.
+- **SUSPECT/OPEN hysteresis deliberately narrow** (±10 mV): a true open
+  reads exactly full scale (950 mV), so threshold + hysteresis (938 mV)
+  must stay below it — 12 mV of margin, pinned by a self-test vector
+  asserting a saturated reading classifies OPEN.
+- **Steady orange, ◆ diamond revived** (`0xFF8C00`, the colour SHORT
+  retired in 2026-08-21; glyph retired with the SHORT band). Steady, not
+  blinking — blinking means alarm. New `fill_diamond()` in rlc_display.c.
+- **Siren silent for SUSPECT**, like OPEN: silence already means "not
+  usefully connected", and the operator's next move is the same either way.
+- **Remote RM-07 latch accepts SUSPECT** alongside OPEN in all three
+  discrimination sites (base-ended-sequence latch, base-disarmed-under-
+  ARMED, base-left-PRE_FIRE/FIRING) → "CONTINUITY LOST - DISARMED".
+
+### Files touched
+
+- Spec: `RLC_Functional_Specification_v1_14.md` → v1.71 (glossary, §5.4.2,
+  §5.4.6, §6.3 field table, NACK table +0x10, §7.2.2 guard 2, §7.2.7,
+  §7.3.1, §9.2, state diagram, §10.2.0/§10.2.2/§10.2.4a, §12.1/§12.2,
+  §14.5, T-A09/T-A24/T-U10/T-U11/T-U12/T-L02, revision history)
+- `rlc_protocol.h`: `CONT_SUSPECT = 3`, `NACK_CONT_SUSPECT = 0x10`,
+  `rlc_nack_reason_str()` case "HIGH RESISTANCE"
+- `rlc_config.h`: `CONT_SUSPECT_UV`, `CONT_HYSTERESIS_SUSPECT_UV`,
+  `RLC_COLOR_CONT_SUSPECT` (SHORT colour define removed with the band)
+- `rlc_continuity_class.c/.h`: four-band initial + hysteresis classifier
+- `rlc_base_fsm.c`: arm guard 2 (both bands, distinct NACKs),
+  `armed_channel_went_open()` takes SUSPECT, bug-#30 entry re-check and
+  level backstop extended, chirp-gate comment (code already excluded
+  non-CONNECTED/MARGINAL)
+- `rlc_remote_fsm.c`: three RM-07 sites + log wording
+- `rlc_rgb_led.c`, `rlc_display.c/.h`: SUSPECT colour/label/glyph,
+  fire-complete "SUSPECT - CHECK" line
+- `rlc_selftest.c`: 17-point classification vectors, five-part hysteresis
+  suite, encoding test names value 3 as SUSPECT
+- `tests/host/test_strip.c` (T-L02), `tests/host/test_base_fsm.c`
+  (arm-refusal, arm-verify re-check, disarm event+backstop, chirp silence —
+  159 checks)
+- `rlc_version.h`: 1.2.20 with full rationale
+- Operator docs conformed: README band list, Operations Manual (band table,
+  fire-complete screen, arming table), Field Reference Card (band + sounds)
+
+### The boot self-test earned its keep
+
+First flash **halted fail-safe**: a new hysteresis vector started a check
+from the band the previous check ended in (CONNECTED) instead of MARGINAL,
+and from CONNECTED a 611 mV reading legitimately classifies SUSPECT. One
+line fixed (start from `CONT_MARGINAL` explicitly); exactly the
+production-code-at-boot divergence the Phase-2 M2 design exists to catch.
+
+### Verification
+
+- Host suite: all green (test_base_fsm 159, test_strip 30, both units).
+- Both units built, flashed via COM by-ids (`5B5E042156` base,
+  `5B5E043219` remote), reset-captured boot logs: 12/12 self-test suites
+  PASS each, LINK_ACK, both IDLE, display health OK.
+- Bench serial capture gotcha (worth remembering): opening the COM port
+  with pyserial defaults asserts DTR — the chip sits in download mode and
+  prints nothing. Hold `dtr=False, rts=True`, then drop `rts` to boot.
+
+### Outstanding
+
+- **T-A24 (new, §15.2)** — on-target SUSPECT band test: ~750 Ω load → ◆
+  orange + no blip + NACK 0x10 on ARM; swap a good channel's load to 750 Ω
+  while armed → disarm + SIREN_CONTINUITY_LOST; ~470 Ω reads MARGINAL,
+  ~1.5 kΩ reads OPEN. Procedure written into the FSD.
+- `rlc-hw-test-base` bench firmware still classifies with pre-v1.29
+  thresholds (66 mV/1500 mV, 12 dB, its own CONT_BAND_* enum) — two
+  threshold rebases stale and now missing SUSPECT. Left as-is (raw-µV
+  diagnostic); if it is ever refreshed, bring it onto the production
+  classifier rather than re-deriving thresholds a third time.
+
 ## 2026-09-14 — full-project code review RLC-REVIEW-ALL-010 + all findings fixed (fw 1.2.18 → 1.2.19)
 
 `/codereviewer` over the entire codebase — Phases 0–5 plus post-release

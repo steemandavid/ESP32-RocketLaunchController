@@ -346,10 +346,16 @@ static void t_arm_guards(void)
     post_cmd(EVT_CMD_ARM, 1);
     expect_nack("continuity OPEN -> NO_CONTINUITY", NACK_NO_CONTINUITY);
 
+    /* FSD v1.71: SUSPECT blocks arming like OPEN, but names the real fault. */
+    reset_world();
+    in.band[0] = CONT_SUSPECT;
+    post_cmd(EVT_CMD_ARM, 1);
+    expect_nack("continuity SUSPECT -> CONT_SUSPECT (v1.71)", NACK_CONT_SUSPECT);
+
     reset_world();
     in.band[0] = CONT_MARGINAL;
     arm_now(1);
-    expect_state("MARGINAL still arms (only OPEN blocks)", STATE_ARMED);
+    expect_state("MARGINAL still arms (only OPEN/SUSPECT block)", STATE_ARMED);
 
     /* T-U07: the battery *gating* behaviour, not just the sampling. */
     reset_world();
@@ -451,6 +457,17 @@ static void t_arm_verify_window(void)
     expect_state("bug #30: OPEN during verify refuses ARM", STATE_IDLE);
     expect_nack("bug #30 entry re-check -> NO_CONTINUITY", NACK_NO_CONTINUITY);
     expect("bug #30: relays safe", !hw.arm_relay_on);
+
+    /* Same re-check, SUSPECT flavour (FSD v1.71). */
+    reset_world();
+    in.arm_sense = false;
+    post_cmd(EVT_CMD_ARM, 1);
+    in.band[0] = CONT_SUSPECT;          /* edge lost — no event posted */
+    in.arm_sense = true;
+    post_bool(EVT_ARM_SENSE_CHANGED, true);
+    expect_state("bug #30: SUSPECT during verify refuses ARM", STATE_IDLE);
+    expect_nack("bug #30 entry re-check -> CONT_SUSPECT", NACK_CONT_SUSPECT);
+    expect("bug #30 (SUSPECT): relays safe", !hw.arm_relay_on);
 }
 
 /* FSD §7.2.7 (v1.35) + bug #30 backstop: armed channel OPEN disarms. */
@@ -466,6 +483,16 @@ static void t_continuity_loss_disarm(void)
     expect_state("ARMED + ch OPEN -> IDLE", STATE_IDLE);
     expect("relays safe", !hw.arm_relay_on);
     expect("BF-03: continuity-lost siren sounded", hw.siren_continuity_calls == 1);
+
+    /* SUSPECT disarms like OPEN (FSD v1.71): ~500 Ω–1.09 kΩ will not fire
+     * either, and "the joint degraded" is as urgent as "the igniter left". */
+    reset_world();
+    arm_now(1);
+    in.band[0] = CONT_SUSPECT;
+    post_cont(1, CONT_SUSPECT);
+    expect_state("ARMED + ch SUSPECT -> IDLE (v1.71)", STATE_IDLE);
+    expect("relays safe after SUSPECT disarm", !hw.arm_relay_on);
+    expect("SUSPECT disarm sounds the same siren", hw.siren_continuity_calls == 1);
 
     /* Only the ARMED channel counts */
     reset_world();
@@ -497,6 +524,13 @@ static void t_continuity_loss_disarm(void)
     check_timers();
     expect_state("bug #30 backstop disarms without an event", STATE_IDLE);
     expect("bug #30 backstop sounds the siren", hw.siren_continuity_calls == 1);
+
+    /* ...and the SUSPECT flavour of the same backstop (v1.71). */
+    reset_world();
+    arm_now(1);
+    in.band[0] = CONT_SUSPECT;          /* no event posted — edge lost */
+    check_timers();
+    expect_state("bug #30 backstop disarms on SUSPECT", STATE_IDLE);
 
     /* ...and is scoped OUT of FIRING, where the armed channel's sense line
      * reads OPEN by design (relay on NO). Aborting there would kill every
@@ -539,6 +573,10 @@ static void t_connect_chirp(void)
     reset_world();
     post_cont(2, CONT_OPEN);
     expect("OPEN never blips at all",
+           hw.siren_chirp_calls == 0 && hw.siren_marginal_calls == 0);
+    reset_world();
+    post_cont(2, CONT_SUSPECT);
+    expect("SUSPECT is silent too (v1.71) — not a connection made",
            hw.siren_chirp_calls == 0 && hw.siren_marginal_calls == 0);
 
     /* The loop the MARGINAL signal exists to close: hear two blips, re-seat
