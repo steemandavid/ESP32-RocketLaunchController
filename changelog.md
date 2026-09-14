@@ -75,9 +75,13 @@ stacks; §9.13 records the remote's encoder-before-ADC boot order.
 
 ### Verification & state
 
-Host tests 497 checks, 0 failures; both units build clean. **NOT FLASHED —
-only the remote's COM port was connected; per the strict version check,
-flash BOTH units together when the base board is back on the bus.**
+Host tests 497 checks, 0 failures; both units build clean. **Both units
+flashed and link-verified**: banners read v1.2.19 off each board
+(base 5B5E042156, remote 5B5E043219), self-tests PASS, LINK_REQUEST/ACK
+handshake completed, base `BOOT → IDLE (link established)`, remote
+`LINKING → IDLE`. Worth a live check when convenient: the two Major fixes
+sit in the ARM/FIRE ACK-wait path — the remote fault-injection build
+(`--inject`, key `d`) pressed during a long-press ARM exercises R-MAJ1.
 
 ## 2026-09-14 — boot splash: band grows to the top half, text overlaid on it (fw 1.2.11 → 1.2.18)
 
