@@ -7,7 +7,144 @@
 
 #pragma once
 
-/* 1.2.11 (2026-09-12): the splash band loops.
+/* 1.2.17 (2026-09-14): release of the splash band work. Frame-cost
+ * instrumentation removed; no functional change.
+ *
+ * The version moves for the usual reason — 1.2.16's binary carried a
+ * per-frame timing log and this one does not, and a changed binary sharing a
+ * version number is precisely what the strict check exists to prevent.
+ *
+ * Measured on target at 480x160 / 40 MHz / 5 Hz, for anyone sizing this
+ * again: 73 ms average frame, 120 ms on the frames where the clip advances,
+ * against a 100 ms period. The costly part is flush() — at 20 MHz it was
+ * 99 ms for a 480x128 band, of which 74 ms was the transfer itself and the
+ * rest per-row memcmp, bounce copy and shadow update. Decode is ~12 ms and
+ * the blit ~9 ms; neither ever mattered. The band advances at 5 Hz so the
+ * frames between cost almost nothing, which is what the early-outs in
+ * draw_splash_band() and draw_splash_titles() are for.
+ *
+ * 1.2.16 (2026-09-14): splash title goes to one line, clearing the middle of
+ * the band almost entirely.
+ *
+ * Remote-only, display. "ESP32 WIRELESS ROCKET" / "LAUNCH CONTROLLER" over
+ * two lines at scale 3 becomes "ROCKET LAUNCH CONTROLLER" on one. NOTE THAT
+ * THIS DROPS "ESP32 WIRELESS" FROM THE BOOT SCREEN — an operator-requested
+ * change to the product name as displayed, not a typo, and §10.2.1's screen
+ * mockups are updated with it. The firmware-mismatch screen already read
+ * "ROCKET LAUNCH CONTROLLER", so the two now agree.
+ *
+ * Losing the second line lets the top scrim shrink 80 -> 56 rows, so between
+ * them roughly 50 rows of clear, full-strength picture are returned to the
+ * middle of the band: the boosters descend through open sky for the whole
+ * clip instead of passing behind a title block, and only the touchdown's
+ * foreground stays dimmed.
+ *
+ * 432 px of 480 at scale 3 leaves 24 px of margin each side, 22 with the
+ * glyph outline. There is no room for a longer title, and a _Static_assert
+ * now says so rather than letting one run off both edges.
+ *
+ * Asset must be rebuilt: the top scrim is baked in at 56 rows. As in 1.2.15
+ * the validator will NOT catch a stale one — dimensions are unchanged.
+ *
+ * 1.2.15 (2026-09-14): club credit moves to the foot of the band, clearing
+ * the middle of the picture for the landing.
+ *
+ * Remote-only, display. Operator-reported against 1.2.14: the boosters were
+ * touching down behind the credit line at y 70, and the rows below the smoke
+ * were ground and trees carrying nothing.
+ *
+ * The credit now sits at VBAND_CREDIT_Y (the foot of the band) with its own
+ * bottom scrim, the top scrim shrinks to the two title lines it actually
+ * covers (104 -> 80 rows), and rows ~80..119 are left both text-free and
+ * full strength. That middle band is now where a cut SHOULD place the
+ * touchdown, and the asset was re-framed (--track-bias-y -0.08) to do so —
+ * which also drops the excess foreground, the rest of it being dimmed by the
+ * new bottom scrim rather than competing with the smoke.
+ *
+ * Static asserts tie the credit to the scrim that carries it; both derive
+ * from VBAND_H, which has moved three times in four revisions.
+ *
+ * Asset must be rebuilt: the scrim is baked in, so a 1.2.14 asset has the
+ * wrong one. Dimensions are unchanged, so the validator will NOT catch this
+ * — it plays, with a dark stripe across the middle and an unprotected credit.
+ *
+ * 1.2.14 (2026-09-14): the band becomes the top half, 480x160, at 5 Hz.
+ *
+ * Remote-only, display. Depends on the 40 MHz clock trialled in 1.2.13 and
+ * confirmed good on the panel: 480x160 is 92 ms of transfer at 20 MHz and 46
+ * at 40, and the frame budget is 100 ms. If the clock is reverted this must
+ * go back to 480x128.
+ *
+ * The asset must be rebuilt at 480x160 — splash_video_validate() rejects the
+ * 480x128 one on dimensions, degrading to the plain dark band.
+ *
+ * 1.2.13 (2026-09-14): SPI clock 20 -> 40 MHz, ON TRIAL. Remote-only.
+ *
+ * A deliberate single-variable experiment, nothing else changed. The 1.2.12
+ * attempt at this proved nothing — it shipped with a CS-pin bug that whited
+ * out the panel for reasons unrelated to the clock — so this is the clean
+ * re-run. See DISPLAY_SPI_CLOCK_HZ in rlc_config.h for what it buys and how
+ * to judge it (by looking at the panel, never by the boot log).
+ *
+ * Revert to 20000000 if the panel shows tearing, colour noise or shifted
+ * rows; the band then stays 480x128 at 5 Hz, which is verified good.
+ *
+ * 1.2.12 (2026-09-14): the splash band grows to 480x128 across the top of the
+ * panel and the title block is drawn on top of it.
+ *
+ * Remote-only, display. No protocol change, but the version moves because the
+ * binary did. Flash both units.
+ *
+ * THE TOP HALF WAS THE INTENT AND IS NOT REACHABLE AT 20 MHz. The panel is
+ * 18-bit-only over SPI, so the band is bounded by the wire: 480x160 costs
+ * 92 ms of a 100 ms frame period. 480x128 (74 ms) is the largest that fits
+ * with room for decode, the scrim and the fields below it.
+ *
+ * A 40 MHz clock would have carried 480x160 at 46 ms. It was attempted and
+ * withdrawn WITHOUT A VERDICT, and that is worth reading before anyone tries
+ * again. The clock change shipped alongside a second spi_bus_add_device()
+ * handle meant to give register reads a slower clock, with both devices
+ * configured on the same CS pin. ESP-IDF routes each device's own hardware CS
+ * signal to the requested pin, so the second device stole the CS pin from the
+ * first; every write ran with CS unasserted, the panel ignored its entire init
+ * sequence, and it sat backlit and unconfigured — solid white — while reads on
+ * the second handle worked perfectly and reported a healthy, correctly
+ * identified panel. The logs looked clean because the only path still working
+ * was the one being logged.
+ *
+ * Two rules came out of that, both now in the code: the display uses exactly
+ * ONE SPI device handle, and a clock change is judged by LOOKING AT THE PANEL,
+ * never by the boot log — register reads are far more clock-tolerant than the
+ * write path, so a correct ID read-back says nothing about whether the panel
+ * is being driven.
+ *
+ * THE ASSET MUST BE REBUILT. The band is 480x128, not 480x80.
+ * splash_video_validate() checks the dimensions and rejects a mismatch, so
+ * the shipped assets/splash_falconheavy.bin will no longer play — it
+ * degrades to the plain dark band, as every other asset failure does, and the
+ * remote boots normally. Re-cut it with tools/mkvideoband.py; the old recipe
+ * does not transfer, because a 3.75:1 window holds ~1.6x the frame height at
+ * the same zoom. See assets/README.md.
+ *
+ * THE TITLE BLOCK MOVED INTO THE PER-FRAME PATH. It is drawn on the band now,
+ * so the band blit would erase it if it were still painted once in
+ * draw_splash_static(). It costs nothing on the wire — those rows ship every
+ * frame regardless — and the glyphs are outlined, over a ramped scrim that
+ * darkens the band's top ~104 rows, because white-on-footage is a different
+ * problem from white-on-black and the 0x9A grading cap alone cannot carry it.
+ * The grading is deliberately NOT lowered further: that would cost the
+ * picture everywhere to fix a problem confined to the top third.
+ *
+ * The 1.2.10 requirement that the band keep 15 blank rows above and below is
+ * partly retired. There is no text above the band any more to butt against.
+ * The lower gap survives as the 68 blank rows between the band (ending y=127)
+ * and the headline (y=196). The fault-injection banner is still keyed off the
+ * band geometry but now occupies the band's rows *below* the title block, with
+ * static asserts that its text still fits — VBAND_H moved twice in this one
+ * revision and a banner with its second line clipped is the last thing that
+ * screen should be.
+ *
+ * 1.2.11 (2026-09-12): the splash band loops.
  *
  * 1.2.9 deliberately held the last frame instead, reasoning that an unlinked
  * remote sits on this screen indefinitely and a landing clip restarting
@@ -1257,5 +1394,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  11
-#define RLC_VERSION_STRING "1.2.11"
+#define RLC_VERSION_PATCH  17
+#define RLC_VERSION_STRING "1.2.17"

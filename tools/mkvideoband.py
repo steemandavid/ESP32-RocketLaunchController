@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build an RLCV splash video band for the RLC remote.
 
-Turns any video the host can decode into the 480x80 JPEG frame sequence the
+Turns any video the host can decode into the 480x160 JPEG frame sequence the
 remote's boot splash plays from its `splash` partition.
 
     tools/mkvideoband.py boosters.mp4 -o splash.bin --track --zoom 1.2 --zoom-end 1.7
@@ -14,11 +14,28 @@ controller, and the text has to win. Every frame is desaturated, darkened and
 then hard-capped so no channel exceeds --cap (default 0x9A), the same bound the
 firmware documents. Footage that looks good on a monitor will scream here.
 
-FRAMING. The band is 6:1 and keeps only ~30% of a 16:9 frame's height at
---zoom 1, so a rocket landing — a tall subject moving a long way down the
-frame, shot by a camera that pans and zooms to follow it — will not sit still
-in a fixed crop. --track follows the subject automatically; see tracking notes
-below.
+FRAMING. The band is 3:1 and keeps ~59% of a 16:9 frame's height at --zoom 1,
+so a rocket landing — a tall subject moving a long way down the frame, shot by
+a camera that pans and zooms to follow it — will not sit still in a fixed crop.
+--track follows the subject automatically; see tracking notes below.
+
+RE-TUNE AFTER THE 6:1 -> 3.75:1 CHANGE. Recipes written for the old 480x80
+band do not transfer. A 3.75:1 window holds ~1.6x the frame height at the same
+zoom, so the aggressive push-in the 6:1 strip needed (--zoom-end 2.6) now
+overshoots, and --track-bias-y, which existed to buy headroom a 6:1 letterbox
+could not spare, wants to be near zero. Start wider and check with --preview.
+
+OVERLAY. Since 1.2.12 the title block is drawn ON this band, not above it. The
+text is carried by ramped scrims baked in here — over the band's top rows for
+the two title lines (--scrim-h/--scrim-keep) and over its bottom rows for the
+club credit (--scrim-bot-h/--scrim-bot-keep), all four of which MUST match the
+firmware's VBAND_SCRIM_* — plus glyph outlines drawn by the firmware — so the --cap grading below stays as
+it is and SHOULD NOT be lowered further to "help". Grading the whole clip down
+to suit its worst frame costs the picture everywhere to fix a problem confined
+to the top third, which is the trade the scrim exists to avoid. What the
+footage does owe the layout is quieter composition in its top third: the
+MIDDLE of the band is clear of text and full strength (rows ~56-119),
+and that is where the subject should land.
 
 Needs PyAV or OpenCV to decode, Pillow for the rest, and NumPy + OpenCV for
 --track.
@@ -38,31 +55,54 @@ MAGIC = b"RLCV"
 FORMAT = 1
 HDR = 16
 
+# 1.2.14: the band is the top half of the panel, 480x160 (3:1). It went
+# 480x80 (6:1) -> 480x128 (3.75:1) -> here as the SPI clock and the frame
+# budget allowed; 160 rows needs the 40 MHz clock (FSD 10.2.1). The firmware validates these
+# against its own VBAND_W/VBAND_H and rejects a mismatched asset outright —
+# cleanly, falling back to a plain dark band — so an asset built by an older
+# copy of this tool will simply not play. Rebuild it, do not force it.
 BAND_W = 480
-BAND_H = 80
-BAND_ASPECT = BAND_W / BAND_H      # 6:1
+BAND_H = 160
+BAND_ASPECT = BAND_W / BAND_H      # 3:1
 
 ANALYSIS_W, ANALYSIS_H = 960, 540  # tracking works on a downscale; plenty
 
 
 # ── source decoding ────────────────────────────────────────────────
 
-def frames_pyav(path):
+def frames_pyav(path, start=0.0):
+    """Decode from `start`, seeking rather than grinding through the head.
+
+    This is worth its few lines. Every run is two full passes (track, then
+    crop), and without a seek both begin at t=0 — so cutting ten seconds from
+    222 s into a 4K source meant decoding 7.4 minutes of video to use ten
+    seconds of it, twice, at about six minutes a run. That is slow enough to
+    stop you iterating on framing, which is the one thing this tool exists to
+    let you do.
+
+    Seek lands on a keyframe at or before the target, so back up two seconds
+    and let the caller's own `t < start` test discard the run-in. The offset
+    is in AV_TIME_BASE units (microseconds) because no stream is passed.
+    """
     import av
     with av.open(path) as container:
         stream = container.streams.video[0]
         stream.thread_type = "AUTO"
+        if start > 0:
+            container.seek(int(max(0.0, start - 2.0) * 1_000_000))
         for frame in container.decode(stream):
             yield frame.to_image(), float(frame.time or 0.0)
 
 
-def frames_cv2(path):
+def frames_cv2(path, start=0.0):
     import cv2
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         sys.exit(f"cannot open {path}")
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    i = 0
+    if start > 0:
+        cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, start - 2.0) * 1000.0)
+    i = int(max(0.0, start - 2.0) * fps)
     while True:
         ok, bgr = cap.read()
         if not ok:
@@ -72,15 +112,15 @@ def frames_cv2(path):
     cap.release()
 
 
-def source_frames(path):
+def source_frames(path, start=0.0):
     try:
         import av  # noqa: F401
-        return frames_pyav(path)
+        return frames_pyav(path, start)
     except ImportError:
         pass
     try:
         import cv2  # noqa: F401
-        return frames_cv2(path)
+        return frames_cv2(path, start)
     except ImportError:
         sys.exit("needs PyAV or OpenCV:  pip install av   (or opencv-python)")
 
@@ -93,7 +133,7 @@ def selected_frames(path, start, step, want):
     far cheaper than that.
     """
     nxt, taken = start, 0
-    for img, t in source_frames(path):
+    for img, t in source_frames(path, start):
         if t < start or t + 1e-6 < nxt:
             continue
         yield taken, img
@@ -244,7 +284,7 @@ def zoom_at(progress, start, peak, settle, final):
 
 
 def crop_band(img, cx, cy, zoom, bias_y=0.0):
-    """Cut a 6:1 window of width (source width / zoom) centred on (cx, cy),
+    """Cut a BAND_ASPECT (3:1) window of width (source width / zoom) centred on (cx, cy),
     clamped inside the frame, and resize it to the band.
 
     `bias_y` shifts the window as a fraction of its own height — negative is
@@ -261,6 +301,56 @@ def crop_band(img, cx, cy, zoom, bias_y=0.0):
     y = min(sh - ch, max(0, cy * sh - ch / 2 + bias_y * ch))
     box = (int(round(x)), int(round(y)), int(round(x + cw)), int(round(y + ch)))
     return img.crop(box).resize((BAND_W, BAND_H), Image.LANCZOS)
+
+
+def scrim_bottom(img, bot_h, keep_bot):
+    """Mirror of scrim() at the foot of the band.
+
+    Exists because the club credit moved from under the top scrim to the
+    bottom of the band (fw 1.2.15), which is what clears the middle of the
+    picture for the landing itself. Same ramp, inverted: full strength at the
+    top of the region, down to keep_bot/256 on the last row.
+    """
+    if bot_h <= 1:
+        return img
+    px = img.load()
+    w, h = img.size
+    y0 = max(0, h - bot_h)
+    span = (h - 1) - y0
+    if span <= 0:
+        return img
+    for y in range(y0, h):
+        keep = 256 - ((256 - keep_bot) * (y - y0)) // span
+        for x in range(w):
+            r, g, b = px[x, y]
+            px[x, y] = ((r * keep) >> 8, (g * keep) >> 8, (b * keep) >> 8)
+    return img
+
+
+def scrim(img, scrim_h, keep_top):
+    """Darken the band's top rows on a ramp, for the title block drawn over
+    them by the firmware.
+
+    BAKED IN HERE, NOT DONE ON THE REMOTE. Firmware 1.2.12 first applied this
+    per frame in the framebuffer and it cost far too much: ~150 KB of
+    byte-wise read-modify-write in PSRAM, every frame, inside a display task
+    that had 100 ms for everything. Here it is free — it happens once, on a
+    host, before the JPEG is even encoded.
+
+    The maths is the firmware's, integer for integer, so the look does not
+    shift between the two: `keep` rises linearly from keep_top/256 at row 0 to
+    256/256 at row scrim_h-1, and each channel becomes (c * keep) >> 8.
+    """
+    if scrim_h <= 1:
+        return img
+    px = img.load()
+    w, h = img.size
+    for y in range(min(scrim_h, h)):
+        keep = keep_top + ((256 - keep_top) * y) // (scrim_h - 1)
+        for x in range(w):
+            r, g, b = px[x, y]
+            px[x, y] = ((r * keep) >> 8, (g * keep) >> 8, (b * keep) >> 8)
+    return img
 
 
 def grade(img, saturation, brightness, contrast, cap):
@@ -321,6 +411,24 @@ def main():
     ap.add_argument("--anchor-end", type=float, default=None)
     ap.add_argument("--anchor-settle", type=float, default=0.65)
 
+    ap.add_argument("--scrim-h", type=int, default=56,
+                    help="rows of ramped darkening at the top of the band, "
+                         "under the firmware's title line. MUST match the "
+                         "firmware's VBAND_SCRIM_H (default: 56); 0 disables")
+    ap.add_argument("--scrim-keep", type=int, default=56,
+                    help="fraction of 256 of the original pixel surviving at "
+                         "row 0, ramping to 256 by --scrim-h. MUST match the "
+                         "firmware's VBAND_SCRIM_KEEP (default: 56 = 22%%)")
+
+    ap.add_argument("--scrim-bot-h", type=int, default=40,
+                    help="rows of ramped darkening at the BOTTOM of the band, "
+                         "under the club credit. MUST match the firmware's "
+                         "VBAND_SCRIM_BOT_H (default: 40); 0 disables")
+    ap.add_argument("--scrim-bot-keep", type=int, default=72,
+                    help="fraction of 256 surviving on the last row, ramping "
+                         "up to 256 at the top of that region. MUST match the "
+                         "firmware's VBAND_SCRIM_BOT_KEEP (default: 72)")
+
     ap.add_argument("--limit", type=int, default=2 * 1024 * 1024)
     ap.add_argument("--preview", metavar="PNG")
     args = ap.parse_args()
@@ -354,9 +462,12 @@ def main():
         else:
             cx = 0.5
             cy = ease_to(prog, args.anchor, args.anchor_end, args.anchor_settle)
-        frames.append(grade(crop_band(img, cx, cy, zoom, args.track_bias_y),
-                            args.saturation, args.brightness, args.contrast,
-                            args.cap))
+        frames.append(scrim_bottom(
+            scrim(grade(crop_band(img, cx, cy, zoom, args.track_bias_y),
+                        args.saturation, args.brightness, args.contrast,
+                        args.cap),
+                  args.scrim_h, args.scrim_keep),
+            args.scrim_bot_h, args.scrim_bot_keep))
 
     if not frames:
         sys.exit("no frames taken — check --start against the clip length")

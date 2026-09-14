@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.66
-**Date:** 2026-09-12
+**Version:** 1.68
+**Date:** 2026-09-14
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -80,6 +80,8 @@
 | 1.64 | 2026-09-12 | **§10.2.1 boot splash: procedural scene replaced by a video band; firmware 1.2.8 → 1.2.9.** v1.63's drawn boosters were rejected on appearance and their code is removed entirely. The splash now plays a letterboxed **480x80 JPEG frame sequence at 10 Hz** (`y 112..191`) from a new `splash` flash partition. The remote leaves `CONFIG_PARTITION_TABLE_SINGLE_APP` for `partitions_remote.csv` (3 MB factory + 2 MB `splash`, memory-mapped, no filesystem); **the base keeps the single-app table**, being out of scope. The asset is deliberately not embedded in the binary, so footage can be reflashed without touching the image that runs the fire path — `./build_remote.sh flash` now writes bootloader + partition table + app, and `./build_remote.sh splash <file>` writes the asset alone. New `tools/mkvideoband.py` builds the container and performs the mandatory grading (desaturate, darken, hard-cap every channel at `0x9A`) so the title text keeps its contrast. Every failure path — missing partition, missing, blank or corrupt asset, wrong dimensions, undecodable frame — degrades to a plain dark band and a normally-booting remote; the container is validated whole at init. The clip holds on its last frame rather than looping, because an unlinked remote sits on this screen indefinitely. Restated unchanged: full-panel playback remains impossible at 184 ms/frame against a 100 ms period, and SHALL NOT be attempted. |
 | 1.65 | 2026-09-12 | **§10.2.1 splash layout and cut corrections; firmware 1.2.9 → 1.2.10.** Three operator-reported fixes, all cosmetic. **(1)** The v1.64 cut missed the landing: its crop pan settled *after* touchdown, putting the pads on the band's bottom edge so the boosters descended out of the strip instead of landing in it. Re-cut with the pan settling on the touchdown itself; §10.2.1 now records why this is fiddly (the source camera tracks, so the ground line moves from ~63-65% of frame height to ~55% during the landing) so the next re-cut does not rediscover it. **(2)** The band now SHALL keep 15 blank rows above and below it — butted straight against the credit and the status line, it read as a rendering fault rather than a frame. **(3)** The version string leaves its own row for the copyright line (`(C) 2026 David Steeman  v<version>`), which is what pays for those margins; it SHALL stay on the boot screen in some form, because the strict version check makes the running firmware something an operator must be able to read without a serial cable. The fault-injection banner is keyed off the band geometry instead of its own literals, so it keeps occupying exactly the band's rows if the band moves again. |
 | 1.66 | 2026-09-12 | **§10.2.1 splash band loops; tracking and zoom reworked; firmware 1.2.10 → 1.2.11.** **(1)** The clip now loops instead of holding its last frame, by operator preference. The spec records what that costs — a held frame was free (decode skipped, identical pixels rejected by §10.3's memcmp), a loop is a decode plus ~46 ms of band over SPI every 100 ms for as long as an unlinked remote is powered — and adds a requirement that a looping asset end at roughly its opening framing so the wrap does not pop. **(2)** Subject tracking now selects the **bounding-box centre** of the bright blobs rather than their area-weighted centroid: the two agree for symmetrical plumes but diverge badly for a smoke column, where the centroid is dragged into the dense base, sitting the crop low, filling its lower half with ground and cutting the top off the billow — exactly the defect reported against v1.65. **(3)** Tracking gains a **search window**: after first lock only blobs near the current position are considered, which is what lets it keep tracking thinning smoke instead of jumping to sunlit roads near the horizon, and replaces the cruder area-floor hold. **(4)** The zoom becomes a three-point move — wide, in to the touchdown, back out as the smoke column grows past any tight framing — which also leaves the clip ending near its opening width for the loop. |
+| 1.67 | 2026-09-14 | *(superseded within the same day by v1.68 — see that row. Recorded the first, withdrawn attempt at the 480x160 band and the 40 MHz clock.)* |
+| 1.68 | 2026-09-14 | **§10.2.1 boot splash band enlarged to the top half with the title and credit overlaid on it; `DISPLAY_SPI_CLOCK_HZ` raised to 40 MHz; firmware 1.2.11 → 1.2.17.** **(1) Geometry.** The band goes from a 480x80 strip at `y 112` to **480x160 edge to edge at `y 0..159`**, in three steps as the frame budget allowed (480x128 at 20 MHz, then 480x160 once the clock was raised). The title moves onto the band as a **single line, `ROCKET LAUNCH CONTROLLER`** — dropping "ESP32 WIRELESS" from the boot screen, an operator-requested change to the displayed product name that also brings the splash into agreement with the firmware-mismatch screen — and the club credit moves to the foot of the band. Rows **56..119 are left text-free and full strength**, and the spec now requires a cut to place the touchdown there; the shipped asset is re-framed (`--track-bias-y -0.08`) to do so. A `_Static_assert` rejects a title too wide for the panel, and two more tie the credit to the scrim that carries it. **(2) Text over footage.** White-on-footage is not white-on-black, and the `0x9A` grading cap alone cannot carry it. Two ramped scrims (top rows for the title, bottom rows for the credit) plus an eight-neighbour glyph outline; the grading cap SHALL NOT be lowered to compensate. The scrims are **baked into the asset** — they ran per-frame in the framebuffer for one revision at ~14 ms/frame of PSRAM read-modify-write — making the firmware's `VBAND_SCRIM_*` a contract with `mkvideoband.py`. **This is the one asset mismatch that does not fail safe:** the validator checks dimensions, not scrim geometry. **(3) The budget is CPU, not just wire.** Measured: `flush()` 99 ms for 480x128 at 20 MHz (74 ms transfer, the rest per-row `memcmp`, bounce copy and shadow update), decode 12 ms, blit 9 ms. The asset rate is **5 Hz**, below the display rate, with early-outs so frames on which the clip has not advanced cost almost nothing — 73 ms average, ~120 ms when it advances. 10 Hz would overrun every frame for ~7 Hz in practice at ~86% of core 1. **(4) A latent starvation bug, found by a reboot loop.** `xTaskDelayUntil()` returns `pdFALSE` without blocking when its deadline has passed, and re-basing to now leaves the next frame to overrun identically — so a *consistently* slow frame degenerates into a loop that never yields, `display_task` (prio 2) starves `buzzer_task` (prio 1) on core 1, and the remote rebooted on the 5 s task watchdog ~6 s into every boot. `display_task` now yields `DISPLAY_FRAME_MIN_YIELD_MS` after any overrun, bounding its share of the core regardless of frame cost. **(5) The 40 MHz clock, and a cautionary tale.** 20 MHz is the ILI9488 write-cycle limit; the fitted clone sustains 40 MHz, verified by looking at the panel after a clean single-variable change. A first attempt was withdrawn having proved nothing: it shipped with a second `spi_bus_add_device()` handle sharing the same `spics_io_num`, which **stole the CS pin from the first device** — every write ran with CS unasserted, the panel ignored its init sequence and sat white, while reads on the second handle reported a healthy, correctly-identified panel. Hence two standing rules: the display SHALL use exactly one SPI device handle, and a clock change SHALL be judged by looking at the panel, never by the boot log. **(6) OPEN DEFECT:** panel-ID read-back is unreliable at 40 MHz (`0x3F603B80` vs `0x2A403300`) and *stably* so, meaning `display_health_check()` passes on consistently wrong data and is blind on a unit that fires igniters. To be fixed before operational use by driving CS manually on the single handle and clocking reads below 10 MHz. **(7) Tooling.** `mkvideoband.py` now seeks to `--start` instead of decoding from t=0 (a run over the 4K source went from ~6 min to ~30 s, which is what made framing iteration possible at all) and bakes both scrims; new `tools/rlcv_repack.py` re-times a band losslessly, because sampling at 5 Hz re-tracks rather than re-times. Display-only throughout; no protocol change. |
 
 ## Table of Contents
 
@@ -2660,8 +2662,9 @@ The display shall support the following screens, determined by the remote FSM st
 ```
 ┌──────────────────────────────────────────────────┐
 │                                                  │
-│         ESP32 WIRELESS ROCKET LAUNCH             │
-│              CONTROLLER  v1.0.0                  │
+│           ROCKET LAUNCH CONTROLLER               │
+│        [ video band — Falcon Heavy landing ]     │
+│           VRO - VLAAMSE RAKET ORGANISATIE        │
 │                                                  │
 │              Connecting to base...               │
 │              Attempt 3                           │
@@ -2676,8 +2679,7 @@ If a firmware version mismatch is detected:
 ```
 ┌──────────────────────────────────────────────────┐
 │                                                  │
-│         ESP32 WIRELESS ROCKET LAUNCH             │
-│              CONTROLLER  v1.0.0                  │
+│           ROCKET LAUNCH CONTROLLER               │
 │                                                  │
 │          ⚠  FIRMWARE MISMATCH  ⚠                 │
 │                                                  │
@@ -2732,36 +2734,158 @@ already alarming.
 continuously irrespective of transmit cadence; the change is a correctness fix
 against this specification, not a battery measure.
 
-**Boot video band (v1.64, firmware 1.2.9; layout revised v1.65, firmware
-1.2.10).** The splash SHALL carry a letterboxed **480x80 video band at
-`y 101..180`** playing a JPEG frame sequence at 10 Hz from the remote's
-`splash` flash partition. The static header sits above it (title `y 10` /
-`y 38`, club credit `y 70`); the dynamic fields are unmoved — headline
-`y 196`, attempt `y 228`, progress bar `y 262`, copyright `y DH-26`.
+**Boot video band (v1.64, firmware 1.2.9; geometry and overlay settled v1.68,
+firmware 1.2.17).** The splash SHALL carry a **480x160 video band occupying the
+top half of the panel, `y 0..159`, edge to edge**, playing a JPEG frame
+sequence at **5 Hz** from the remote's `splash` flash partition. The title and
+club credit are drawn **on** the band; the dynamic fields below it are unmoved
+— headline `y 196`, attempt `y 228`, progress bar `y 262`, copyright `y DH-26`.
 
-**The band SHALL keep a clear margin above and below it** — 15 blank rows on
-each side, between the credit (ending `y 85`) and the headline (starting
-`y 196`). A photograph butted straight against the text either side of it
-reads as a rendering fault rather than a frame. Both gaps are load-bearing:
-anything that moves the header, the band or the headline must preserve them.
+The band reached this size in three steps as the budget allowed: 480x80 at
+`y 112` (1.2.9), 480x128 at `y 0` (1.2.12), 480x160 (1.2.14, requiring the
+40 MHz clock).
 
-**The version string SHALL appear on the copyright line**, not on a row of its
-own — `(C) 2026 David Steeman  v<version>` at `y DH-26`. Freeing that row is
-what pays for the band's margins. It SHALL remain on the boot screen in some
-form: the strict version check makes "which firmware is this unit running" a
-question an operator must be able to answer without a serial cable, and the
-firmware-mismatch screen that would otherwise report it is only reachable once
-a base answers.
+**Layout — the middle of the band SHALL stay clear.**
 
-This replaces v1.63's procedurally-drawn scene, which was rejected on its
-appearance. All of its drawing code is removed.
+| Rows | Contents |
+|---|---|
+| 0..55 | title `ROCKET LAUNCH CONTROLLER` at `y 10`, scale 3, under the top scrim |
+| **56..119** | **text-free, full strength — where a cut SHALL place the touchdown** |
+| 120..159 | club credit `VRO - VLAAMSE RAKET ORGANISATIE` at `y 138`, scale 2, under the bottom scrim |
 
-*The band SHALL NOT be widened to the full panel.* The ILI9488 is 18-bit-only
-over SPI, so a full 480x320 frame is 460,800 B — 184 ms at
-`DISPLAY_SPI_CLOCK_HZ`, against a 100 ms frame period. Full-panel playback is
-not slow, it is impossible, and it would saturate the panel for exactly the
-window the link handshake runs in. The band is 115,200 B = 46 ms. Decode cost
-and flash space are not the constraint; the wire is.
+The title is **one line** since v1.68 — it read `ESP32 WIRELESS ROCKET` /
+`LAUNCH CONTROLLER` over two lines through 1.2.15. This drops "ESP32 WIRELESS"
+from the boot screen, an operator-requested change to the displayed product
+name, and brings the splash into agreement with the firmware-mismatch screen,
+which already read `ROCKET LAUNCH CONTROLLER`. At scale 3 it is 432 px of 480;
+a `_Static_assert` rejects a title that would not fit.
+
+Losing the second line, and shortening the top scrim from 104 to 56 rows to
+match, returned ~50 rows of clear picture to the middle: the boosters descend
+through open sky for the whole clip instead of passing behind the title block,
+and only the touchdown's surplus foreground stays dimmed.
+
+**The title block SHALL be drawn after the band, every frame it is disturbed.**
+It sits on the band, so a band blit erases it. It SHALL NOT be redrawn on
+frames where nothing disturbed it: nine outlined passes is a few thousand
+`fill_rect()` calls and drags the dirty box across the whole band for
+`flush()` to re-compare. The same applies to the band itself — a frame on
+which the clip has not advanced SHALL NOT be repainted. These two early-outs
+are what make an asset rate below the display rate worth anything.
+
+**The text SHALL be carried by scrims and glyph outlines, not by further
+grading.** White-on-footage is a different problem from white-on-black: the
+`0x9A` cap bounds the clip but a plume still arrives as a near-white field
+behind white glyphs. Two ramps — top rows from ~22% surviving at `y 0` to full
+strength by `y 56`, bottom rows from full strength at `y 120` down to ~28% at
+`y 159` — plus an eight-neighbour outline on every glyph, `font5x7` being
+blocky enough that a four-neighbour ring leaks at the diagonals. Ramps rather
+than boxes: a hard-edged dark rectangle behind text is more obviously a patch
+than the contrast problem it solves.
+
+`tools/mkvideoband.py`'s grading cap SHALL NOT be lowered to compensate.
+
+**The scrims SHALL be baked into the asset, not applied by the firmware.** They
+ran per-frame in the framebuffer for exactly one revision (1.2.12) at ~14 ms a
+frame of byte-wise read-modify-write in PSRAM, inside a display task with a
+100 ms budget. The tool applies the identical integer maths once, on a host.
+The firmware's `VBAND_SCRIM_*` constants are therefore **a contract with the
+tool**, not live parameters.
+
+> **This is the one asset mismatch that does not fail safe.** The validator
+> checks dimensions, not scrim geometry, so an asset built for a different text
+> layout plays with its dark stripes in the wrong place. Every other asset
+> failure — missing, blank, corrupt, wrong size, undecodable — degrades to a
+> plain dark band. A format or layout revision field would close this; until
+> then the asset SHALL be rebuilt whenever the scrim constants or the text
+> layout move.
+
+**The margin requirement of v1.65 is retired above, kept below.** 15 blank rows
+above the band no longer has any meaning — the band starts at `y 0` and there
+is no text above it to butt against. The lower gap stands: the 36 blank rows
+between the band (ending `y 159`) and the headline (`y 196`).
+
+**The wire is the constraint, and it bounds the CPU as well as the panel.**
+The ILI9488 is 18-bit-only over SPI, so every pixel costs 3 bytes at
+`DISPLAY_SPI_CLOCK_HZ`. `flush()` transmits with `spi_device_polling_transmit`,
+so that transfer time is *also* CPU time on core 1 — and measurement showed the
+transfer is not even the whole of it.
+
+Measured on target, 480x128 at 20 MHz: `flush()` **99 ms**, of which 74 ms is
+the transfer and the rest per-row `memcmp`, bounce copy and shadow update.
+JPEG decode **12 ms**, blit **9 ms**. Decode and flash space were never the
+constraint, and neither was the wire alone.
+
+| Band | Bytes | transfer @20 MHz | @40 MHz |
+|---|---|---|---|
+| 480x80 | 115,200 | 46 ms | 23 ms |
+| 480x128 | 184,320 | 74 ms | 37 ms |
+| **480x160** | **230,400** | 92 ms | **46 ms** |
+| 480x320 (full panel) | 460,800 | 184 ms | 92 ms |
+
+**Full-panel playback SHALL NOT be attempted** at any clock this panel accepts:
+92 ms of transfer at 40 MHz leaves nothing for decode or for the fields below
+the band.
+
+**The asset rate is 5 Hz and SHALL stay below the display rate.** At 480x160 /
+40 MHz a frame on which the clip advances costs **~120 ms** against a 100 ms
+period; the frames between cost almost nothing thanks to the early-outs above.
+Measured average **73 ms**. 10 Hz would put every frame over the period,
+yielding ~7 Hz in practice with `display_task` holding ~86% of core 1 for as
+long as an unlinked remote is powered — a large cost for a small gain.
+
+**`display_task` SHALL yield after an overrunning frame
+(`DISPLAY_FRAME_MIN_YIELD_MS`, 20 ms).** This is a safety requirement, not
+pacing tidiness, and it was found the hard way. `xTaskDelayUntil()` returns
+`pdFALSE` when the wake time has already passed, meaning it did not block at
+all; re-basing to now then leaves the next frame to overrun just as badly. For
+an occasional slow frame that self-corrects. For a frame that overruns *every*
+time it degenerates into a loop that never yields once — `display_task`
+(prio 2) stays runnable continuously on core 1 and `buzzer_task` (prio 1) never
+runs again. In firmware 1.2.12 the remote rebooted on `buzzer_task`'s 5 s task
+watchdog roughly six seconds into every boot. The display sits above the buzzer
+in priority, and the buzzer is how a remote tells its operator anything when
+the screen is the thing that is wrong.
+
+**`DISPLAY_SPI_CLOCK_HZ` is 40 MHz, above the datasheet limit (v1.68, firmware
+1.2.13).** The ILI9488 write cycle is 50 ns, i.e. 20 MHz. The fitted panel is a
+clone (ID `0x2A403300`) and sustains 40 MHz; the part is not specified to. It
+exists solely to make 480x160 fit — there is no other reason to run the panel
+faster than specified — and it was **verified by looking at the panel**, over a
+full clip, after a clean single-variable change.
+
+That qualification is load-bearing. A first attempt (1.2.12) was withdrawn
+having proved nothing: it shipped alongside a second `spi_bus_add_device()`
+handle for slower register reads, with both devices configured on the same
+`spics_io_num`. ESP-IDF routes each device's own hardware CS signal to the
+requested pin, so **the second device stole the CS pin from the first**; every
+write ran with CS unasserted, the panel ignored its whole init sequence and sat
+backlit and unconfigured — a solid white screen — while reads on the second
+handle worked perfectly and reported a healthy, correctly-identified panel.
+
+Three requirements follow, all of which outlive the clock decision:
+
+- **The display SHALL use exactly one SPI device handle.** If register reads
+  ever need their own clock, CS must be driven manually (`spics_io_num = -1` on
+  every device). A second device sharing a CS pin is not a supported
+  configuration and fails silently.
+- **A clock change SHALL be judged by looking at the panel, never by the boot
+  log.** Register reads are far more tolerant than the write path, so a correct
+  ID read-back is not evidence the panel is being driven at all.
+- **Exit:** if the band tears, shows colour noise or shifted rows, restore
+  20000000 and reduce `VBAND_H` to **128**, which fits at 20 MHz. The top half
+  SHALL NOT be retained at 20 MHz.
+
+> **OPEN DEFECT — panel-ID read-back is unreliable at 40 MHz.** The ILI9488
+> read cycle is 150 ns (6.7 MHz); reads have been outside spec for the life of
+> the project at 20 MHz and returned the documented ID anyway. At 40 MHz they
+> do not: the panel reads `0x3F603B80` against `0x2A403300`. The corruption is
+> **stable**, so `display_health_check()` — which compares later reads against
+> the boot read — passes on consistently wrong data, and the §5.5.6 test that
+> rejects `0x00000000`/`0xFFFFFFFF` as an undriven bus is judging a value the
+> panel never sent. The check is therefore blind on a unit that fires igniters.
+> It SHALL be fixed before this configuration is used operationally, by driving
+> CS manually on the single device handle and clocking reads below 10 MHz.
 
 **Asset storage.** The remote leaves `CONFIG_PARTITION_TABLE_SINGLE_APP` for
 `partitions_remote.csv` — 3 MB factory plus a 2 MB `splash` data partition,
@@ -2787,11 +2911,20 @@ that an erased all-`0xFF` partition is rejected as cleanly as a corrupt one and
 the 10 Hz path can index the frame table without re-checking bounds. A boot
 screen decoration must never be able to stop the unit coming up.
 
-**Shipped asset.** `assets/splash_falconheavy.bin` — the Falcon Heavy side
+**Shipped asset.** `assets/splash_falconheavy_160.bin` — the Falcon Heavy side
 boosters landing at LZ-1/LZ-2, 6 February 2018, cut from NASA imagery that is
-public domain in the United States. Source, licence and the exact
-`mkvideoband.py` recipe are recorded in `assets/README.md`; 199,110 B, 9.5% of
-the partition.
+public domain in the United States. 480x160, 50 frames at 200 ms, 159,464 B,
+7.6% of the partition. Source, licence and the exact two-step recipe are in
+`assets/README.md`. The superseded 480x80 asset is retained there for firmware
+1.2.11 and earlier; it is rejected on dimensions by anything newer.
+
+**The asset SHALL be built at 10 Hz and re-timed, not sampled at 5 Hz.**
+Tracking runs over the frames the tool selects and its guards are per-frame
+(`--track-step` bounds travel per frame, `--track-alpha` smooths per frame), so
+sampling at 5 Hz moves the subject twice as far between frames and produces a
+different crop path — a re-tune, not a re-time. `tools/rlcv_repack.py` copies
+the JPEG payloads byte for byte, so the motion path that was reviewed is the
+one that ships.
 
 **The cut SHALL contain the touchdown, not just the descent.** The source
 camera tracks and zooms: the ground line sits at ~63-65% of frame height at
@@ -2824,6 +2957,12 @@ unmissable warning: a red frame around the full panel and a red block reading
 credit — and, since v1.63, the boot animation with it: no scene or video
 band is drawn at all in such a build. An abnormal build shall not look normal, least of all
 prettier.
+
+Since v1.67 the banner occupies the band's rows **below the title block**
+(`y 70..159`) rather than the band's rows exactly. v1.65 keyed it off the band
+geometry so the two could not drift apart, which still holds — but with the
+band as the top half and the titles drawn on it, "exactly the band's rows"
+would now mean painting over the title block.
 
 The other four announcements this build already makes — the compile `#warning`,
 the boot banner, the flash-time warning, and the build failure if the option did

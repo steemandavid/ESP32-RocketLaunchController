@@ -126,17 +126,40 @@ Requires **ESP-IDF v5.4.1** and an ESP32-S3 (16 MB flash, 8 MB OCT PSRAM).
 
 ### The remote's boot video band
 
-The remote's boot splash plays a 480x80 letterboxed clip of the Falcon Heavy
-side boosters landing (FSD §10.2.1). It is not full-panel video and cannot
-become one: the ILI9488 is 18-bit-only over SPI, so a full 480x320 frame is
-460,800 B — 184 ms at 20 MHz against a 100 ms frame period.
+The remote's boot splash plays a **480x160 clip across the top half of the
+panel** at 5 Hz, with the title `ROCKET LAUNCH CONTROLLER` and the club credit
+drawn over it — the title at the top, the credit at the foot, and the middle
+left clear for the landing itself (FSD §10.2.1).
+
+It is not full-panel video and cannot become one. The ILI9488 is 18-bit-only
+over SPI at 3 bytes/pixel, so a full 480x320 frame is 460,800 B — 92 ms of
+transfer even at 40 MHz, against a 100 ms frame period, leaving nothing for
+decode or for the fields below the band.
+
+The budget is tighter than the wire alone suggests, because `flush()` transmits
+by polling: transfer time is CPU time. Measured at 480x128/20 MHz, `flush()`
+cost 99 ms of which only 74 ms was the transfer, the rest per-row `memcmp`,
+bounce copy and shadow update. That is why the band runs at 5 Hz rather than
+10 — a frame on which the clip advances costs ~120 ms, and the frames between
+cost almost nothing.
+
+The panel runs at **40 MHz, above the ILI9488's specified 20 MHz**. It is a
+clone that sustains it, and it is what makes the top half fit at all. Two rules
+came out of getting there, both the hard way: the display uses **exactly one
+SPI device handle** (a second one sharing the CS pin silently stole it and left
+the panel white), and a clock change is **judged by looking at the panel, never
+by the boot log** — register reads are far more tolerant than the write path.
+One consequence is still open: panel-ID read-back is unreliable at 40 MHz, so
+the periodic display health check needs fixing before operational use. See
+§10.2.1.
 
 The asset lives in its **own `splash` flash partition**, not in the firmware
 binary, so footage can be re-cut and reflashed in seconds without rebuilding or
 touching the image that runs the fire path:
 
 ```bash
-tools/mkvideoband.py clip.mp4 -o splash.bin --track --zoom 1.0 --zoom-end 2.6
+tools/mkvideoband.py clip.mp4 -o band.bin --track --zoom 1.0 --zoom-end 1.9
+tools/rlcv_repack.py band.bin splash.bin 2 200      # 10 Hz -> 5 Hz
 ./build_remote.sh splash splash.bin
 ```
 

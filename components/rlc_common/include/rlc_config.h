@@ -453,7 +453,43 @@ flashed from the same tree or they cannot communicate at all."
 /* ── Display Configuration (Remote only) ──────────────────────── */
 
 #define DISPLAY_SPI_HOST           SPI2_HOST
-#define DISPLAY_SPI_CLOCK_HZ      20000000
+
+/* 40 MHz. Above the ILI9488 datasheet limit — verified on the panel.
+ *
+ * The datasheet write cycle is 50 ns, i.e. 20 MHz, which is where this sat
+ * through 1.2.12. The panel fitted to the remote is a clone (ID 0x2A403300)
+ * and clones routinely sustain 40 MHz; this part is not specified to.
+ *
+ * WHY. The panel is 18-bit-only over SPI, so the splash band is bounded by
+ * the wire, and the wire turned out to bound the CPU too: flush() measured
+ * 99 ms for a 480x128 band at 20 MHz, of which 74 ms is the transfer itself.
+ * Halving the transfer cost is the only lever that brings the 480x160 top
+ * half within the frame period at all (92 ms -> 46 ms).
+ *
+ * THE FIRST ATTEMPT AT THIS (1.2.12) PROVED NOTHING. It shipped alongside a
+ * second spi_bus_add_device() handle that stole the CS pin, which left the
+ * panel white and unconfigured — nothing to do with the clock. This is the
+ * clean re-run: the clock changed, and nothing else.
+ *
+ * HOW IT WAS JUDGED, AND HOW ANY CHANGE HERE MUST BE: BY LOOKING AT THE
+ * PANEL. Not by the boot log. Register reads are far more tolerant than the
+ * write path, so a correct ID read-back is not evidence the panel is being
+ * driven — that is exactly how the 1.2.12 failure escaped for a whole cycle.
+ * The symptoms are tearing, colour noise, shifted rows, or a white screen.
+ * This clock was confirmed clean over a full clip at 480x160.
+ *
+ * KNOWN CONSEQUENCE, STILL OPEN. Register reads do NOT survive 40 MHz: the
+ * panel ID reads 0x3F603B80 here against the documented 0x2A403300 at 20 MHz.
+ * The ILI9488 read cycle is 150 ns (6.7 MHz), so reads were already out of
+ * spec at 20 MHz and merely got away with it. The corruption is stable, so
+ * display_health_check() — which compares later reads against the boot read —
+ * passes on consistently wrong data. Fix before operational use by driving CS
+ * manually (spics_io_num = -1) on the SINGLE device handle and clocking reads
+ * below 10 MHz. Do NOT add a second device: see rlc_display.c.
+ *
+ * IF IT FAILS: back to 20000000, and drop VBAND_H to 128 (74 ms), which fits
+ * at 20 MHz. The top half SHALL NOT be retained at 20 MHz. */
+#define DISPLAY_SPI_CLOCK_HZ      40000000
 #define DISPLAY_WIDTH              480
 #define DISPLAY_HEIGHT             320
 #define DISPLAY_ROTATION           1

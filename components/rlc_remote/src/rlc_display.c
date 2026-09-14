@@ -121,6 +121,12 @@ static const char *TAG = "rlc_disp";
  * draw_splash_band). */
 #define DISPLAY_FRAME_MS  100   /* 10 Hz — FSD §10.3 requires >= 5 Hz */
 
+/* Minimum yield after a frame that overran DISPLAY_FRAME_MS. Guarantees
+ * lower-priority tasks pinned to this core — buzzer_task (prio 1) above all —
+ * get the CPU every frame even when every frame is late. See the pacing block
+ * at the bottom of display_task. */
+#define DISPLAY_FRAME_MIN_YIELD_MS  20
+
 #define CHAR_W(s)  (6 * (s))
 #define CHAR_H(s)  (8 * (s))
 
@@ -164,6 +170,24 @@ static const uint8_t font5x7[][5] = {
 /* ── Module state ─────────────────────────────────────────────── */
 
 static spi_device_handle_t s_spi   = NULL;
+
+/* ONE device on this bus, and it must stay one (1.2.12).
+ *
+ * 1.2.12 briefly added a second spi_bus_add_device() handle at a slower clock
+ * for register reads, both configured with spics_io_num = PIN_DISPLAY_CS. That
+ * does not work and fails silently in the worst possible way. ESP-IDF gives
+ * each device its OWN hardware CS signal (CS0, CS1, ...) and routes it to the
+ * requested pin through the GPIO matrix, so the second add re-routed the CS
+ * pin to CS1 and stole it from the first device. Every write on s_spi then ran
+ * with CS never asserted: the panel ignored the entire init sequence and sat
+ * backlit and unconfigured — a solid white screen — while reads on the second
+ * handle still worked perfectly and reported a healthy, correctly-identified
+ * panel. The logs looked fine because the only path still functioning was the
+ * one being logged.
+ *
+ * If register reads ever do need their own clock, the CS pin has to be driven
+ * manually (spics_io_num = -1 on both devices, GPIO around each transaction).
+ * Do not add a second device sharing a CS pin. */
 static uint8_t            *s_fb    = NULL;   /* PSRAM framebuffer, RGB666 */
 static uint8_t            *s_line  = NULL;   /* internal DMA-capable row buffer */
 static bool                s_healthy = false;
@@ -400,6 +424,41 @@ static void draw_text(int x, int y, const char *s, int scale, uint32_t fg)
 static void draw_text_centred(int y, const char *s, int scale, uint32_t fg)
 {
     draw_text((DW - text_width(s, scale)) / 2, y, s, scale, fg);
+}
+
+/* Centred text with an outline, for text that sits on top of the boot
+ * splash's video band rather than on black (1.2.12).
+ *
+ * White-on-footage is a different problem from white-on-black. The asset is
+ * graded and hard-capped at 0x9A by tools/mkvideoband.py and the band darkens
+ * its own top rows under this text (baked into the asset), but neither can promise
+ * anything about a *particular* frame: a plume drifts through, and a glyph
+ * stroke that was over dark sky is suddenly over near-white smoke. The
+ * outline is what makes the text legible independently of what is behind it,
+ * rather than on average.
+ *
+ * Eight neighbours, not four: font5x7 is blocky and a four-neighbour ring
+ * leaks at every diagonal corner. The offset scales with the glyph so the
+ * ring stays proportionate at scale 2 and 3.
+ *
+ * Nine passes over the string, each the same per-pixel fill_rect work
+ * ordinary text already does. It costs nothing on the wire — these rows are
+ * inside the band and are transmitted every frame regardless. */
+static void draw_text_centred_outlined(int y, const char *s, int scale,
+                                       uint32_t fg, uint32_t outline)
+{
+    static const int8_t off[8][2] = {
+        { -1, -1 }, { 0, -1 }, { 1, -1 },
+        { -1,  0 },            { 1,  0 },
+        { -1,  1 }, { 0,  1 }, { 1,  1 },
+    };
+    int x = (DW - text_width(s, scale)) / 2;
+    int d = (scale >= 3) ? 2 : 1;
+
+    for (int i = 0; i < 8; i++) {
+        draw_text(x + off[i][0] * d, y + off[i][1] * d, s, scale, outline);
+    }
+    draw_text(x, y, s, scale, fg);
 }
 
 /* Centred text over a cleared background spanning [x, x+w).
@@ -1426,15 +1485,35 @@ static void draw_error_screen(const char *text)
  * partition.
  *
  * WHY A BAND AND NOT THE WHOLE PANEL. The ILI9488 is 18-bit-only over SPI, so
- * flush_run() ships 3 bytes/pixel at DISPLAY_SPI_CLOCK_HZ. A full 480x320
- * frame is 460,800 B = 184 ms, against a 100 ms frame period: full-panel
- * playback is not slow here, it is impossible, and it would saturate the panel
- * for exactly the window the link handshake runs in. The 480x80 band is
- * 115,200 B = 46 ms, which fits with room to spare. Decode cost and flash
- * space were never the constraint — the wire is.
+ * flush_run() ships 3 bytes/pixel at DISPLAY_SPI_CLOCK_HZ. Transfers go out
+ * with spi_device_polling_transmit(), so that time is CPU time on this core
+ * too — and measurement showed the transfer is not even the whole cost.
  *
- * The band is blitted whole every frame rather than diffed by hand; flush()'s
- * shadow comparison decides what actually goes out, so nothing here needs a
+ * Bytes per frame, and the transfer alone:
+ *
+ *                                        @20 MHz   @40 MHz
+ *   480x80   38,400 px    115,200 B        46 ms     23 ms   (<= 1.2.11)
+ *   480x128  61,440 px    184,320 B        74 ms     37 ms   (1.2.12)
+ *   480x160  76,800 px    230,400 B        92 ms     46 ms   (current)
+ *   480x320 153,600 px    460,800 B       184 ms     92 ms
+ *
+ * Measured on target at 480x128 / 20 MHz, flush() cost 99 ms against that
+ * 74 ms of transfer — the remainder is per-row memcmp, the s_line bounce copy
+ * and the shadow update. Decode was 12 ms and the blit 9 ms; neither ever
+ * mattered, and neither did flash space.
+ *
+ * So the current 480x160 needs the 40 MHz clock (see DISPLAY_SPI_CLOCK_HZ),
+ * and even with it a frame on which the clip ADVANCES costs ~120 ms against a
+ * 100 ms period. That is why the asset runs at 5 Hz and why the early-outs
+ * below matter: the frames in between cost almost nothing, and the measured
+ * average is 73 ms. Full panel is out at any clock this panel will take.
+ *
+ * If the band is ever resized, VBAND_H here and DISPLAY_SPI_CLOCK_HZ there are
+ * a pair, the asset must be rebuilt to match, and the verdict on a clock
+ * change comes from LOOKING AT THE PANEL — never from the boot log.
+ *
+ * The band is blitted whole rather than diffed by hand; flush()'s shadow
+ * comparison decides what actually goes out, so nothing here needs a
  * hand-maintained erase list.
  *
  * The clip loops (1.2.11, by operator preference). STATE_LINKING maps to the
@@ -1455,12 +1534,82 @@ static void draw_error_screen(const char *text)
  * boot screen decoration must never be able to stop the unit coming up.
  */
 
+/* The band starts at the top of the panel and runs edge to edge (1.2.12). It
+ * used to be a 480x80 strip at y=112 with 15 blank rows of margin above and
+ * below, because a photograph butted against text reads as a rendering fault.
+ * That reasoning does not survive the band reaching the top edge: there is no
+ * text above it any more to butt against — the title block is drawn *on* it —
+ * and a letterbox margin above a top-anchored image looks like a mistake
+ * rather than a frame. The margin below is what remains: the 36 blank rows
+ * between the band (ending y=159) and the headline (y=196).
+ *
+ * 160 — the top half — since 1.2.14, and it only fits because of the 40 MHz
+ * clock (see DISPLAY_SPI_CLOCK_HZ). At 20 MHz the largest that fits the frame
+ * period is 128, and before that 480x80 was the practical 10 Hz ceiling. If
+ * the clock is ever given back, this must come down with it. */
 #define VBAND_X        0
-#define VBAND_Y        112
+#define VBAND_Y        0
 #define VBAND_W        480
-#define VBAND_H        80      /* multiple of 16 — whole MCUs, no pad row */
+#define VBAND_H        160     /* multiple of 16 — whole MCUs, no pad row */
 
 #define C_VBAND_EMPTY  0x0A0C12   /* shown when there is no playable asset */
+
+/* Scrim (1.2.12) — BAKED INTO THE ASSET, not applied here.
+ *
+ * The title block is drawn over the band's top rows and the grading alone
+ * cannot carry it: --cap 0x9A bounds the footage but a plume still arrives as
+ * a near-white field behind white glyphs. So those rows are darkened on a
+ * ramp: KEEP/256 of the original pixel survives at the top row, rising to all
+ * of it by SCRIM_H, which sits just below the club credit (ending y=85). A
+ * ramp rather than a box, because a hard-edged dark rectangle behind the
+ * titles is more obviously a patch than the contrast problem it solves.
+ *
+ * THIS RAN ON THE REMOTE FOR EXACTLY ONE FIRMWARE REVISION AND MUST NOT AGAIN.
+ * As a per-frame framebuffer pass it was ~150 KB of byte-wise
+ * read-modify-write in PSRAM inside a display task with a 100 ms budget, and
+ * it was a large part of the 153 ms frame that starved buzzer_task and
+ * rebooted the remote on its task watchdog. tools/mkvideoband.py applies the
+ * identical integer maths once, on a host, before the JPEG is encoded, where
+ * it costs nothing at run time.
+ *
+ * These constants are therefore a CONTRACT WITH THE TOOL, not live parameters
+ * — they are what --scrim-h and --scrim-keep must be built with, and changing
+ * one here without rebuilding the asset changes nothing on the panel. They
+ * stay in the firmware because the layout they protect (the title rows) is
+ * defined here, and the next person to move the title block needs to see
+ * them. */
+#define VBAND_SCRIM_H      56     /* covers the single title line (y 10..33) */
+#define VBAND_SCRIM_KEEP   56     /* 22% at the very top row */
+
+/* Bottom scrim, under the club credit (1.2.15).
+ *
+ * The credit moved from y 70 to the foot of the band so the MIDDLE of the
+ * picture is clear of text — the boosters were landing behind it, and the
+ * rows below the smoke were ground and trees doing nothing. With the credit
+ * at the bottom and the titles at the top, rows ~80..119 are both text-free
+ * and full strength, and that band is where a cut should put the touchdown.
+ *
+ * Same contract with the tool as the top scrim: these are what --scrim-bot-h
+ * and --scrim-bot-keep must be built with, not live parameters. */
+#define VBAND_SCRIM_BOT_H     40  /* rows 120..159 */
+#define VBAND_SCRIM_BOT_KEEP  72  /* 28% on the last row */
+
+/* Club credit baseline — the foot of the band, not under the title block. */
+#define VBAND_CREDIT_Y  (VBAND_Y + VBAND_H - 22)
+
+/* One line since 1.2.16, where it was "ESP32 WIRELESS ROCKET" / "LAUNCH
+ * CONTROLLER" over two. Dropping the second line and shortening the top scrim
+ * to match (80 -> 56 rows) is worth ~50 rows of clear, full-strength picture
+ * in the middle of the band — the boosters now descend through open sky
+ * rather than behind a title block.
+ *
+ * At scale 3 this is 24 chars x 18 px = 432 px in a 480 px panel: 24 px of
+ * margin each side, 22 once the glyph outline is counted. There is no room
+ * for a longer string, hence the assert — a title that silently ran off both
+ * edges would be a poor way to find that out. */
+#define SPLASH_TITLE  "ROCKET LAUNCH CONTROLLER"
+_Static_assert((sizeof(SPLASH_TITLE) - 1) * CHAR_W(3) + 4 <= DW,
+               "splash title too wide for the panel at scale 3");
 
 /* RLCV container, written by tools/mkvideoband.py. Little-endian throughout.
  *
@@ -1482,6 +1631,22 @@ static void draw_error_screen(const char *text)
 #define RLCV_HDR_BYTES   16
 #define RLCV_MAX_FRAMES  600     /* 60 s at 10 Hz — sanity bound, not a spec */
 
+/* Set false whenever something has overwritten the title rows — a full
+ * repaint, or a band frame blitted over them. Outside the guard below: the
+ * fault-injection build draws no band but still draws the titles. */
+static bool s_titles_drawn = false;
+
+/* The whole playback path is compiled out of a fault-injection build.
+ *
+ * That build draws no band at all (see draw_splash_static), so through 1.2.11
+ * every function here was still compiled and only the call site was #if'd
+ * out, which left `draw_splash_band defined but not used` on every --inject
+ * build and — worse, because it was silent — had splash_video_init() map the
+ * partition and allocate a 230 KB PSRAM frame buffer that nothing would ever
+ * read. Guarding the code rather than the call site fixes both. The VBAND_*
+ * geometry above stays outside the guard: the fault banner is keyed off it. */
+#if !CONFIG_RLC_REMOTE_FAULT_INJECTION
+
 static const uint8_t             *s_vid          = NULL;
 static esp_partition_mmap_handle_t s_vid_map     = 0;
 static size_t                     s_vid_size     = 0;
@@ -1490,6 +1655,7 @@ static uint16_t                   s_vid_interval = DISPLAY_FRAME_MS;
 static uint8_t                   *s_vid_rgb      = NULL;  /* decoded frame */
 static int                        s_vid_cur      = -1;    /* index in s_vid_rgb */
 static bool                       s_vid_logged   = false; /* decode-fail log once */
+static bool                       s_vid_painted  = false; /* band rows valid in s_fb */
 
 static inline uint16_t rd16(const uint8_t *p)
 {
@@ -1643,6 +1809,28 @@ static void draw_splash_band(int64_t elapsed_ms)
     if (f < 0) f = 0;
     int idx = (int)(f % (int64_t)s_vid_frames);
 
+    /* Nothing to do when the clip has not advanced (1.2.12).
+     *
+     * This is the whole reason a band larger than 480x80 is affordable. The
+     * expensive part of a band frame is not the decode (12 ms) or the blit
+     * (9 ms) but the flush: 128 full-width rows is 99 ms of per-row memcmp,
+     * bounce copy, shadow update and SPI. Repainting identical pixels still
+     * pays the memcmp and the blit even though flush() then transmits
+     * nothing, and at 128 rows that is most of a frame period spent proving
+     * the picture did not change.
+     *
+     * So when the frame index has not moved, leave the framebuffer alone
+     * entirely. Safe because nothing else paints over the band region on this
+     * screen — and when something does repaint the whole screen,
+     * draw_splash_static() clears s_vid_painted and the next call redraws.
+     *
+     * This is what lets the asset run at its own rate, below the display's.
+     * At 5 Hz the costly path runs every other frame and the frames between
+     * cost nothing. */
+    if (idx == s_vid_cur && s_vid_painted) {
+        return;
+    }
+
     if (idx != s_vid_cur && splash_video_decode(idx) == 0) {
         s_vid_cur = idx;
     }
@@ -1653,25 +1841,67 @@ static void draw_splash_band(int64_t elapsed_ms)
                (size_t)VBAND_W * 3);
     }
     mark_dirty(VBAND_X, VBAND_Y, VBAND_W, VBAND_H);
+    s_vid_painted = true;
+    s_titles_drawn = false;   /* the blit went over the title rows */
 }
 
-/* Header block. The version string is deliberately NOT here: it moved onto the
- * copyright line at the foot of the screen in 1.2.10, which had room for it
- * and reads as the same kind of small print. That freed the row this block
- * used to spend on it, and the row went to the video band's margins.
+#else  /* CONFIG_RLC_REMOTE_FAULT_INJECTION */
+
+/* No band, so nothing to map and nothing to decode. display_init() calls this
+ * unconditionally; it is a no-op here rather than a call site to remember. */
+static inline void splash_video_init(void) { }
+
+#endif /* !CONFIG_RLC_REMOTE_FAULT_INJECTION */
+
+/* Fault-injection banner geometry, keyed off the band so the two cannot drift
+ * apart. It occupies the band's rows *below* the title block: since 1.2.12 the
+ * band is the top half and the titles are drawn on top of it, so "exactly the
+ * band's rows" — which is what 1.2.10 asked for — would now mean painting over
+ * the title block. Below the scrim, above the band's bottom edge. */
+#define FAULT_BLOCK_Y   (VBAND_Y + 70)
+#define FAULT_BLOCK_H   (VBAND_H - 70)
+#define FAULT_TXT1_DY   8
+#define FAULT_TXT2_DY   34
+
+/* The fault build suppresses the club credit, so the block starts where that
+ * would have been (y 70) and runs to the band's bottom edge. It is sized by
+ * VBAND_H, which has already moved twice in one firmware revision — assert
+ * that the two text lines still fit inside it rather than discovering a
+ * banner with its second line clipped off, on the one screen whose entire
+ * purpose is to be unmissable. */
+_Static_assert(FAULT_TXT2_DY + CHAR_H(2) + FAULT_TXT1_DY <= FAULT_BLOCK_H,
+               "fault-injection banner text does not fit its block");
+_Static_assert(FAULT_BLOCK_Y + FAULT_BLOCK_H <= DH,
+               "fault-injection banner runs off the panel");
+
+/* The credit is carried by the bottom scrim, so it must lie inside it, and
+ * inside the band. Both are derived from VBAND_H and have moved more than
+ * once; neither should be able to drift apart silently. */
+_Static_assert(VBAND_CREDIT_Y >= VBAND_Y + VBAND_H - VBAND_SCRIM_BOT_H,
+               "club credit sits above the bottom scrim that carries it");
+_Static_assert(VBAND_CREDIT_Y + CHAR_H(2) <= VBAND_Y + VBAND_H,
+               "club credit runs off the bottom of the band");
+
+/* Header block (1.2.12: drawn per frame, not once).
  *
- * Those margins are the point of the current geometry. The band is a
- * photograph dropped into a text layout, and butted straight against the
- * credit above and the status line below it looked like a rendering fault
- * rather than a frame. VBAND_Y and VBAND_H are now chosen so there are 15
- * blank rows above the band and 15 below — a clear line of black on each
- * side, which is what makes it read as deliberate. Anything that moves the
- * header, the band or the headline must preserve both gaps. */
+ * The title block used to be painted here in the static half, on black, above
+ * the band. It is now drawn ON the band, which means it has to be repainted
+ * after every band blit or the memcpy erases it — so it lives in
+ * draw_splash_titles(), called from the dynamic half.
+ *
+ * This costs nothing on the wire. Those rows are inside the band and are
+ * transmitted every frame regardless of what is drawn on them.
+ *
+ * The version string is deliberately NOT in the title block: it moved onto the
+ * copyright line at the foot of the screen in 1.2.10, which had room for it
+ * and reads as the same kind of small print. */
 static void draw_splash_static(void)
 {
     fill_rect(0, 0, DW, DH, C_BLACK);
-    draw_text_centred(10, "ESP32 WIRELESS ROCKET", 3, C_WHITE);
-    draw_text_centred(38, "LAUNCH CONTROLLER", 3, C_WHITE);
+#if !CONFIG_RLC_REMOTE_FAULT_INJECTION
+    s_vid_painted = false;   /* the fill wiped the band; force a repaint */
+#endif
+    s_titles_drawn = false;  /* ...and the title block with it */
 
 #if CONFIG_RLC_REMOTE_FAULT_INJECTION
     /* A fault-injection build lies to its operator by construction, so the
@@ -1680,18 +1910,52 @@ static void draw_splash_static(void)
      * the developer's terminal; this is the only one of the four an operator
      * standing at a firing point can see. It displaces the club credit — and,
      * since 1.2.9, the video band with it — deliberately: an abnormal
-     * build should not look normal, least of all prettier. Sized and placed
-     * to occupy the band's rows exactly, margins included. */
+     * build should not look normal, least of all prettier.
+     *
+     * Static, unlike the titles: with no band drawn there is nothing
+     * overwriting it, so it is painted once. */
     draw_frame(0, 0, DW, DH, 6, C_FAULT);
-    fill_rect(24, VBAND_Y + 8, DW - 48, VBAND_H - 16, C_FAULT);
-    draw_text_centred(VBAND_Y + 18, "!! FAULT INJECTION BUILD !!", 2, C_WHITE);
-    draw_text_centred(VBAND_Y + 44, "NOT SAFE FOR LIVE USE", 2, C_WHITE);
-#else
-    draw_text_centred(70, "VRO - VLAAMSE RAKET ORGANISATIE", 2, C_INFO);
+    fill_rect(24, FAULT_BLOCK_Y, DW - 48, FAULT_BLOCK_H, C_FAULT);
+    draw_text_centred(FAULT_BLOCK_Y + FAULT_TXT1_DY,
+                      "!! FAULT INJECTION BUILD !!", 2, C_WHITE);
+    draw_text_centred(FAULT_BLOCK_Y + FAULT_TXT2_DY,
+                      "NOT SAFE FOR LIVE USE", 2, C_WHITE);
 #endif
 
-    /* The copyright line and the progress bar are drawn per-frame in the
-     * dynamic half, not here. */
+    /* The title block, the copyright line and the progress bar are all drawn
+     * per-frame in the dynamic half, not here. */
+}
+
+/* Title block, drawn over the band. Outlined rather than plain because it sits
+ * on footage now; see draw_text_centred_outlined(). In a fault-injection build
+ * there is no band, the text sits on black and the outline is invisible —
+ * left in place rather than branched, since it costs only CPU on a boot
+ * screen and one code path is worth more than the microseconds. */
+static void draw_splash_titles(void)
+{
+    /* Only when something has actually overwritten them (1.2.12).
+     *
+     * Drawing these costs nothing on the wire — the rows are inside the band
+     * and flush()'s memcmp rejects identical pixels — but that is not the same
+     * as costing nothing. Nine outlined passes over three strings is a few
+     * thousand fill_rect() calls, each with its own clipping and dirty-box
+     * update, and it drags the dirty box across the whole band so flush()
+     * re-compares every one of those rows. Measured, redrawing them on a frame
+     * where the clip had not advanced was most of a 78 ms frame that should
+     * have been nearly free.
+     *
+     * Nothing else paints over the title rows on this screen, so if neither
+     * the band nor a full repaint has touched them they are still intact in
+     * the framebuffer and there is nothing to do. */
+    if (s_titles_drawn) return;
+    s_titles_drawn = true;
+
+    draw_text_centred_outlined(10, SPLASH_TITLE, 3, C_WHITE, C_BLACK);
+#if !CONFIG_RLC_REMOTE_FAULT_INJECTION
+    draw_text_centred_outlined(VBAND_CREDIT_Y,
+                               "VRO - VLAAMSE RAKET ORGANISATIE", 2,
+                               C_INFO, C_BLACK);
+#endif
 }
 
 /* `attempt` is the remote's live LINK_REQUEST count and is NOT bounded.
@@ -1720,8 +1984,9 @@ static void draw_splash_dynamic(const disp_data_t *d, int attempt,
     if (attempt < 1) attempt = 1;
 
 #if !CONFIG_RLC_REMOTE_FAULT_INJECTION
-    draw_splash_band(elapsed);
+    draw_splash_band(elapsed);   /* paints y=0..159, then scrims its top rows */
 #endif
+    draw_splash_titles();        /* on top of the band — must follow it */
 
     bool linked   = (d->link.state == RLC_LINK_STATE_LINKED);
     bool backedoff = (attempt >= LINK_REQUEST_MAX_RETRIES);
@@ -2052,7 +2317,6 @@ static void display_task(void *arg)
 
         flush();
 
-
         /* DS-01 / FSD §5.5.6: 5 s panel-ID re-read, run here so it is
          * serialised with the frame writes above. Skipped while an FSM event
          * is already pending would be pointless — the check is cheap (one
@@ -2089,9 +2353,27 @@ static void display_task(void *arg)
          * long the frame took, as long as it took less than that. */
         if (!xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(DISPLAY_FRAME_MS))) {
             /* The frame overran its budget — a full redraw on a screen change
-             * still does, at ~230 ms. Re-base rather than let DelayUntil fire
-             * a burst of catch-up frames back to back with no delay at all,
-             * which would starve lower-priority work on this core. */
+             * still does, at ~230 ms.
+             *
+             * Re-basing alone is NOT enough, and 1.2.12 found out the hard
+             * way. xTaskDelayUntil returns pdFALSE when the wake time has
+             * already passed, meaning it did not block at all; re-basing to
+             * now then leaves the NEXT frame to overrun the new deadline just
+             * as badly. For an occasional slow frame that self-corrects, which
+             * is what this guard was written for. For a frame that overruns
+             * EVERY time — a 480x128 band at 153 ms average — it degenerates
+             * into a free-running loop that never yields once, display_task
+             * (prio 2) stays runnable 100% of the time on core 1, and
+             * buzzer_task (prio 1) never runs again. The remote rebooted on
+             * buzzer_task's 5 s task-watchdog, roughly six seconds into every
+             * boot.
+             *
+             * So yield explicitly. This bounds display_task's share of core 1
+             * no matter how slow a frame becomes, which is a property this
+             * loop should always have had: the display is prio 2 and sits
+             * above the buzzer, and the buzzer is how a remote tells its
+             * operator anything when the screen is the thing that is wrong. */
+            vTaskDelay(pdMS_TO_TICKS(DISPLAY_FRAME_MIN_YIELD_MS));
             last_wake = xTaskGetTickCount();
         }
     }
