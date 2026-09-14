@@ -144,14 +144,18 @@ bounce copy and shadow update. That is why the band runs at 5 Hz rather than
 cost almost nothing.
 
 The panel runs at **40 MHz, above the ILI9488's specified 20 MHz**. It is a
-clone that sustains it, and it is what makes the top half fit at all. Two rules
-came out of getting there, both the hard way: the display uses **exactly one
-SPI device handle** (a second one sharing the CS pin silently stole it and left
-the panel white), and a clock change is **judged by looking at the panel, never
-by the boot log** — register reads are far more tolerant than the write path.
-One consequence is still open: panel-ID read-back is unreliable at 40 MHz, so
-the periodic display health check needs fixing before operational use. See
-§10.2.1.
+clone that sustains it, and it is what makes the top half fit at all. Two rules came out
+of getting there, both the hard way. **No device on this bus may use hardware
+CS while another shares the pin** — ESP-IDF routes each device's own CS signal
+to the requested pin, so a second one silently steals it, which left the panel
+white and unconfigured while the logs reported it healthy. And **a clock change
+is judged by looking at the panel, never by the boot log**, because register
+reads are far more tolerant than the write path.
+
+Reads do not survive 40 MHz at all, so they run on a second SPI device at
+10 MHz with CS driven manually on both. Without that the panel ID reads back
+wrong — and *stably* wrong, so the periodic health check compared wrong against
+wrong and reported a healthy panel while reading noise. See §10.2.1.
 
 The asset lives in its **own `splash` flash partition**, not in the firmware
 binary, so footage can be re-cut and reflashed in seconds without rebuilding or

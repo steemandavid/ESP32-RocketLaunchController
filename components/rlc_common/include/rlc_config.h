@@ -478,18 +478,42 @@ flashed from the same tree or they cannot communicate at all."
  * The symptoms are tearing, colour noise, shifted rows, or a white screen.
  * This clock was confirmed clean over a full clip at 480x160.
  *
- * KNOWN CONSEQUENCE, STILL OPEN. Register reads do NOT survive 40 MHz: the
- * panel ID reads 0x3F603B80 here against the documented 0x2A403300 at 20 MHz.
- * The ILI9488 read cycle is 150 ns (6.7 MHz), so reads were already out of
- * spec at 20 MHz and merely got away with it. The corruption is stable, so
- * display_health_check() — which compares later reads against the boot read —
- * passes on consistently wrong data. Fix before operational use by driving CS
- * manually (spics_io_num = -1) on the SINGLE device handle and clocking reads
- * below 10 MHz. Do NOT add a second device: see rlc_display.c.
+ * REGISTER READS NEED THEIR OWN CLOCK AT 40 MHz — see
+ * DISPLAY_SPI_READ_CLOCK_HZ below. They do not survive it: the panel ID read
+ * back 0x3F603B80 against the documented 0x2A403300, stably enough that
+ * display_health_check() passed on consistently wrong data. Fixed in 1.2.18.
  *
  * IF IT FAILS: back to 20000000, and drop VBAND_H to 128 (74 ms), which fits
  * at 20 MHz. The top half SHALL NOT be retained at 20 MHz. */
 #define DISPLAY_SPI_CLOCK_HZ      40000000
+
+/* Register reads run at their own, much slower clock (1.2.18).
+ *
+ * The ILI9488 write cycle is 50 ns (20 MHz); its READ cycle is 150 ns
+ * (6.7 MHz), because on a read the panel drives MISO and its output delay is
+ * far slower than its input setup requirement. One clock served both through
+ * 1.2.17 — already outside the read spec at 20 MHz, and getting away with it.
+ *
+ * At 40 MHz it stopped getting away with it: the panel ID read back
+ * 0x3F603B80 against 0x2A403300 at 20 MHz, same board, minutes apart. The
+ * corruption was STABLE, which is the dangerous part — display_health_check()
+ * compares each read against the boot read, so both ends were wrong in the
+ * same way and it went on reporting a healthy panel while reading noise. The
+ * §5.5.6 test that rejects 0x00000000/0xFFFFFFFF as an undriven bus was
+ * judging a value the panel never sent. That check exists to catch a dead
+ * panel on a unit that fires igniters; it must not be blind.
+ *
+ * 10 MHz, not 6.7: a wide margin the safe side of the read spec relative to
+ * 40 MHz, a clean divisor of the 80 MHz source, and verified on target to
+ * return the documented ID with the pixel path still at 40 MHz. Reads are two
+ * per boot plus one per DISPLAY_HEALTH_INTERVAL_MS, so there is nothing to
+ * gain by running them nearer the edge.
+ *
+ * This is a SECOND SPI DEVICE on the same bus, and it only works because CS
+ * is driven manually on both — see the note in rlc_display.c before touching
+ * either. A second device using hardware CS on a shared pin steals it from
+ * the first and whites out the panel, silently. */
+#define DISPLAY_SPI_READ_CLOCK_HZ 10000000
 #define DISPLAY_WIDTH              480
 #define DISPLAY_HEIGHT             320
 #define DISPLAY_ROTATION           1

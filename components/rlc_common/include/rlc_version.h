@@ -7,7 +7,30 @@
 
 #pragma once
 
-/* 1.2.17 (2026-09-14): release of the splash band work. Frame-cost
+/* 1.2.18 (2026-09-14): panel-ID read-back fixed at 40 MHz. Remote-only.
+ *
+ * Closes the defect 1.2.17 shipped with. The ILI9488 read cycle is 150 ns
+ * (6.7 MHz) against a 50 ns write cycle, so register reads do not survive the
+ * 40 MHz pixel clock: the ID came back 0x3F603B80 instead of 0x2A403300.
+ *
+ * The corruption was STABLE, which is why it mattered. display_health_check()
+ * compares each read against the boot read, so both ends were wrong the same
+ * way and it reported a healthy panel while reading noise — and the §5.5.6
+ * undriven-bus test was judging a value the panel never sent. A display health
+ * check that cannot tell a live panel from a garbled read is not a check, and
+ * this one guards a unit that fires igniters.
+ *
+ * Fix: a second SPI device at DISPLAY_SPI_READ_CLOCK_HZ (10 MHz) for reads,
+ * with spics_io_num = -1 on BOTH devices and CS driven by hand around every
+ * transaction. That last part is the whole fix. The 1.2.12 attempt at this
+ * gave the second device hardware CS on the same pin, which stole it from the
+ * first and left the panel white while the logs reported it healthy. With
+ * hardware CS the driver already asserted per transaction, so moving that into
+ * spi_xfer()/spi_xfer_rd() changes nothing but who does it.
+ *
+ * Verified on target: ID reads 0x2A403300 with the band running at 40 MHz.
+ *
+ * 1.2.17 (2026-09-14): release of the splash band work. Frame-cost
  * instrumentation removed; no functional change.
  *
  * The version moves for the usual reason — 1.2.16's binary carried a
@@ -1394,5 +1417,5 @@
  * link. */
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  17
-#define RLC_VERSION_STRING "1.2.17"
+#define RLC_VERSION_PATCH  18
+#define RLC_VERSION_STRING "1.2.18"

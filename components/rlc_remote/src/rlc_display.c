@@ -169,25 +169,43 @@ static const uint8_t font5x7[][5] = {
 
 /* ── Module state ─────────────────────────────────────────────── */
 
-static spi_device_handle_t s_spi   = NULL;
+static spi_device_handle_t s_spi    = NULL;
+static spi_device_handle_t s_spi_rd = NULL;
 
-/* ONE device on this bus, and it must stay one (1.2.12).
+/* TWO devices on this bus, and CS is driven BY HAND for both (1.2.18).
  *
- * 1.2.12 briefly added a second spi_bus_add_device() handle at a slower clock
- * for register reads, both configured with spics_io_num = PIN_DISPLAY_CS. That
- * does not work and fails silently in the worst possible way. ESP-IDF gives
- * each device its OWN hardware CS signal (CS0, CS1, ...) and routes it to the
- * requested pin through the GPIO matrix, so the second add re-routed the CS
- * pin to CS1 and stole it from the first device. Every write on s_spi then ran
- * with CS never asserted: the panel ignored the entire init sequence and sat
- * backlit and unconfigured — a solid white screen — while reads on the second
- * handle still worked perfectly and reported a healthy, correctly-identified
- * panel. The logs looked fine because the only path still functioning was the
- * one being logged.
+ * The pixel path runs at DISPLAY_SPI_CLOCK_HZ (40 MHz) and register reads at
+ * DISPLAY_SPI_READ_CLOCK_HZ (10 MHz), because the ILI9488 does not read back
+ * at its write clock: the write cycle is 50 ns (20 MHz) but the READ cycle is
+ * 150 ns (6.7 MHz) — on a read the panel drives MISO and its output delay is
+ * an order of magnitude slower than its input setup requirement. Reads were
+ * already outside spec at 20 MHz and got away with it for the life of the
+ * project; at 40 MHz they stopped, returning 0x3F603B80 where the panel's
+ * actual ID is 0x2A403300.
  *
- * If register reads ever do need their own clock, the CS pin has to be driven
- * manually (spics_io_num = -1 on both devices, GPIO around each transaction).
- * Do not add a second device sharing a CS pin. */
+ * WHY MANUAL CS, which is the whole point of this comment. 1.2.12 tried the
+ * obvious thing — a second spi_bus_add_device() at the slower clock, both
+ * devices configured with spics_io_num = PIN_DISPLAY_CS — and it fails
+ * silently in the worst possible way. ESP-IDF gives each device its OWN
+ * hardware CS signal (CS0, CS1, ...) and routes it to the requested pin
+ * through the GPIO matrix, so the second add re-routed the pin to CS1 and
+ * STOLE IT FROM THE FIRST DEVICE. Every write then ran with CS never
+ * asserted: the panel ignored its entire init sequence and sat backlit and
+ * unconfigured — a solid white screen — while reads on the second handle
+ * worked perfectly and reported a healthy, correctly-identified panel. The
+ * logs looked clean because the only path still working was the one being
+ * logged.
+ *
+ * So neither device owns the CS pin: spics_io_num is -1 on both and
+ * spi_xfer()/spi_xfer_rd() bracket every transaction with cs_low()/cs_high().
+ * This is not a behaviour change — with hardware CS the driver already
+ * asserted and released per transaction, including per row in flush_run() —
+ * it just moves who does it. Two GPIO writes per transaction, which against
+ * a 1440-byte row is nothing.
+ *
+ * THE RULE: no device on this bus may use hardware CS while another shares
+ * the pin. Add a device only with spics_io_num = -1, and only if it brackets
+ * its transactions the same way. */
 static uint8_t            *s_fb    = NULL;   /* PSRAM framebuffer, RGB666 */
 static uint8_t            *s_line  = NULL;   /* internal DMA-capable row buffer */
 static bool                s_healthy = false;
@@ -247,9 +265,24 @@ static inline void dc_data(void) { gpio_set_level(PIN_DISPLAY_DC, 1); }
  * thousands per second and would bury everything else in the log. */
 static uint32_t s_spi_errors = 0;
 
+/* CS is ours, not the driver's — see the note at s_spi_rd. Idle high. */
+static inline void cs_low(void)  { gpio_set_level(PIN_DISPLAY_CS, 0); }
+static inline void cs_high(void) { gpio_set_level(PIN_DISPLAY_CS, 1); }
+
 static inline void spi_xfer(spi_transaction_t *t)
 {
+    cs_low();
     if (spi_device_polling_transmit(s_spi, t) != ESP_OK) s_spi_errors++;
+    cs_high();
+}
+
+/* Register reads only, at DISPLAY_SPI_READ_CLOCK_HZ. Shares s_spi_errors so a
+ * failed read still trips the same health accounting. */
+static inline void spi_xfer_rd(spi_transaction_t *t)
+{
+    cs_low();
+    if (spi_device_polling_transmit(s_spi_rd, t) != ESP_OK) s_spi_errors++;
+    cs_high();
 }
 
 static void spi_send_cmd(uint8_t cmd)
@@ -282,7 +315,7 @@ static void spi_read_reg(uint8_t cmd, uint8_t *buf, int len)
         .tx_buffer = tx,
         .rx_buffer = rx,
     };
-    spi_xfer(&t);
+    spi_xfer_rd(&t);
 
     memcpy(buf, rx + 1, len);
     free(tx);
@@ -2392,7 +2425,7 @@ int display_init(void)
     /* Control pins */
     gpio_config_t io = {
         .pin_bit_mask = (1ULL << PIN_DISPLAY_DC) | (1ULL << PIN_DISPLAY_RST) |
-                        (1ULL << PIN_DISPLAY_BL),
+                        (1ULL << PIN_DISPLAY_BL) | (1ULL << PIN_DISPLAY_CS),
         .mode         = GPIO_MODE_OUTPUT,
         .pull_up_en   = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -2400,6 +2433,7 @@ int display_init(void)
     };
     gpio_config(&io);
     gpio_set_level(PIN_DISPLAY_BL, 1);
+    gpio_set_level(PIN_DISPLAY_CS, 1);   /* deasserted before anything clocks */
 
     spi_bus_config_t bus = {
         .mosi_io_num     = PIN_DISPLAY_MOSI,
@@ -2414,14 +2448,22 @@ int display_init(void)
         return -1;
     }
 
+    /* spics_io_num = -1 on BOTH devices: CS is driven by hand. See s_spi_rd. */
     spi_device_interface_config_t dev = {
         .clock_speed_hz = DISPLAY_SPI_CLOCK_HZ,
         .mode           = 0,
-        .spics_io_num   = PIN_DISPLAY_CS,
+        .spics_io_num   = -1,
         .queue_size     = 1,
     };
     if (spi_bus_add_device(DISPLAY_SPI_HOST, &dev, &s_spi) != ESP_OK) {
         ESP_LOGE(TAG, "SPI device add failed");
+        return -1;
+    }
+
+    spi_device_interface_config_t dev_rd = dev;
+    dev_rd.clock_speed_hz = DISPLAY_SPI_READ_CLOCK_HZ;
+    if (spi_bus_add_device(DISPLAY_SPI_HOST, &dev_rd, &s_spi_rd) != ESP_OK) {
+        ESP_LOGE(TAG, "SPI read-device add failed");
         return -1;
     }
 
@@ -2532,8 +2574,10 @@ int display_init(void)
     mark_dirty(0, 0, DW, DH);
     flush();
 
-    ESP_LOGI(TAG, "ILI9488 init: %dx%d RGB666 @ %d MHz, ID 0x%08lX (%s)",
+    ESP_LOGI(TAG, "ILI9488 init: %dx%d RGB666 @ %d MHz (reads %d MHz), "
+                  "ID 0x%08lX (%s)",
              DW, DH, DISPLAY_SPI_CLOCK_HZ / 1000000,
+             DISPLAY_SPI_READ_CLOCK_HZ / 1000000,
              (unsigned long)s_panel_id, s_healthy ? "healthy" : "ID READ FAILED");
 
     return 0;
