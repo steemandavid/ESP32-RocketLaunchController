@@ -118,6 +118,26 @@ OPEN-side and boundary results, both units on fw 1.2.20:
 - **T-A24 PARTIAL PASS** — boundary half done. Still outstanding: 750 Ω
   no-blip + 0x10 refusal, disarm-on-degradation swap while ARMED, 470 Ω
   MARGINAL sanity value.
+
+### 2026-09-15 (later) — T-A24 fully PASS (FSD v1.73, docs only)
+
+Completed with the bench parts actually available — the nominal 750 Ω/470 Ω
+substituted by **820 Ω** (mid-window, ~783 mV) and **390 Ω** (~510 mV):
+
+- 820 Ω on CH1 → ◆ orange, silent, log `band 0 -> 3`
+- ARM on it → NACK `0x10`, "HIGH RESISTANCE"
+- **CONNECTED→SUSPECT disarm live on target**: armed on a 2 Ω load, 820 Ω
+  bridged across, 2 Ω removed → disarm in ~1 s, 3 × 200 ms blasts,
+  "CONTINUITY LOST - DISARMED", channel settles ◆ SUSPECT
+- 390 Ω → ▲ MARGINAL with the two-blip signal
+
+Two procedural notes now in the spec row: the disarm-half swap must have
+**no open gap** (unplugging first only exercises the T-A16 OPEN path — the
+first run of this test did exactly that and didn't count), and **560 Ω is
+not a MARGINAL substitute** (~625 mV → ◆ SUSPECT).
+
+Every v1.71 behaviour — classification, refusal reason, disarm,
+presentation, both boundaries — now exercised on hardware. T-A24 closed.
 - `rlc-hw-test-base` bench firmware still classifies with pre-v1.29
   thresholds (66 mV/1500 mV, 12 dB, its own CONT_BAND_* enum) — two
   threshold rebases stale and now missing SUSPECT. Left as-is (raw-µV
