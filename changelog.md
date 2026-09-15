@@ -1,5 +1,59 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-15 — hw-test-base bench continuity session: B-C01…B-C11 all PASS (docs only)
+
+The interactive `cont` half left outstanding from the bench-firmware
+de-staling, run on hardware against the production classifier. Base ran the
+bench firmware over its **native USB** CLI (COM bridge `5B5E042156` was
+unplugged this session; bench fw flashed over COM, production restored over
+native USB). Battery 12.13 V. **All ten continuity tests PASS**, no code
+changes; one spec wording fix (B-C07).
+
+### Results (bench parts substituted where noted)
+
+| Test | Load | Result |
+|---|---|---|
+| B-C01 | open, relays NC | valid reading, no enable step — PASS |
+| B-C02 | 0 Ω wire | CONNECTED 205 mV (217 Ω sense-branch offset) — PASS |
+| B-C03 | **10 Ω** (no 2 Ω) | CONNECTED 220 mV, resolved 15 mV above the 0 Ω reading — PASS |
+| B-C04 | **390 Ω** (no 100 Ω) | MARGINAL 515 mV — PASS |
+| B-C05 | true open | OPEN, raw 4095 saturated, 969 mV, all 8 channels agree — PASS |
+| B-C11 | 820 Ω (spec-exact) | SUSPECT 790–791 mV; edges 390 Ω → MARGINAL 515 mV, 1.2 kΩ → OPEN 968 mV; bonus 1 kΩ → SUSPECT 896 mV — PASS |
+| B-C06 | all 8 loaded (10 Ω/68/390/680/820/1k/1.2k/2.2k) | all four bands simultaneously, three identical sweeps — PASS |
+| B-C07 | 10 Ω on CH1 | mean 220.4 mV ✓; averaged-read σ **1.14 mV** < 2 mV (20 consecutive reads) — PASS |
+| B-C08 | 68 Ω near CONNECTED/MARGINAL boundary | **zero** band transitions in 30 s `cont monitor` — PASS |
+| B-C09 | CH1, relay on | OPEN while NC lifted — SPDT isolation PASS |
+| B-C10 | CH1, relay off | CONNECTED again at 220 mV — PASS |
+
+Bonus data points: **68 Ω boundary** — 272 mV MARGINAL, stable (the
+CONNECTED/MARGINAL crossing sits just below 68 Ω, matching the ~67 Ω spec
+value); **680 Ω** — 719–729 mV SUSPECT (mid-window); both OPEN flavours
+(saturated-finite 1.2 kΩ and saturated 2.2 kΩ) read identically to absent.
+
+### Two measurement clarifications now in the spec
+
+- **B-C07 criterion is on the averaged reading.** `raw 256` shows a ~10 mV
+  per-sample floor (σ ≈ 41–45 raw on every channel — systemic, not
+  contact noise), but `cont <ch>` averages 64 samples exactly as production's
+  `CONT_OVERSAMPLE_COUNT` does; 20 consecutive averaged reads measured
+  σ = 1.14 mV. Spec row reworded so the next bench session doesn't read a
+  false failure.
+- **B-C08 boundary channel:** a 68 Ω (8 mV above the 261 mV line) held
+  MARGINAL for 30 s with zero flaps.
+
+### Bench notes
+
+- The 820 Ω was hiding in the parts bin as grey-red-**brown** (82×10);
+  560 Ω was absent, so the 1 kΩ covered the B-C11 main case first —
+  896 mV SUSPECT, matching Friday's on-target 895 mV exactly.
+- Clip leads shorted across a "seated" resistor read identically to the
+  0 Ω wire (206 mV) — a mis-seated load is invisible next to a dead short;
+  check seating when a band looks too good.
+- Afterward: `safe`, production fw 1.2.20 rebuilt and reflashed to the base
+  over native USB, link re-verified from the remote's log — `LINK_ACK
+  accepted` (strict fw match), 12/12 remote self-test suites, IDLE, rssi
+  −38, vbat 7.68 V. Both units back on production 1.2.20.
+
 ## 2026-09-14 — fourth continuity band CONT_SUSPECT (fw 1.2.19 → 1.2.20, FSD v1.71)
 
 Operator request, spec-first workflow: FSD updated and cross-checked, then
