@@ -93,22 +93,20 @@
 /* --- Battery divider --------------------------------------------------- */
 #define BATT_DIVIDER_RATIO      4.3f
 
-/* --- Continuity thresholds (µV) --------------------------------------- */
+/* --- Continuity thresholds -------------------------------------------- */
 /*
- * KNOWN ISSUE: Cannot distinguish between wire shorts and actual igniters.
- * See memory/continuity_circuit_issue.md for details.
+ * REMOVED 2026-09-15. These were the pre-v1.29 FSD values (66 mV / 1500 mV at
+ * 12 dB) and had drifted two threshold rebases behind the production firmware
+ * — which moved to 0 dB attenuation, the 217 Ω sense-branch rebase (261 /
+ * 586 mV boundaries) and the v1.71 SUSPECT split (928 mV) without this file
+ * ever noticing. The bench tool now compiles the PRODUCTION classifier in
+ * directly (see main/CMakeLists.txt) and takes its thresholds from
+ * rlc_config.h — there is no local copy here to drift again.
  *
- * Using original FSD v1.14 values. Both wire shorts (0 Ω) and igniters (1-2 Ω)
- * read ~35000 µV due to relay NC contact resistance or circuit topology.
- * SHORT detection is not functional - will classify as GOOD.
- * This is acceptable because SHORT is informational only (does not block arming).
+ * The old "KNOWN ISSUE: cannot distinguish wire shorts from igniters" note
+ * was the SHORT-band problem, resolved by folding SHORT into CONNECTED in the
+ * main FSD on 2026-08-21; the production enum this tool now uses has no SHORT.
  */
-#define CONT_SHORT_UV               500     /* < 0.5 mV = SHORT (FSD default - not functional) */
-#define CONT_MARGINAL_UV            66000   /* > 66 mV = MARGINAL */
-#define CONT_OPEN_UV                1500000 /* > 1500 mV = OPEN */
-#define CONT_HYSTERESIS_SHORT_UV    200
-#define CONT_HYSTERESIS_MARGINAL_UV 5000
-#define CONT_HYSTERESIS_OPEN_UV     50000
 
 /* --- ADC oversampling -------------------------------------------------- */
 #define CONT_ADC_SAMPLES        64

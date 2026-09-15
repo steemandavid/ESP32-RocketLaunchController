@@ -138,6 +138,43 @@ not a MARGINAL substitute** (~625 mV → ◆ SUSPECT).
 
 Every v1.71 behaviour — classification, refusal reason, disarm,
 presentation, both boundaries — now exercised on hardware. T-A24 closed.
+
+### 2026-09-15 (final) — rlc-hw-test-base bench firmware de-staled
+
+The bench tool had drifted two threshold rebases behind production: it still
+classified with the pre-v1.29 values (66 mV / 1500 mV at **12 dB**) through
+its own `CONT_BAND_*` enum, with no SUSPECT — and its own spec doc §6.4
+already described the production thresholds, so doc and code disagreed with
+each other too. Fixed by **compiling the production classifier into the
+tool** rather than re-deriving thresholds a third time:
+
+- `main/CMakeLists.txt` builds `components/rlc_common/src/
+  rlc_continuity_class.c` directly and adds `rlc_common/include`; the tool
+  now uses `rlc_config.h` thresholds. (Note: rlc_config.h needs
+  `rlc_secrets.h` — run `./tools/gen-secrets.sh` on a fresh clone.)
+- `hw_continuity.h`: local enum deleted; `cont_band_t` is now a typedef of
+  the production `rlc_continuity_band_t`.
+- `hw_continuity.c`: channels configured at **0 dB** (`CONT_ADC_ATTEN`),
+  per-channel curve-fitting cali handles created at 0 dB — the battery
+  channel's shared 12 dB handle is NOT valid for these channels — with the
+  production `raw × 950 / 4095` fallback; classification via
+  `rlc_continuity_classify_initial()` (hysteresis-free — a bench read
+  should say what the reading says now); band strings use production names
+  (CONNECTED not GOOD; SUSPECT added).
+- `pin_config.h`: stale `CONT_*_UV` block removed with a pointer to
+  rlc_config.h.
+- hw-test spec §6.4 rewritten (production classifier, four-band table);
+  B-C02/B-C03 renamed SHORT/GOOD → CONNECTED with corrected expected
+  voltages (~204/~205 mV through the 217 Ω sense branch); B-C05's expected
+  open reading corrected to the saturated ~950 mV; **new B-C11** SUSPECT
+  case (820 Ω → ~783 mV, with 390 Ω/1.2 kΩ edge sanity).
+
+Verified: built clean; flashed to the base — boots with "production
+classifier (0 dB, 4 bands incl. SUSPECT)" and all eight per-channel
+calibrations created (no fallback warnings); production fw 1.2.20 then
+restored and link re-verified. The interactive `cont` half (B-C02…B-C11)
+still needs a bench session with the base's **native USB** connected — the
+CLI reads USB-Serial-JTAG, not the COM bridge.
 - `rlc-hw-test-base` bench firmware still classifies with pre-v1.29
   thresholds (66 mV/1500 mV, 12 dB, its own CONT_BAND_* enum) — two
   threshold rebases stale and now missing SUSPECT. Left as-is (raw-µV

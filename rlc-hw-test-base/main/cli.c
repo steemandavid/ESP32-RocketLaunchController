@@ -229,8 +229,8 @@ static void cmd_cont(char *toks[], int ntok)
 
     if (strcmp(toks[1], "monitor") == 0) {
         uart_puts("Monitoring all channels — press any key to stop.\r\n");
-        cont_band_t prev[8] = { CONT_BAND_OPEN, CONT_BAND_OPEN, CONT_BAND_OPEN, CONT_BAND_OPEN,
-                                CONT_BAND_OPEN, CONT_BAND_OPEN, CONT_BAND_OPEN, CONT_BAND_OPEN };
+        cont_band_t prev[8] = { CONT_OPEN, CONT_OPEN, CONT_OPEN, CONT_OPEN,
+                                CONT_OPEN, CONT_OPEN, CONT_OPEN, CONT_OPEN };
         uint8_t dummy;
         while (usb_serial_jtag_read_bytes(&dummy, 1, 0) <= 0) {
             for (int ch = 1; ch <= 8; ch++) {

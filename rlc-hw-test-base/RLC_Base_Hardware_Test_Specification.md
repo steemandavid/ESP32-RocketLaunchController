@@ -143,7 +143,7 @@ Continuity sensing is always active when relays are de-energised (NC position). 
 
 | Command | Description |
 |---|---|
-| `cont <ch>` | Read channel (1–8) continuity: raw ADC value, calibrated µV, band classification (SHORT/GOOD/MARGINAL/OPEN) |
+| `cont <ch>` | Read channel (1–8) continuity: raw ADC value, calibrated µV, band classification (CONNECTED/MARGINAL/SUSPECT/OPEN — the production four-band classifier, FSD v1.71) |
 | `cont all` | Read all 8 channels sequentially |
 | `cont <ch> raw <N>` | Take N raw ADC samples on channel (1–8) and display individual values, mean, min, max, std deviation. For noise floor analysis. Default N=64. |
 | `cont monitor` | Continuously sample all 8 channels in round-robin (100 ms per channel) and display band changes. Press any key to stop. |
@@ -221,20 +221,30 @@ All digital outputs SHALL use configurable polarity defined in `pin_config.h`:
 
 ### 6.4 Continuity Band Classification
 
-Thresholds use microvolt integer constants (matching main FSD §14.5):
+**Since 2026-09-15 the tool compiles the PRODUCTION classifier** —
+`components/rlc_common/src/rlc_continuity_class.c` is built into this
+firmware directly (see `main/CMakeLists.txt`) and takes its thresholds from
+`rlc_config.h`. Until that fix the tool carried its own enum and the
+pre-v1.29 thresholds (66 mV / 1500 mV at 12 dB), two rebases behind the
+production firmware; a copy is what drifted. `cont` reads take the initial
+(hysteresis-free) classification, which is what a person at the bench wants.
 
-Values current as of 2026-08-23, after the 217 Ω sense-branch resistors were
-fitted on all eight channels (they sit in the sense current path and lift every
-reading by ~204 mV). The SHORT band was merged into CONNECTED on 2026-08-21.
+Bands, thresholds and attenuation are the main FSD §5.4.2 / §14.5 values:
+**0 dB attenuation** (0–950 mV full scale — an open channel saturates and
+that is unambiguous), 217 Ω sense-branch resistors in the current path, four
+bands:
 
-| Constant | Default (µV) | Band |
-|---|---|---|
-| ~~`CONT_SHORT_UV`~~ | 500 | **Deprecated** — SHORT merged into CONNECTED, never produced |
-| `CONT_MARGINAL_UV` | 261000 | Above = MARGINAL (~67 Ω through the 217 Ω sense branch) |
-| `CONT_OPEN_UV` | 586000 | Above = OPEN (~500 Ω through the 217 Ω sense branch) |
-| `CONT_HYSTERESIS_SHORT_UV` | 200 | Unused, see `CONT_SHORT_UV` |
-| `CONT_HYSTERESIS_MARGINAL_UV` | 5000 | CONNECTED/MARGINAL boundary hysteresis |
-| `CONT_HYSTERESIS_OPEN_UV` | 50000 | MARGINAL/OPEN boundary hysteresis |
+| Band | Boundary (µV) | Approx. resistance | Meaning |
+|---|---|---|---|
+| CONNECTED | < 261000 | < ~67 Ω | Low-resistance path present (a dead short reads the same) |
+| MARGINAL | 261000–586000 | ~67–500 Ω | High resistance — may not fire |
+| SUSPECT | 586000–928000 | ~500 Ω–1.09 kΩ | Finite but unreasonably high — connected, bad joint (FSD v1.71) |
+| OPEN | > 928000 | > ~1.09 kΩ / nothing | At or near ADC saturation — no measurable path |
+
+Per-channel ADC calibration handles are created at 0 dB in
+`hw_continuity_init()` — the battery channel's shared 12 dB handle is NOT
+valid for these channels. Calibration failure falls back to the linear
+`raw × 950 / 4095` conversion, as in the production sampler.
 
 ### 6.5 Fire Timer
 
@@ -288,15 +298,16 @@ Requires test resistors connected to channel terminals via SPDT relay NC contact
 | ID | Test | Procedure | Pass Criteria |
 |---|---|---|---|
 | B-C01 | Always-on continuity | With all relays de-energised (NC), `cont 1`. | Valid reading returned — continuity active via NC contact without any enable step. |
-| B-C02 | SHORT classification | Connect 0 Ω wire to channel 1 terminals. `cont 1`. | Band = SHORT, voltage < 500 µV. |
-| B-C03 | GOOD classification | Connect 2 Ω resistor. `cont 1`. | Band = GOOD, voltage ~660 µV. |
-| B-C04 | MARGINAL classification | Connect 100 Ω resistor. `cont 1`. | Band = MARGINAL, voltage ~97000 µV. |
-| B-C05 | OPEN classification | Leave terminals open. `cont 1`. | Band = OPEN, voltage ~3190000 µV (3.19V). |
+| B-C02 | CONNECTED classification (was SHORT) | Connect 0 Ω wire to channel 1 terminals. `cont 1`. | Band = CONNECTED, voltage ~204000 µV (the 217 Ω sense-branch offset — a dead short and an igniter are indistinguishable at 1 mA; SHORT was merged into CONNECTED in the main FSD on 2026-08-21). |
+| B-C03 | CONNECTED classification (was GOOD) | Connect 2 Ω resistor. `cont 1`. | Band = CONNECTED, voltage ~205000 µV. (Renamed from GOOD: the band means current can flow, not that the igniter is sound.) |
+| B-C04 | MARGINAL classification | Connect 100 Ω resistor. `cont 1`. | Band = MARGINAL, voltage ~288000 µV. |
+| B-C05 | OPEN classification | Leave terminals open. `cont 1`. | Band = OPEN, reported voltage ~950000 µV (0 dB full scale — the pin actually rests at ~3.19 V and the ADC saturates; saturated means OPEN, FSD §14.5). |
+| B-C11 | SUSPECT classification (added 2026-09-15) | Connect an 820 Ω resistor (or any 500 Ω–1.09 kΩ value). `cont 1`. | Band = SUSPECT, voltage ~783000 µV. Sanity-check the edges: 390 Ω → MARGINAL (~510 mV), 1.2 kΩ → OPEN (saturated). |
 | B-C06 | All channels | Connect known resistors to all 8 channels. `cont all`. | Each channel reports correct band. |
 | B-C07 | Noise floor analysis | `cont 1 raw 256` with 2 Ω resistor. | Standard deviation < 2 mV. Mean matches expected value ±5 mV. |
 | B-C08 | Hysteresis stability | `cont monitor` with resistor near a threshold boundary. Observe for 30 seconds. | No spurious band transitions. |
-| B-C09 | Continuity isolation during fire | `cont 1` (read GOOD). `relay 1 on` (energise → NC disconnected). `cont 1`. | Reads OPEN (expected — NC contact disconnected). Confirms SPDT isolation. |
-| B-C10 | Post-fire reconnection | `relay 1 on`. Wait 500ms. `relay 1 off`. Wait 50ms. `cont 1`. | Reads GOOD again — NC contact reconnected after relay de-energises. |
+| B-C09 | Continuity isolation during fire | `cont 1` (read CONNECTED). `relay 1 on` (energise → NC disconnected). `cont 1`. | Reads OPEN (expected — NC contact disconnected). Confirms SPDT isolation. |
+| B-C10 | Post-fire reconnection | `relay 1 on`. Wait 500ms. `relay 1 off`. Wait 50ms. `cont 1`. | Reads CONNECTED again — NC contact reconnected after relay de-energises. |
 
 ### 7.3 Battery Tests
 
