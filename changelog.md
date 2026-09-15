@@ -101,6 +101,23 @@ production-code-at-boot divergence the Phase-2 M2 design exists to catch.
   orange + no blip + NACK 0x10 on ARM; swap a good channel's load to 750 Ω
   while armed → disarm + SIREN_CONTINUITY_LOST; ~470 Ω reads MARGINAL,
   ~1.5 kΩ reads OPEN. Procedure written into the FSD.
+
+### 2026-09-15 — on-target validation (FSD v1.72, docs only)
+
+OPEN-side and boundary results, both units on fw 1.2.20:
+
+- **SUSPECT/OPEN boundary confirmed where derived:** 1 kΩ → ◆ SUSPECT,
+  1.2 kΩ → ○ OPEN on adjacent channels (ch7/ch8) — split sits between them
+  at ~1.09 kΩ; saturated-but-finite resistance correctly reads OPEN.
+- **Resting display:** all-idle still ○ OPEN on all eight channels.
+- **T-A04 re-verified:** OPEN NACKs 0x04, distinct from 0x10.
+- **T-A16 re-verified** after the v1.71 `armed_channel_went_open()` edit:
+  pull-while-ARMED disarms in ~1 s with the 3 × 200 ms blasts; key-off
+  disarm distinguishable.
+- **T-S19 screen wording re-verified:** OPEN – LIKELY FIRED, green.
+- **T-A24 PARTIAL PASS** — boundary half done. Still outstanding: 750 Ω
+  no-blip + 0x10 refusal, disarm-on-degradation swap while ARMED, 470 Ω
+  MARGINAL sanity value.
 - `rlc-hw-test-base` bench firmware still classifies with pre-v1.29
   thresholds (66 mV/1500 mV, 12 dB, its own CONT_BAND_* enum) — two
   threshold rebases stale and now missing SUSPECT. Left as-is (raw-µV
