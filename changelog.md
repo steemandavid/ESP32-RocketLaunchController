@@ -53,6 +53,10 @@ value); **680 Ω** — 719–729 mV SUSPECT (mid-window); both OPEN flavours
   over native USB, link re-verified from the remote's log — `LINK_ACK
   accepted` (strict fw match), 12/12 remote self-test suites, IDLE, rssi
   −38, vbat 7.68 V. Both units back on production 1.2.20.
+- **End of session:** both units rebuilt and reflashed fresh production
+  1.2.20 images (base over native USB, remote over its COM by-id); remote
+  App version `v1.2.0-37-g4433c72`, `LINK_ACK accepted` first attempt,
+  12/12 self-tests each, IDLE, rssi −42, missed=0, vbat 7.68 V.
 
 ## 2026-09-14 — fourth continuity band CONT_SUSPECT (fw 1.2.19 → 1.2.20, FSD v1.71)
 
