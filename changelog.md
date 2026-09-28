@@ -1,5 +1,44 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-28 — Remote dropped: ESP32 module unseated from its pin header (no code changes)
+
+The remote fell onto the ground. On the next power-up it showed an arm key
+fault, then REMOTE ERROR, and then a blank display with the red LED blinking.
+
+### Diagnosis
+
+Reset the remote over its COM by-id (`usb-1a86_USB_Single_Serial_5B5E043219-if00`)
+and captured the boot log:
+
+- Bootloader, 16 MB flash, 8 MB PSRAM (memory test OK) and fw 1.2.20 were all
+  healthy, and **12/12 self-test suites passed**. The chip itself was fine.
+- The boot stopped at the display health check:
+  ```
+  E rlc_disp: panel ID read-back FAILED: id=0x00000000, spi_errors 0->0
+  E rlc_remote: display init/health check FAILED (id=0x00000000) — halting
+  ```
+  This is the designed T-S10 halt: `LED_PATTERN_ERROR` plus the critical
+  alarm, with the panel never initialised, so the screen stays blank.
+- The ID read back as all zeros (normally `0x2A403300`), so nothing was
+  driving MISO. Together with the earlier arm-key contact disagreement
+  (NO GPIO 7 / NC GPIO 2 share a common ground), this pointed to one
+  mechanical cause, not two separate faults.
+
+### Cause and fix
+
+The **ESP32 module had worked loose from its pin header** in the fall. The
+operator reseated it and the remote came back fully working. No firmware,
+config or wiring changes were made.
+
+### Notes
+
+- Diagnostic signature: after a mechanical shock, `ID 0x00000000` plus an arm
+  key fault means a physically unseated module or connector. Reseat before
+  suspecting the chip or firmware.
+- The remote's ESP32 is only held by friction in its header. Consider
+  retaining it (strap, hot glue at the header ends, or soldering) before
+  field use.
+
 ## 2026-09-15 — hw-test-base bench continuity session: B-C01…B-C11 all PASS (docs only)
 
 The interactive `cont` half left outstanding from the bench-firmware
