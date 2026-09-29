@@ -16,6 +16,8 @@ typedef enum {
     BUZZER_BEEP_PING_FAIL,      /* 80ms on — ping failure */
     BUZZER_BEEP_LINK_TRY,       /* 40ms on — unlinked, handshake retried */
     BUZZER_BEEP_CONTINUITY_LOST,/* 200on/100off x2 + 200on */
+    BUZZER_BEEP_IGNITER_CONNECT,/* 100on/100off/100on — base connect chirp mirrored */
+    BUZZER_BEEP_IGNITER_DISCONNECT, /* 300on — base disconnect burst mirrored */
     BUZZER_ALARM_LINK_LOST,     /* 200on/200off repeating */
     BUZZER_ALARM_CRITICAL,      /* 100on/100off repeating */
     BUZZER_ALARM_ARMED,         /* 80on/1120off repeating — pad live, standing by */

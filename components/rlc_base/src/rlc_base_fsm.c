@@ -76,18 +76,18 @@ static bool s_link_lost_pending = false;
 /* C3/M3: Local dead-man timestamp — updated from wire-receive time of valid CMD_FIRE */
 static int64_t s_last_fire_cmd_ms = 0;
 
-/* ── §12.2 SIREN_IGNITER_CONNECTED chirp state ───────────────────
+/* ── §12.2 igniter connect/disconnect chirp state ────────────────
  *
- * Per-channel timestamp of the last connect chirp, and a global inhibit
- * deadline. Both exist to keep the blip meaning exactly one thing: "somebody
- * just plugged an igniter in". See SIREN_CONNECT_CHIRP_* in rlc_config.h for
- * why each is needed. FSM-task-owned like all state in this file. */
+ * Per-channel timestamp of the last chirp (either direction), and a global
+ * inhibit deadline. Both exist to keep the signals meaning exactly one thing:
+ * "somebody just made or broke an igniter connection". See
+ * SIREN_CONNECT_CHIRP_* in rlc_config.h for why each is needed. FSM-task-owned
+ * like all state in this file. */
 static int64_t s_chirp_last_ms[NUM_CHANNELS] = { 0 };
 static int64_t s_chirp_inhibit_until_ms = 0;
-/* The band that last blipped on each channel. The rate limit suppresses a
- * *repeat* of the same signal, never a change of signal — see
- * maybe_chirp_continuity(). CONT_OPEN is "nothing blipped yet": OPEN never
- * blips, so it cannot collide with a real entry. */
+/* Last band seen on each channel, OPEN until the sampler's first read. Only
+ * the OPEN↔non-OPEN crossings in maybe_chirp_continuity() sound; band changes
+ * among the non-OPEN bands just update it. */
 static uint8_t s_chirp_last_band[NUM_CHANNELS] = { 0 };
 
 /* Task and queue handles */
@@ -446,44 +446,47 @@ static bool armed_channel_went_marginal(const rlc_fsm_event_t *evt)
            evt->data.continuity.band == CONT_MARGINAL;
 }
 
-/* ── §12.2 igniter-connection blips (FSD §7.3.1) ─────────────────
+/* ── §12.2 igniter connect/disconnect chirps (FSD §7.3.1) ─────────────────
  *
- * A short blip when a channel's igniter appears on the continuity sense, so
- * the person kneeling at the pad hears the connection instead of walking back
- * to read the base or remote LEDs:
+ * An audible edge-tracker on each channel's continuity band, so both people
+ * who need it hear the connection state change without reading LEDs: the
+ * person kneeling at the pad, and — via the remote's mirrored beep — the LCO
+ * at the firing point:
  *
- *   CONNECTED → one blip   (SIREN_IGNITER_CONNECTED)
- *   MARGINAL  → two blips  (SIREN_IGNITER_MARGINAL, added fw 1.2.5)
+ *   OPEN → CONNECTED/MARGINAL/SUSPECT → two short blips
+ *                                      (SIREN_IGNITER_CONNECTED)
+ *   CONNECTED/MARGINAL/SUSPECT → OPEN  → one longer burst
+ *                                      (SIREN_IGNITER_DISCONNECTED,
+ *                                       added fw 1.2.21)
  *
- * MARGINAL was deliberately silent in 1.2.4 until the single blip had been
- * heard in the field (T-A21, PASS 2026-09-10). It gets its own signal now
- * because a high-resistance crimp is precisely the fault the operator wants to
- * know about while still standing at the motor, and because one-versus-two is
- * the easiest discrimination available to someone who is not looking at
- * anything. Both are short and quiet enough not to be confused with the
- * 3 × 200 ms ERROR and CONTINUITY_LOST alerts.
+ * fw 1.2.21 replaced v1.57/v1.58's band discrimination (one blip good, two
+ * marginal, suspect and disconnection silent) with this direction pair. Which
+ * band a connection reads is on the display; by ear, "connected" versus "not"
+ * is the distinction that matters at the moment it changes — and a
+ * disconnection is news even to the person who caused it (a knocked clip, a
+ * pulled lead), and certainly to an LCO who cannot see the pad. Both signals
+ * stay clear of the 3 × 200 ms ERROR and CONTINUITY_LOST alerts, which mean
+ * *stop* rather than *look*.
  *
- * OPEN and SUSPECT stay silent (SUSPECT since FSD v1.71). Disconnection is
- * not an event the operator needs told — they are the one doing it — and a
- * SUSPECT reading is not a connection made; in both cases the next move is
- * the same (look at the display, fix or re-make the joint), which silence
- * already conveys by contrast with the blips. The armed-channel case has its
- * own, louder treatment in §7.2.7.
+ * Band changes among the non-OPEN bands (CONNECTED↔MARGINAL↔SUSPECT) are
+ * silent: no connection was made or broken, and the next move is the same
+ * either way (look at the display, fix or re-make the joint). The
+ * armed-channel case has its own, louder treatment in §7.2.7.
  *
  * Called ONLY from the BOOT and IDLE arms of process_event(). That gate is the
  * design, not a convenience:
  *
  *   - ARMED / PRE_FIRE / FIRING: the siren is the pad's continuous warning
  *     that the fire path is live. Nothing may interrupt it, and nobody should
- *     be connecting igniters then anyway.
+ *     be touching igniters then anyway.
  *   - LINK_LOST / ERROR: a patterned alert is running and carries meaning; a
- *     blip would cut it short or be misread as part of it.
+ *     chirp would cut it short or be misread as part of it.
  *   - POST_FIRE: the armed channel's re-read after the relay returns to NC is
  *     the fire-result indication, not an operator action.
  *
  * BOOT is included deliberately. The base sits in BOOT until the link comes
  * up, and connecting igniters at the pad before the LCO has powered the remote
- * is normal — refusing to blip there would withhold the feature during the
+ * is normal — refusing to chirp there would withhold the feature during the
  * part of the setup it was asked for. The siren driver declines on its own if
  * the siren is busy, so BOOT's own error paths stay audible.
  */
@@ -492,42 +495,54 @@ static void maybe_chirp_continuity(const rlc_fsm_event_t *evt)
     uint8_t ch   = evt->data.continuity.channel;
     uint8_t band = evt->data.continuity.band;
 
-    if (band != CONT_CONNECTED && band != CONT_MARGINAL) return;
     if (ch < 1 || ch > NUM_CHANNELS) return;
-    /* The sampler settling on a channel it had never read, not a connection
-     * being made. Igniters already in place at power-on would otherwise blip
-     * their way through the first round-robin sweep. */
-    if (evt->data.continuity.initial) return;
+
+    uint8_t prev = s_chirp_last_band[ch - 1];
+
+    /* The sampler settling on a channel it had never read is not a connection
+     * being made — igniters already in place at power-on must not chirp their
+     * way through the first round-robin sweep — but the band still becomes
+     * the baseline, so the first *real* transition afterwards is a true edge
+     * rather than a stale-OPEN false one. */
+    if (evt->data.continuity.initial) {
+        s_chirp_last_band[ch - 1] = band;
+        return;
+    }
+
+    bool connected_now = (band != CONT_OPEN);
+    bool was_connected = (prev != CONT_OPEN);
+    if (connected_now == was_connected) {
+        /* No OPEN-boundary crossing — remember the band, sound nothing. */
+        s_chirp_last_band[ch - 1] = band;
+        return;
+    }
 
     int64_t t = now_ms();
+
+    /* The band is remembered on every early-out path below, so a suppressed
+     * edge is not re-heard as a fresh one by the next event. */
+    s_chirp_last_band[ch - 1] = band;
+
     if (t < s_chirp_inhibit_until_ms) return;
 
-    /* Rate limit, per channel and per band. A repeat of the same signal inside
-     * the window is chatter — a half-seated connector being wiggled — and says
-     * nothing the operator has not just heard. A *change* of signal always
-     * sounds, because it is the whole message: re-seating a marginal crimp
-     * until it reads good is exactly the loop this feature exists to close,
-     * and swallowing the confirming single blip would leave the operator
-     * believing the connection was still bad. Band oscillation at the
-     * CONNECTED/MARGINAL boundary can therefore blip, but the round-robin
-     * sampler caps that at one change per ~800 ms per channel — and a
-     * connection that cannot decide which band it is in is itself something
-     * the operator needs to hear about. */
-    if (s_chirp_last_band[ch - 1] == band &&
-        s_chirp_last_ms[ch - 1] != 0 &&
+    /* Rate limit, per channel and direction-neutral. Any chirp on the same
+     * channel inside the window is chatter — a half-seated connector being
+     * wiggled across the OPEN boundary — and says nothing the operator has
+     * not just heard. Per channel, so connecting eight igniters in succession
+     * still gives eight signals. */
+    if (s_chirp_last_ms[ch - 1] != 0 &&
         (t - s_chirp_last_ms[ch - 1]) < SIREN_CONNECT_CHIRP_MIN_INTERVAL_MS) {
         return;
     }
 
     s_chirp_last_ms[ch - 1] = t;
-    s_chirp_last_band[ch - 1] = band;
 
-    if (band == CONT_CONNECTED) {
-        ESP_LOGI(TAG, "ch %u connected — chirp", ch);
+    if (connected_now) {
+        ESP_LOGI(TAG, "ch %u band %u — connect chirp", ch, band);
         siren_chirp_connect();
     } else {
-        ESP_LOGI(TAG, "ch %u MARGINAL — double chirp", ch);
-        siren_chirp_marginal();
+        ESP_LOGI(TAG, "ch %u band -> OPEN — disconnect chirp", ch);
+        siren_chirp_disconnect();
     }
 }
 

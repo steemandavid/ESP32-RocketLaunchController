@@ -57,6 +57,18 @@ static volatile uint8_t     s_base_end_pending_ch = 0;
 static rlc_payload_status_update_t s_last_status;
 static int64_t  s_last_status_rx_ms = 0;
 
+/* ── §12.1 igniter connect/disconnect mirror state (fw 1.2.21) ──
+ *
+ * The remote's ears for the base's §12.2 igniter chirps: per-channel band
+ * snapshot for edge detection, per-channel last-chirp timestamp for the same
+ * anti-chatter rate limit the base applies, and a validity flag. The flag is
+ * cleared on (re)link so the first STATUS_UPDATE afterwards seeds the bands
+ * silently — whatever happened while the link was down, or before it came
+ * up, is state, not news. FSM-task-owned like everything else here. */
+static uint8_t s_mirror_last_bands[NUM_CHANNELS];
+static int64_t s_mirror_last_ms[NUM_CHANNELS];
+static bool    s_mirror_valid = false;
+
 /* Guards s_last_status/s_last_status_rx_ms: written here on the FSM task,
  * read by the display task (remote_fsm_get_status). */
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -143,6 +155,83 @@ static inline int64_t now_ms(void)
 static bool     s_update_seq_valid = false;
 static uint16_t s_last_update_seq = 0;
 
+/* ── §12.1 mirror of the base's §12.2 igniter chirps (fw 1.2.21) ──
+ *
+ * The base chirps its siren when an igniter is connected or disconnected at
+ * the pad; the LCO is rarely the person making the connection, and the siren
+ * is a pad-warning instrument — so the remote echoes both signals on its
+ * buzzer, derived from the continuity_bands edges in the STATUS_UPDATE stream
+ * (sent on change as well as periodically, so the echo is prompt).
+ *
+ * The gate mirrors the base's own: the base sounds its chirps in BOOT and
+ * IDLE only, never where the siren means something else — so the remote
+ * sounds its echo only while it is IDLE itself and the base reports BOOT or
+ * IDLE. Anything the remote learns outside that window (e.g. an igniter
+ * connected on another channel while a channel was armed) updates the
+ * snapshot silently, exactly as the base's own BOOT/IDLE gate withholds its
+ * chirp.
+ *
+ * Band changes that do not cross OPEN are silent, and the rate limit is the
+ * same per-channel, direction-neutral window the base applies (SIREN_CONNECT_
+ * CHIRP_MIN_INTERVAL_MS) — a half-seated connector being wiggled must not
+ * rattle the buzzer any more than it may rattle the siren.
+ *
+ * One frame carries at most one pattern: the buzzer mailbox is depth-1 by
+ * design (RM-05), and a connect edge outranks a disconnect when a frame holds
+ * both — it is the one that asks for a look at the pad. */
+static void maybe_chirp_continuity_mirror(const rlc_payload_status_update_t *st)
+{
+    if (!s_mirror_valid) {
+        for (int ch = 1; ch <= NUM_CHANNELS; ch++) {
+            s_mirror_last_bands[ch - 1] =
+                (uint8_t)((st->continuity_bands >> ((ch - 1) * 2)) & 0x3);
+            s_mirror_last_ms[ch - 1] = 0;
+        }
+        s_mirror_valid = true;
+        return;
+    }
+
+    bool can_chirp = (s_state == STATE_IDLE) &&
+                     (st->base_state == STATE_BOOT ||
+                      st->base_state == STATE_IDLE);
+    int64_t t = now_ms();
+    bool any_connect = false;
+    bool any_disconnect = false;
+
+    for (int ch = 1; ch <= NUM_CHANNELS; ch++) {
+        uint8_t band = (uint8_t)((st->continuity_bands >> ((ch - 1) * 2)) & 0x3);
+        uint8_t prev = s_mirror_last_bands[ch - 1];
+        /* Always adopt the new band, on every path: an edge this frame does
+         * not sound (gated, or chatter) must not be re-heard as fresh news
+         * by the next frame. */
+        s_mirror_last_bands[ch - 1] = band;
+
+        bool now_conn = (band != CONT_OPEN);
+        bool was_conn = (prev != CONT_OPEN);
+        if (now_conn == was_conn) continue;
+
+        if (!can_chirp) continue;
+
+        if (s_mirror_last_ms[ch - 1] != 0 &&
+            (t - s_mirror_last_ms[ch - 1]) <
+                SIREN_CONNECT_CHIRP_MIN_INTERVAL_MS) {
+            continue;
+        }
+        s_mirror_last_ms[ch - 1] = t;
+
+        if (now_conn) any_connect = true;
+        else          any_disconnect = true;
+        ESP_LOGI(TAG, "ch %d band %u — mirror %s chirp",
+                 ch, band, now_conn ? "connect" : "disconnect");
+    }
+
+    if (any_connect) {
+        buzzer_play(BUZZER_BEEP_IGNITER_CONNECT);
+    } else if (any_disconnect) {
+        buzzer_play(BUZZER_BEEP_IGNITER_DISCONNECT);
+    }
+}
+
 /* Cache the latest STATUS_UPDATE from the base (FSM task only). */
 static void cache_status(const rlc_payload_status_update_t *st)
 {
@@ -179,6 +268,11 @@ static void cache_status(const rlc_payload_status_update_t *st)
     memcpy(&s_last_status, st, sizeof(s_last_status));
     s_last_status_rx_ms = t;
     portEXIT_CRITICAL(&s_status_lock);
+
+    /* §12.1 igniter-chirp mirror: every STATUS_UPDATE passes through here in
+     * every state, which is exactly what the mirror needs — the band snapshot
+     * stays current even in states where it must not sound. */
+    maybe_chirp_continuity_mirror(st);
 }
 
 /* Continuity band for a channel out of the cached STATUS_UPDATE bitfield
@@ -501,6 +595,10 @@ static void do_enter_link_lost(void)
     s_fire_repeat_active = false;
     s_armed_channel = 0;
     s_base_end_pending_ch = 0;   /* stale across a link loss (T-A17 latch) */
+    /* §12.1 mirror: bands may change invisibly while the link is down — the
+     * first status after recovery re-seeds silently rather than reporting a
+     * mix of old and new state as news. */
+    s_mirror_valid = false;
     set_prefire_start(0);
     buzzer_play(BUZZER_ALARM_LINK_LOST);
     rlc_rgb_led_set_pattern(LED_PATTERN_STATUS);
@@ -793,6 +891,9 @@ static void process_event(const rlc_fsm_event_t *evt)
             /* RM-02: adopt the base's advertised channel count now that the
              * handshake has completed, so the encoder cannot select past it. */
             encoder_set_max_channel(rlc_link_get_peer_num_channels());
+            /* §12.1 mirror: same silent re-seed as link loss — whatever was
+             * connected before this power cycle is state, not news. */
+            s_mirror_valid = false;
             do_enter_idle();
         } else if (evt->type == EVT_BATTERY_CRITICAL) {
             ESP_LOGW(TAG, "BATTERY_CRITICAL during LINKING -> ERROR");

@@ -126,32 +126,46 @@
 
 #define SIREN_LINK_LOST_DURATION_MS    4000
 
-/* ── SIREN_IGNITER_CONNECTED (FSD §12.2, added fw 1.2.4) ─────────
+/* ── SIREN_IGNITER_CONNECTED / SIREN_IGNITER_DISCONNECTED ────────
+ * (FSD §12.2; connect blips added fw 1.2.4/1.2.5, unified into a
+ * direction pair with the disconnect burst and the remote mirror in
+ * fw 1.2.21.)
  *
- * One short blip when a channel's igniter appears on the continuity sense, so
- * the person working at the pad hears that the connection was made without
- * walking back to read the base or remote LEDs.
+ * Two short blips when a channel's igniter appears on the continuity sense —
+ * in ANY band that can fire (CONNECTED, MARGINAL or SUSPECT) — and one longer
+ * burst when it leaves, so both the person working at the pad and the LCO at
+ * the firing point hear the connection state change without reading LEDs.
+ * The band is on the display; by ear, "connected" versus "not connected" is
+ * the distinction that matters at the moment the connection is made.
  *
- * 100 ms, not the 200 ms of every other pattern: the operator making the
- * connection is standing next to the base, and the siren is a *pad* warning —
- * loud by design. Short enough not to punish the ear, long enough that the
- * siren's internal sweep produces a tone rather than a click (v1.35's lesson
- * from the removed ARMED pulse). If it proves inaudible on the bench, raise
- * this before reaching for anything cleverer.
+ * The connect blip is 100 ms, not the 200 ms of every other pattern: the
+ * operator making the connection is standing next to the base, and the siren
+ * is a *pad* warning — loud by design. Short enough not to punish the ear,
+ * long enough that the siren's internal sweep produces a tone rather than a
+ * click (v1.35's lesson from the removed ARMED pulse). If it proves inaudible
+ * on the bench, raise this before reaching for anything cleverer. The
+ * disconnect burst is 300 ms — three blip-lengths in one breath, so "gone"
+ * reads as the same voice saying something slower, and it stays clear of
+ * SIREN_ERROR / SIREN_CONTINUITY_LOST (three separate 200 ms blasts, which
+ * mean *stop*, not *look*).
  *
  * The rate limit is anti-chatter insurance. Round-robin sampling already
  * bounds one channel to a transition pair per ~1.6 s and the OPEN band has
  * 50 mV of hysteresis, so a clean connection cannot machine-gun the siren —
- * but a half-seated XT60 being wiggled could. Per channel, so connecting eight
- * igniters in quick succession still gives eight blips.
+ * but a half-seated XT60 being wiggled could. Per channel and direction-
+ * neutral (either signal on the same channel inside the window is chatter),
+ * so connecting eight igniters in quick succession still gives eight signals.
  *
  * The inhibit window covers the two cases where a band change is not somebody
- * plugging something in: the sampler's first classification of each channel
- * after boot (igniters already connected at power-on would otherwise blip
- * their way through the first 800 ms sweep — handled by the `initial` flag on
- * the event, this window is the backstop), and the post-fire re-read, where an
- * unfired igniter reappears as CONNECTED with nobody having touched it. */
+ * plugging something in or pulling it out: the sampler's first classification
+ * of each channel after boot (igniters already connected at power-on would
+ * otherwise blip their way through the first 800 ms sweep — handled by the
+ * `initial` flag on the event, this window is the backstop), and the post-fire
+ * re-read, where the armed channel comes back as CONNECTED (did not fire) or
+ * OPEN (burned through) with nobody having touched it — neither direction
+ * sounds there. */
 #define SIREN_CONNECT_CHIRP_MS              100
+#define SIREN_DISCONNECT_CHIRP_MS           300
 #define SIREN_CONNECT_CHIRP_MIN_INTERVAL_MS 2000
 #define SIREN_CONNECT_CHIRP_INHIBIT_MS      2000
 #define NACK_DISPLAY_DURATION_MS       3000

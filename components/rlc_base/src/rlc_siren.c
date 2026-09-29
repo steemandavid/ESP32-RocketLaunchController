@@ -247,18 +247,18 @@ void siren_start_continuity_lost(void)
     siren_unlock();
 }
 
-/* SIREN_IGNITER_CONNECTED: one SIREN_CONNECT_CHIRP_MS blip, same one-shot
- * mechanism as siren_boot_pulse() below — but only when the siren is idle.
+/* SIREN_IGNITER_CONNECTED / SIREN_IGNITER_DISCONNECTED one-shots — same
+ * mechanism as siren_boot_pulse() below, but only when the siren is idle.
  *
- * The guard is the safety-relevant part. This is the only siren call driven by
- * an external event (someone plugging in an igniter) rather than by a state
- * transition, so it is the only one that can arrive at an arbitrary moment.
- * Arriving mid-pattern it would stop the timer, drive ON, and drive OFF at its
- * first tick — cutting a LINK_LOST or ERROR pattern short, or worse, silencing
- * the continuous ARMED tone that is the pad's only audible warning. The FSM
- * does not call it from those states; this makes that non-negotiable rather
- * than a property of one switch statement. */
-static void siren_chirp(uint8_t blips, const char *what)
+ * The guard is the safety-relevant part. These are the only siren calls driven
+ * by an external event (someone plugging in or pulling out an igniter) rather
+ * than by a state transition, so they are the only ones that can arrive at an
+ * arbitrary moment. Arriving mid-pattern they would stop the timer, drive ON,
+ * and drive OFF at the first tick — cutting a LINK_LOST or ERROR pattern
+ * short, or worse, silencing the continuous ARMED tone that is the pad's only
+ * audible warning. The FSM does not call them from those states; this makes
+ * that non-negotiable rather than a property of one switch statement. */
+static void siren_chirp(uint8_t blips, uint32_t half_ms, const char *what)
 {
     siren_lock();
     if (s_siren_on || s_timer_active) {
@@ -266,14 +266,16 @@ static void siren_chirp(uint8_t blips, const char *what)
         ESP_LOGD(TAG, "%s chirp suppressed — siren already sounding", what);
         return;
     }
-    /* N blips at SIREN_CONNECT_CHIRP_MS: the callback toggles on every tick
-     * and decrements the count on each ON→OFF edge, so a count of N yields
-     * exactly N sounded halves before the "pattern finished" branch stops the
-     * timer. (siren_boot_pulse() below uses the count-0 shortcut instead,
-     * which ends one tick sooner; the audible output of count 1 is identical.) */
+    /* N blips at half_ms: the callback toggles on every tick and decrements
+     * the count on each ON→OFF edge, so a count of N yields exactly N sounded
+     * halves before the "pattern finished" branch stops the timer. A count of
+     * 1 at the longer SIREN_DISCONNECT_CHIRP_MS is one sustained burst — the
+     * same voice as the connect blips, saying something slower.
+     * (siren_boot_pulse() below uses the count-0 shortcut instead, which ends
+     * one tick sooner; the audible output of count 1 is identical.) */
     s_pulse_count = blips;
     siren_drive(true);
-    if (siren_timer_run(SIREN_CONNECT_CHIRP_MS)) {
+    if (siren_timer_run(half_ms)) {
         s_timer_active = true;
     } else {
         siren_drive(false);   /* see siren_start_link_lost() */
@@ -283,24 +285,22 @@ static void siren_chirp(uint8_t blips, const char *what)
     siren_unlock();
 }
 
+/* Two 100 ms blips — any band that can fire (CONNECTED, MARGINAL, SUSPECT).
+ * fw 1.2.21 unified v1.57/v1.58's band discrimination into a direction pair:
+ * which band it is stays on the display, "connected" versus "not" is what the
+ * ear needs at the moment the connection is made. */
 void siren_chirp_connect(void)
 {
-    siren_chirp(1, "connect");
+    siren_chirp(2, SIREN_CONNECT_CHIRP_MS, "connect");
 }
 
-/* SIREN_IGNITER_MARGINAL: two blips, same length and spacing as the single
- * connect blip.
- *
- * Two rather than three, and 100 ms rather than 200 ms, so it cannot be
- * confused with `SIREN_ERROR` or `SIREN_CONTINUITY_LOST` (both three 200 ms
- * blasts) — those mean "stop what you are doing", this means "look at that
- * crimp". Counting one against two is the easiest discrimination available to
- * someone who is not looking at anything, which is the whole point of both
- * signals, and pairing them at the same pitch and length makes them read as
- * two values of one message rather than two unrelated alarms. */
-void siren_chirp_marginal(void)
+/* One 300 ms burst. Three blip-lengths in one breath rather than three
+ * separate 200 ms blasts — SIREN_ERROR and SIREN_CONTINUITY_LOST mean *stop*,
+ * this means *look*; the connect pair and this burst read as one message in
+ * two tempos, not as a third alarm. */
+void siren_chirp_disconnect(void)
 {
-    siren_chirp(2, "marginal");
+    siren_chirp(1, SIREN_DISCONNECT_CHIRP_MS, "disconnect");
 }
 
 /* SIREN_BOOT_TEST: one 200 ms blast. Starting the timer with the cycle count

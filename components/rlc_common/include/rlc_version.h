@@ -1518,7 +1518,46 @@
  *
  * Both units changed; the version check is strict — flash them together. */
 
+/* 1.2.21 (2026-09-29): igniter connect/disconnect chirps unified into a
+ * direction pair, and the remote mirrors them (FSD v1.74).
+ *
+ * Operator request. The pad-side audible connection cues were a band
+ * discriminator: one 100 ms blip for CONNECTED (fw 1.2.4), two for MARGINAL
+ * (fw 1.2.5), silence for SUSPECT and for every disconnection — and nothing
+ * at all on the remote, so the LCO at the firing point learned nothing by
+ * ear while igniters were being wired at the pad.
+ *
+ * Now the base sounds two short 100 ms blips whenever a channel's band
+ * crosses OPEN in either direction *into* a firing-capable band — CONNECTED,
+ * MARGINAL or SUSPECT alike; which band it is stays on the display — and one
+ * longer 300 ms burst when a band crosses out to OPEN. The v1.57/v1.58
+ * one-blip-good / two-blip-marginal discrimination is retired: a band change
+ * that does not cross OPEN is no longer news by ear. The 300 ms burst is
+ * three blip-lengths in one breath, so both signals read as one voice at two
+ * tempos and stay clear of SIREN_ERROR / SIREN_CONTINUITY_LOST (three
+ * separate 200 ms blasts, which mean *stop*, not *look*).
+ *
+ * The remote mirrors both signals on its buzzer: BUZZER_BEEP_IGNITER_CONNECT
+ * (100/100/100, same shape as BEEP_DOUBLE) and BUZZER_BEEP_IGNITER_DISCONNECT
+ * (one 300 ms burst — deliberately not BEEP_LONG's 500 ms, which means
+ * "disarmed"). Derived from the continuity_bands edges in the STATUS_UPDATE
+ * stream, which the base already sends on change as well as every 2 s, so no
+ * protocol change. The mirror gate matches the base's own: the remote sounds
+ * it only while IDLE itself and the base reports BOOT or IDLE, and the band
+ * snapshot re-seeds silently after link loss/relink and after any status
+ * received outside the gate, so invisible changes are never replayed as
+ * news. Same per-channel, direction-neutral 2 s anti-chatter window as the
+ * base.
+ *
+ * Every v1.57/v1.58 gate and suppression carries over to both directions:
+ * BOOT and IDLE only, never while the siren/buzzer means something else; the
+ * sampler's initial classification seeds silently; the POST_FIRE -> IDLE
+ * inhibit now covers the burned-through OPEN reading too. Host T-FSM10
+ * rewritten for the new semantics.
+ *
+ * Both units changed; the version check is strict — flash them together. */
+
 #define RLC_VERSION_MAJOR  1
 #define RLC_VERSION_MINOR  2
-#define RLC_VERSION_PATCH  20
-#define RLC_VERSION_STRING "1.2.20"
+#define RLC_VERSION_PATCH  21
+#define RLC_VERSION_STRING "1.2.21"

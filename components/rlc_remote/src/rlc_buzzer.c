@@ -188,6 +188,23 @@ static void buzzer_task(void *arg)
                     play_steps(steps, 5, false);
                     break;
                 }
+                /* Mirror of the base's §12.2 igniter chirps (fw 1.2.21): the
+                 * LCO at the firing point hears the pad's connection state
+                 * change too, derived from STATUS_UPDATE continuity edges.
+                 * Connect is the same shape as BEEP_DOUBLE (a separate pattern
+                 * so it can diverge and so call sites read as what they are);
+                 * disconnect is one 300 ms burst — deliberately not the 500 ms
+                 * of BEEP_LONG, which means "disarmed". */
+                case BUZZER_BEEP_IGNITER_CONNECT: {
+                    buzzer_step_t steps[] = {{100, true}, {100, false}, {100, true}};
+                    play_steps(steps, 3, false);
+                    break;
+                }
+                case BUZZER_BEEP_IGNITER_DISCONNECT: {
+                    buzzer_step_t steps[] = {{300, true}};
+                    play_steps(steps, 1, false);
+                    break;
+                }
                 case BUZZER_ALARM_LINK_LOST: {
                     buzzer_step_t steps[] = {{200, true}, {200, false}};
                     play_steps(steps, 2, true);

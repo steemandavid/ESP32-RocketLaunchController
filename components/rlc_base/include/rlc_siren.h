@@ -63,12 +63,16 @@ void siren_start_continuity_lost(void);
 void siren_boot_pulse(void);
 
 /**
- * One short blip (SIREN_CONNECT_CHIRP_MS, then silence) — FSD §12.2
+ * Two short blips (SIREN_CONNECT_CHIRP_MS each) — FSD §12.2
  * SIREN_IGNITER_CONNECTED.
  *
- * Sounded when a channel's igniter appears on the continuity sense, so the
- * operator at the pad hears the connection being made instead of walking back
- * to read the LEDs on the base or the remote.
+ * Sounded when a channel's igniter appears on the continuity sense — in ANY
+ * band that can fire (CONNECTED, MARGINAL or SUSPECT) — so the operator at
+ * the pad hears the connection being made instead of walking back to read the
+ * LEDs on the base or the remote. Which band it is stays on the display; by
+ * ear, "connected" versus "not" is the distinction that matters at the moment
+ * the connection is made. (fw 1.2.21, replacing v1.57/v1.58's one-blip-good /
+ * two-blip-marginal / silent-suspect discrimination.)
  *
  * Unlike every other entry point here, this one REFUSES rather than takes
  * over: if the siren is already sounding — a continuous ARMED/PRE_FIRE/FIRING
@@ -82,14 +86,18 @@ void siren_boot_pulse(void);
 void siren_chirp_connect(void);
 
 /**
- * Two short blips — FSD §12.2 SIREN_IGNITER_MARGINAL.
+ * One longer burst (SIREN_DISCONNECT_CHIRP_MS, then silence) — FSD §12.2
+ * SIREN_IGNITER_DISCONNECTED (fw 1.2.21).
  *
- * Sounded when a channel's igniter appears on the continuity sense but reads
- * MARGINAL: a connection with enough resistance that it may not fire. One blip
- * means good, two means look at it — the operator hears the difference without
- * walking back to the LEDs, which is the case that costs a launch window.
+ * Sounded when a channel's igniter leaves the continuity sense (band to OPEN),
+ * so an igniter knocked off or pulled at the pad is heard by whoever is close
+ * enough to have caused it — and, via the remote's mirrored beep, by the LCO
+ * who is not. 300 ms: three blip-lengths in one breath, so it reads as the
+ * connect signal's voice saying something slower, while staying clear of the
+ * three separate 200 ms blasts of SIREN_ERROR / SIREN_CONTINUITY_LOST, which
+ * mean *stop* rather than *look*.
  *
  * Same gate and same refusal-while-busy behaviour as siren_chirp_connect(),
  * which see.
  */
-void siren_chirp_marginal(void);
+void siren_chirp_disconnect(void);

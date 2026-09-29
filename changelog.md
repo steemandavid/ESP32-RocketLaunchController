@@ -1,5 +1,113 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-09-29 — Igniter connect/disconnect chirps unified + remote mirror (fw 1.2.20 → 1.2.21, FSD v1.74)
+
+Operator request. The pad-side audible connection cues were a *band*
+discriminator — one 100 ms blip for CONNECTED (fw 1.2.4), two for MARGINAL
+(fw 1.2.5), silence for SUSPECT and for every disconnection — and the remote
+sounded nothing, so the LCO at the firing point learned nothing by ear while
+igniters were wired at the pad. Now:
+
+- **Connect** (band crosses OPEN into CONNECTED, MARGINAL **or** SUSPECT):
+  the base sounds **two 100 ms blips**; all three bands get the same signal —
+  which band it is stays on the display.
+- **Disconnect** (band crosses out to OPEN): the base sounds **one 300 ms
+  burst** — three blip-lengths in one breath, the connect signal's voice at a
+  slower tempo, and clear of ERROR/CONTINUITY_LOST's three *separate*
+  200 ms blasts, which mean *stop*.
+- Band changes that do not cross OPEN (CONNECTED↔MARGINAL↔SUSPECT) are
+  silent — the v1.58 one-blip-vs-two band discrimination, and the re-seat
+  loop it existed for, are retired.
+- **The remote mirrors both signals on its buzzer**: `BEEP_IGNITER_CONNECT`
+  (100/100/100) and `BEEP_IGNITER_DISCONNECT` (one 300 ms burst —
+  deliberately not `BEEP_LONG`'s 500 ms, which means "disarmed"). Derived
+  from `continuity_bands` edges in the STATUS_UPDATE stream the base already
+  sends on change, so there is **no protocol change**.
+
+### Design notes
+
+- The mirror's gate matches the base's own: it sounds only while the remote
+  is IDLE *and* the base reports BOOT or IDLE. Edges observed outside that
+  window (an igniter connected elsewhere while a channel was armed, anything
+  that happened while the link was down) update the band snapshot silently —
+  the snapshot re-seeds after link loss/relink — so invisible changes are
+  never replayed as news.
+- Anti-chatter stays per-channel and becomes direction-neutral (any chirp on
+  the same channel within the 2 s window is a wiggled connector). One frame
+  carries at most one pattern; a connect edge outranks a disconnect.
+- Every v1.57/v1.58 gate and suppression carries over to both directions:
+  BOOT and IDLE only; the sampler's initial classification seeds silently
+  (and now *stores* the band, so the first real crossing is a true edge);
+  and the POST_FIRE → IDLE inhibit also covers the burned-through OPEN
+  reading, which is not a "disconnection" either.
+- The base's `initial`-flag handling changed subtly: the old code skipped
+  initial events entirely, which would have left a stale OPEN under the new
+  edge logic and false-chirped later; initial reads now seed the baseline.
+
+### Files
+
+- `components/rlc_common/include/rlc_config.h` — new `SIREN_DISCONNECT_CHIRP_MS`
+  (300); block comments rewritten for the direction pair.
+- `components/rlc_base/{include/rlc_siren.h,src/rlc_siren.c}` —
+  `siren_chirp_connect()` is now two blips; `siren_chirp_marginal()` deleted;
+  new `siren_chirp_disconnect()`; `siren_chirp()` takes the half-period.
+- `components/rlc_base/src/rlc_base_fsm.c` — `maybe_chirp_continuity()`
+  rewritten as an OPEN-boundary edge tracker (both directions, initial reads
+  seed, direction-neutral rate limit).
+- `components/rlc_remote/{include/rlc_buzzer.h,src/rlc_buzzer.c}` — the two
+  new one-shot patterns.
+- `components/rlc_remote/src/rlc_remote_fsm.c` — `maybe_chirp_continuity_mirror()`
+  called from `cache_status()` (the single point every STATUS_UPDATE passes
+  through, all states); seed reset on link loss and link (re)establishment.
+- `tests/host/test_base_fsm.c` — T-FSM10 rewritten for the new semantics;
+  stubs updated. All host tests pass (0 failures).
+- FSD v1.74 (§7.3.1 step 5, §12.1 + mirror paragraph, §12.2, §14.1, §15.2
+  T-A21 rewritten / T-A22 retired); `rlc_version.h` 1.2.21;
+  `Development_Progress.md` (Phase 5 row + version table, incl. a
+  long-missing 1.2.20 row).
+
+### Status and follow-ups
+
+- **Wrong-unit flash incident (same session), fixed.** The base was flashed
+  with the REMOTE 1.2.21 image over native USB by-id
+  `usb-Espressif_USB_JTAG_serial_debug_unit_44:1B:F6:81:F1:70-if00` — that
+  by-id was misidentified as the remote from the stale 2026-04-16 MAC table,
+  when the serial-ports reference (corrected 2026-09-12) has it as the BASE
+  (chip #4 = the former remote board, promoted 2026-08-20; the remote's MAC
+  is `AC:A7:04:E2:F2:8C`). Symptoms, all fully explained by the mix-up with
+  **no hardware fault**: remote fw on base hardware fails its display health
+  check (`id=0x00000000` — the base has no panel) and halts; the halt's
+  critical-error alarm (100 ms on/off forever) landed on a base driver and
+  produced **constant relay clicking**; the "missing splash asset" was simply
+  the splash partition never having been written on this board; and the real
+  remote, its base gone silent, showed the fault state. The base was
+  re-flashed with the base 1.2.21 image over the same port and verified:
+  correct banner, relays safe, 12/12 self-tests, ERROR only for VBAT CRITICAL
+  (0 mV — bench USB power, battery disconnected; clears with battery + power
+  cycle). **Lesson recorded: always confirm unit identity (`esptool read-mac`
+  + the serial-ports reference memory) before flashing, especially over
+  MAC-embedded native-USB by-ids.**
+- **Remote flashed to 1.2.21 and the pair is linked.** Remote flashed over
+  its COM by-id `usb-1a86_USB_Single_Serial_5B5E043219-if00` after verifying
+  its MAC with `esptool read-mac` (`ac:a7:04:e2:f2:8c` — the remote). Boot
+  log: 12/12 self-tests, splash asset present (50 frames / 10 s — the base
+  board never had one, which was the earlier "missing splash"), display
+  healthy, LINK_ACK accepted, LINKING → IDLE. Base re-flashed and healthy on
+  battery (12.41 V, state=BOOT, err=0x00).
+- **T-A21 retest PARTIAL (bench, same session).** With the base IDLE on
+  battery (steady 12.41 V) and the remote linked but untethered, the base log
+  verified: connect chirp on OPEN→CONNECTED, disconnect burst on →OPEN, and
+  the wiggled-connector rate limit exactly as specified — every crossing
+  outside the 2 s per-channel window chirped, every repeat inside it was
+  suppressed, including direction flips mid-wiggle, and the chirps changed no
+  state. Outstanding: MARGINAL/SUSPECT loads, ARMED-gate silence, post-fire
+  re-read, remote mirror by ear, relink re-seed.
+- **Hardware watch item: the base battery collapsed to ~0 V under load, twice
+  in one session** (12.4 V → 9.3 V → ~0 V within ~10 s, unit kept running on
+  USB; ERROR latched VBAT CRITICAL, cleared by power cycle). If this was not
+  a deliberate switch-off, the pack or its lead/switch is failing under load
+  — inspect before further bench or field use (bug #25 territory).
+
 ## 2026-09-28 — Remote dropped: ESP32 module unseated from its pin header (no code changes)
 
 The remote fell onto the ground. On the next power-up it showed an arm key
