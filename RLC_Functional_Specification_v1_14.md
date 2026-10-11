@@ -1,7 +1,7 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.75
+**Version:** 1.76
 **Date:** 2026-10-11
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
@@ -89,6 +89,7 @@
 | 1.73 | 2026-09-15 | **T-A24 fully PASS; v1.71 SUSPECT band closed out on target.** As-run values with the bench parts available (recorded in the T-A24 row): **820 Ω** (~783 mV, mid-window) for the SUSPECT cases — ◆ orange and silent on connect, NACK `0x10` "HIGH RESISTANCE" on ARM, and the **CONNECTED→SUSPECT disarm live on target** (armed on a 2 Ω load, 820 Ω bridged across, 2 Ω removed → disarm within ~1 s, 3 × 200 ms blasts, "CONTINUITY LOST - DISARMED", channel settles ◆ SUSPECT). **390 Ω** (~510 mV) → ▲ MARGINAL with the two-blip signal for the lower-boundary sanity check. Two procedural notes now in the test row: the disarm-half swap must have **no open gap** (bridging first, then removing — simply unplugging exercises the T-A16 OPEN path and proves nothing about SUSPECT, which the first run of this test demonstrated), and **560 Ω must not be substituted for the MARGINAL check** — it reads ~625 mV and lands ◆ SUSPECT, which would look like a boundary shift that is not there. With this, every v1.71 behaviour — classification, refusal reason, disarm, presentation, and both boundaries — has been exercised on the hardware. No firmware change; documentation only. |
 | 1.74 | 2026-09-29 | **Igniter connect/disconnect chirps unified into a direction pair; remote mirror added; firmware 1.2.20 → 1.2.21.** Operator request. The v1.57/v1.58 pad-side connection blips were a *band* discriminator — one blip CONNECTED, two MARGINAL, silence for SUSPECT and for every disconnection — and the remote sounded nothing, so the LCO at the firing point learned nothing by ear while igniters were wired at the pad. Now the base sounds **two 100 ms blips whenever a band crosses OPEN into any firing-capable band** (CONNECTED, MARGINAL and SUSPECT alike — which band it is stays on the display) and **one 300 ms burst when a band crosses out to OPEN**; band changes that do not cross OPEN are silent (the v1.58 re-seat loop is retired with the discrimination it existed for). The 300 ms burst is three blip-lengths in one breath: both signals read as one voice at two tempos, and stay clear of `SIREN_ERROR`/`SIREN_CONTINUITY_LOST` (three *separate* 200 ms blasts, which mean *stop*). The **remote mirrors both on its buzzer** — `BEEP_IGNITER_CONNECT` (100/100/100) and `BEEP_IGNITER_DISCONNECT` (one 300 ms burst, deliberately not `BEEP_LONG`'s 500 ms "disarmed") — derived from `continuity_bands` edges in the STATUS_UPDATE stream the base already sends on change: no protocol change. The mirror gate matches the base's own (remote IDLE **and** base BOOT/IDLE; the band snapshot re-seeds silently after link loss/relink and after any status received outside the gate, so invisible changes are never replayed as news), with the same per-channel direction-neutral 2 s anti-chatter window. Every v1.57/v1.58 gate and suppression carries over to both directions — BOOT and IDLE only, initial classifications seed silently, and the POST_FIRE → IDLE inhibit now also covers the burned-through OPEN reading. §7.3.1 step 5, §12.1, §12.2, §14.1, §15.2 (T-A21/T-A22 rewritten for the new patterns + remote cases) updated; host T-FSM10 rewritten. Both units must be flashed together. |
 | 1.75 | 2026-10-11 | **Base as-built reconciliation against the owner's hand-drawn base schematic** (`IMG_20260827_143820_001.jpg`, netwerkdrive `Rocketry/ESP32 Rocket Launch Controller/`) and a new generated schematic, `docs/reference/RLC_base_schematic.{svg,png}` (source `tools/base_schematic.py`). Owner-confirmed corrections: **(1) igniter sockets are XT30**, not XT60 (§5.4.4 panel note; README and RLC-OPS-001 conformed). **(2) The 3.3 V zeners on GPIO 21 and GPIO 42 are fitted** — the 2026-08-17 "not fitted" deviation (§5.4.3, §5.4.3b, §5.4.5) is superseded. **(3) Base power is an LM2596S buck, VBAT → 5.0 V**, into the DevKit 5V0 pin and the WS2812B strip; the 3.3 V rail is the DevKit's own LDO (§5.6.1, §5.4.11). **(4) Battery connector is XT60**, not XT90 (§5.6.1). Newly documented from the drawing: lamp resistors (SAFE 220 Ω, ARM / HOT / FIRE 470 Ω); the **FIRE lamp is 470 Ω + LED across each channel relay coil** (§5.4.1); a **series diode between the key switch NO contact and the arm relay coil**, with the GPIO 42 divider on the coil side (§5.4.4); channel relay snubbers **100 Ω + 100 nF 63 V** (§5.4.5). Also brought §5.4.5 up to the as-built record it lagged: the arm-relay snubber and the 217 Ω sense resistors were fitted 2026-08-21/23. **Not changed:** R_ref stays 1.5 kΩ + 1.8 kΩ — the drawing's "1k3" is a 1k8; the 2026-08-23 known-load data (14.9 Ω → 216 mV, 74.3 Ω → 270 mV) fits 3.3 kΩ within 2 mV and 2.8 kΩ not at all. Documentation-only; no firmware change (fw stays 1.2.21). |
+| 1.76 | 2026-10-11 | **Remote power corrected to as-built (owner-confirmed) and remote schematic added**, `docs/reference/RLC_remote_schematic.{svg,png}` (source `tools/remote_schematic.py`; drawing primitives shared with the base in `tools/schematic_svg.py`). **§5.6.2 regulation was wrong:** the remote does not use a 3.3 V buck (MP1584EN) — like the base, a **buck module makes 5 V into the DevKit 5V0 pin**, and 3.3 V is the DevKit's own LDO. **Display VCC is on 3.3 V** (§5.5.6, was "3V3 or 5V rail"); **the WS2812 strip is on 5 V** (§5.5.8). Still unrecorded: the buck module type, the battery connector (T-plug per the spec, not verified) and the encoder supply. **Open question added to §5.5.7:** a plain BC547 NPN low-side stage is on when the GPIO is HIGH, yet the firmware drives the buzzer active LOW and it works — the fitted driver does not match the description. The remote schematic follows this specification, which §5.5 notes has not been verified against the built unit. Documentation-only; no firmware change (fw stays 1.2.21). |
 
 ## Table of Contents
 
@@ -1403,7 +1404,7 @@ Three indicator LEDs are driven directly from GPIO outputs. All three LEDs have 
 
 | Module Pin | Label | Function | Connection |
 |---|---|---|---|
-| 1 | VCC | Power supply (3.3 V – 5 V) | 3V3 or 5V rail |
+| 1 | VCC | Power supply (3.3 V – 5 V) | **+3V3** (DevKit LDO output; as built, owner-confirmed v1.76) |
 | 2 | GND | Ground | GND |
 | 3 | CS | LCD chip select (active low) | ESP32-S3 GPIO |
 | 4 | RESET | LCD hardware reset (active low) | ESP32-S3 GPIO |
@@ -1427,11 +1428,20 @@ SPI bus shall use SPI2_HOST on the ESP32-S3.
 | Function | Audible feedback (beeps for state changes, ping failures, warnings, alarms) |
 | Drive | Active buzzer driven through BC547 NPN transistor (low-side switch) |
 
+> **OPEN (v1.76) — driver does not match its description.** A plain NPN low-side
+> switch conducts when its base is driven HIGH, so it is active HIGH, not inverting.
+> The firmware drives the buzzer active LOW and it sounds correctly on the bench, so
+> the fitted stage is something else (PNP high-side, a buzzer module with its own
+> inverting input, or a different topology). Trace the as-built driver before
+> relying on the polarity above. Its supply rail is also not recorded.
+
 #### 5.5.8 RGB LED (Status Indicator)
 
 Same as Base Unit §5.4.11: an 8-pixel WS2812 strip on GPIO 48, one pixel per igniter channel, with the on-board WS2812 in parallel mirroring pixel 0. **Unlike the base, data-in is at the channel-8 end**, so channel N is pixel `7-(N-1)` (`RLC_STRIP_REVERSED = 1`) and the on-board LED mirrors channel 8.
 
 The remote's map is driven from the continuity bands in the cached STATUS_UPDATE rather than from local sensing, so it can go stale; §11.1 layer 4 dims it when it does. Brightness is set independently of the base via `RGB_LED_BRIGHTNESS_REMOTE`, since the remote runs from the smaller 2S pack.
+
+**Supply (as built, v1.76):** strip VDD from the **+5 V** buck output (§5.6.2); DIN driven at 3.3 V logic from GPIO 48.
 
 ### 5.6 Power Supply
 
@@ -1466,7 +1476,7 @@ The remote's map is driven from the continuity bands in the cached STATUS_UPDATE
 | Capacity | 2200 mAh (specified battery) |
 | Discharge rating | 30C continuous (66 A) — far exceeds remote unit demand (~300 mA peak) |
 | Connector | T-plug (Deans) (on battery); PCB must mate with T-plug or use T-plug pigtail. |
-| Regulation | 3.3V DC-DC buck converter (e.g., MP1584EN module). LDO not recommended due to large voltage differential (7.4–8.4V → 3.3V) and associated thermal waste. |
+| Regulation | **DC-DC buck module, VBAT → 5 V** (as built, owner-confirmed v1.76; module type not recorded), feeding the DevKit **5V0** pin and the WS2812 strip VDD. The 3.3 V rail is the DevKit's own on-board LDO; its 3V3 pin is an *output* and supplies the ILI9488 display VCC. (Before v1.76 this row specified a 3.3 V buck, e.g. MP1584EN; that is not what was built.) |
 
 #### 5.6.2a Battery Undervoltage Protection — NOT SPECIFIED, NOT FITTED
 

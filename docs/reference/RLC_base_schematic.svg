@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1910 1270" width="1910" height="1270" font-family="Helvetica, Arial, sans-serif">
 <rect width="1910" height="1270" fill="white"/>
 <text x="20" y="30" font-size="22" text-anchor="start" font-weight="bold" fill="#1f2430">RLC base unit — schematic</text>
-<text x="20" y="48" font-size="12" text-anchor="start" font-weight="normal" fill="#6b7280">ESP32 Rocket Launch Controller · as built 2026-10-11 · fw 1.2.21 · FSD v1.74 §5.4/§5.6/App. C.1 + as-built tables + hand-drawn base schematic (2026-08-27)</text>
+<text x="20" y="48" font-size="12" text-anchor="start" font-weight="normal" fill="#6b7280">ESP32 Rocket Launch Controller · as built 2026-10-11 · fw 1.2.21 · FSD v1.75 §5.4/§5.6/App. C.1 + as-built tables + hand-drawn base schematic (2026-08-27)</text>
 <rect x="20" y="60" width="600" height="430" rx="8" fill="none" stroke="#9aa3b2" stroke-width="1.5" stroke-dasharray="6 4"/>
 <text x="32" y="80" font-size="14" text-anchor="start" font-weight="bold" fill="#6b7280">A · POWER, 5 V BUCK, BATTERY SENSE</text>
 <rect x="40" y="100" width="140" height="80" rx="4" fill="none" stroke="#1f2430" stroke-width="2"/>
