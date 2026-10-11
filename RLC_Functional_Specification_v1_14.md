@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.74
-**Date:** 2026-09-15
+**Version:** 1.75
+**Date:** 2026-10-11
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -88,6 +88,7 @@
 | 1.72 | 2026-09-15 | **v1.71 validated on target; OPEN-side results recorded.** Both units on fw 1.2.20 (12/12 boot self-test suites each, link rssi −25, 0 missed pings). The SUSPECT/OPEN boundary is confirmed exactly where derived: **1 kΩ → ◆ SUSPECT and 1.2 kΩ → ○ OPEN** on adjacent channels — the split sits between them, at the ~1.09 kΩ boundary, and saturated-but-finite resistance correctly reports OPEN rather than claiming a measurement it cannot make. The all-idle resting display still reads ○ OPEN on all eight channels. **T-A04 re-verified:** OPEN still NACKs 0x04, distinct from 0x10. **T-A16 re-verified** after the v1.71 edit to `armed_channel_went_open()` (now also accepts SUSPECT): pulling the igniter while ARMED disarms within ~1 s with the 3 × 200 ms blasts, and the key-off disarm remains acoustically distinguishable. **T-S19 screen wording re-verified:** `OPEN - LIKELY FIRED` in green, SUSPECT row not disturbing it. **T-A24 PARTIAL PASS** — boundary half done; outstanding: the 750 Ω no-blip + 0x10 refusal, the disarm-on-degradation swap while ARMED, and the 470 Ω MARGINAL sanity value. Test-first session note: the boot self-test halted the first 1.2.20 flash fail-safe on a bad hysteresis vector (a check starting from the wrong prior band) — the Phase-2 M2 design catching exactly the divergence it exists for. No firmware change this revision; documentation only. |
 | 1.73 | 2026-09-15 | **T-A24 fully PASS; v1.71 SUSPECT band closed out on target.** As-run values with the bench parts available (recorded in the T-A24 row): **820 Ω** (~783 mV, mid-window) for the SUSPECT cases — ◆ orange and silent on connect, NACK `0x10` "HIGH RESISTANCE" on ARM, and the **CONNECTED→SUSPECT disarm live on target** (armed on a 2 Ω load, 820 Ω bridged across, 2 Ω removed → disarm within ~1 s, 3 × 200 ms blasts, "CONTINUITY LOST - DISARMED", channel settles ◆ SUSPECT). **390 Ω** (~510 mV) → ▲ MARGINAL with the two-blip signal for the lower-boundary sanity check. Two procedural notes now in the test row: the disarm-half swap must have **no open gap** (bridging first, then removing — simply unplugging exercises the T-A16 OPEN path and proves nothing about SUSPECT, which the first run of this test demonstrated), and **560 Ω must not be substituted for the MARGINAL check** — it reads ~625 mV and lands ◆ SUSPECT, which would look like a boundary shift that is not there. With this, every v1.71 behaviour — classification, refusal reason, disarm, presentation, and both boundaries — has been exercised on the hardware. No firmware change; documentation only. |
 | 1.74 | 2026-09-29 | **Igniter connect/disconnect chirps unified into a direction pair; remote mirror added; firmware 1.2.20 → 1.2.21.** Operator request. The v1.57/v1.58 pad-side connection blips were a *band* discriminator — one blip CONNECTED, two MARGINAL, silence for SUSPECT and for every disconnection — and the remote sounded nothing, so the LCO at the firing point learned nothing by ear while igniters were wired at the pad. Now the base sounds **two 100 ms blips whenever a band crosses OPEN into any firing-capable band** (CONNECTED, MARGINAL and SUSPECT alike — which band it is stays on the display) and **one 300 ms burst when a band crosses out to OPEN**; band changes that do not cross OPEN are silent (the v1.58 re-seat loop is retired with the discrimination it existed for). The 300 ms burst is three blip-lengths in one breath: both signals read as one voice at two tempos, and stay clear of `SIREN_ERROR`/`SIREN_CONTINUITY_LOST` (three *separate* 200 ms blasts, which mean *stop*). The **remote mirrors both on its buzzer** — `BEEP_IGNITER_CONNECT` (100/100/100) and `BEEP_IGNITER_DISCONNECT` (one 300 ms burst, deliberately not `BEEP_LONG`'s 500 ms "disarmed") — derived from `continuity_bands` edges in the STATUS_UPDATE stream the base already sends on change: no protocol change. The mirror gate matches the base's own (remote IDLE **and** base BOOT/IDLE; the band snapshot re-seeds silently after link loss/relink and after any status received outside the gate, so invisible changes are never replayed as news), with the same per-channel direction-neutral 2 s anti-chatter window. Every v1.57/v1.58 gate and suppression carries over to both directions — BOOT and IDLE only, initial classifications seed silently, and the POST_FIRE → IDLE inhibit now also covers the burned-through OPEN reading. §7.3.1 step 5, §12.1, §12.2, §14.1, §15.2 (T-A21/T-A22 rewritten for the new patterns + remote cases) updated; host T-FSM10 rewritten. Both units must be flashed together. |
+| 1.75 | 2026-10-11 | **Base as-built reconciliation against the owner's hand-drawn base schematic** (`IMG_20260827_143820_001.jpg`, netwerkdrive `Rocketry/ESP32 Rocket Launch Controller/`) and a new generated schematic, `docs/reference/RLC_base_schematic.{svg,png}` (source `tools/base_schematic.py`). Owner-confirmed corrections: **(1) igniter sockets are XT30**, not XT60 (§5.4.4 panel note; README and RLC-OPS-001 conformed). **(2) The 3.3 V zeners on GPIO 21 and GPIO 42 are fitted** — the 2026-08-17 "not fitted" deviation (§5.4.3, §5.4.3b, §5.4.5) is superseded. **(3) Base power is an LM2596S buck, VBAT → 5.0 V**, into the DevKit 5V0 pin and the WS2812B strip; the 3.3 V rail is the DevKit's own LDO (§5.6.1, §5.4.11). **(4) Battery connector is XT60**, not XT90 (§5.6.1). Newly documented from the drawing: lamp resistors (SAFE 220 Ω, ARM / HOT / FIRE 470 Ω); the **FIRE lamp is 470 Ω + LED across each channel relay coil** (§5.4.1); a **series diode between the key switch NO contact and the arm relay coil**, with the GPIO 42 divider on the coil side (§5.4.4); channel relay snubbers **100 Ω + 100 nF 63 V** (§5.4.5). Also brought §5.4.5 up to the as-built record it lagged: the arm-relay snubber and the 217 Ω sense resistors were fitted 2026-08-21/23. **Not changed:** R_ref stays 1.5 kΩ + 1.8 kΩ — the drawing's "1k3" is a 1k8; the 2026-08-23 known-load data (14.9 Ω → 216 mV, 74.3 Ω → 270 mV) fits 3.3 kΩ within 2 mV and 2.8 kΩ not at all. Documentation-only; no firmware change (fw stays 1.2.21). |
 
 ## Table of Contents
 
@@ -643,6 +644,7 @@ All GPIO pin numbers and polarities shall be defined in `pin_config.h`.
 | Driver | 10× IRLZ44N logic-level N-channel MOSFETs in low-side switch configuration (see §5.4.10). One MOSFET per relay coil (8 channels + 1 siren + 1 arm relay). |
 | Default state at boot | Inactive (relay de-energised, NC position — igniter routed to continuity sense circuit) |
 | Drive requirement | 3.3 V logic level into MOSFET gate via 150 Ω series resistor. 10 kΩ gate pull-down to GND ensures MOSFET is OFF when GPIO is high-impedance at boot. |
+| FIRE lamp (as built, v1.75) | 470 Ω + red LED across each channel relay coil, in parallel with the flyback diode — the FIRE lens on the channel module. Lit only while that relay is energised. Passive: no GPIO. |
 
 Each output, when driven active, energises an SPDT relay that switches the igniter from the continuity sensing circuit (NC) to the fire path (NO). The NO contact is connected to the ARM SENSE node (arm relay COM output, which carries VBAT when the arm relay is energised). The COM contact is connected to the igniter high-side. The igniter low-side is connected directly to ground. The output must be held active for the configured fire pulse duration, then returned to inactive (relay returns to NC position).
 
@@ -721,13 +723,19 @@ The ADC voltage is converted to a continuity band using threshold comparison wit
 | Quantity | 1 (senses ARM SENSE node — the arm relay COM output / fire bus) |
 | Pin | GPIO 21 |
 | Function | Post-energise verification that the arm relay contacts are actually closed and VBAT is present on the fire bus. Used for the M1 arm relay verify flow and contact-welding detection (§5.4.3b provides separate key switch position sensing). |
-| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp — **zener NOT FITTED as-built 2026-08-17, see deviation note below** |
+| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp — **fitted** (owner-confirmed 2026-10-11, v1.75; supersedes the 2026-08-17 deviation note below) |
 | Debounce | 16-bit shift-register, 10 ms polling, 160 ms debounce (same engine as other digital inputs, §5.3) |
 
 The arm sense circuit reads the ARM SENSE node, which is the arm relay COM output — i.e., the fire bus (§5.4.9). This node carries VBAT whenever the arm relay contacts close (NO→COM). The arm relay coil drive path (§5.4.4) requires both the physical key switch ON and the MOSFET driven, so arm sense HIGH implies both conditions are met. However, the firmware also has a **separate** key switch sense input (§5.4.3b, GPIO 42) that reads the key switch position directly, enabling the firmware to distinguish between key switch OFF and arm relay dropout.
 
 The ARM SENSE node connects to GPIO 21 through a voltage divider (27 kΩ series, 10 kΩ to GND) with a 3.3 V zener diode clamp across the lower resistor.
 
+> **SUPERSEDED 2026-10-11 (v1.75).** Both 3.3 V zeners (GPIO 21 and GPIO 42)
+> are fitted, and RC snubbers are fitted across the arm relay and all eight
+> channel relay contacts (Development_Progress.md, 2026-08-21). Still **not**
+> fitted: the TVS from arm relay COM to GND and the TL431 3.3 V rail clamp.
+> The note below is kept as the record of the 2026-08-17 state.
+>
 > **AS-BUILT DEVIATION (2026-08-17) — the zener clamp is NOT fitted.** On the
 > current base hardware, GPIO 21 (§5.4.3) and GPIO 42 (§5.4.3b) have the
 > 27 kΩ/10 kΩ divider only; neither 3.3 V zener is installed, and the arm relay
@@ -778,7 +786,7 @@ The ARM SENSE node connects to GPIO 21 through a voltage divider (27 kΩ series,
 | Quantity | 1 (senses key switch NO output — direct key switch position) |
 | Pin | GPIO 42 |
 | Function | Direct read of the physical key switch position. HIGH = key switch ON (VBAT present at key switch NO output). Used in `guard_arm()`, PRE_FIRE guard, and FSM disarm triggers. Enables the firmware to detect key switch position independently of arm relay state, resolving the circular dependency where arming requires the arm relay to already be closed. |
-| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp (identical to arm sense) — **zener NOT FITTED as-built 2026-08-17, see §5.4.3 deviation note** |
+| Protection | Voltage divider (27 kΩ / 10 kΩ) followed by 3.3 V zener diode clamp (identical to arm sense) — **fitted** (owner-confirmed 2026-10-11, v1.75). On the as-built base the divider taps the arm relay coil (+) node, one series-diode drop below the key contact (§5.4.4). |
 | Debounce | 16-bit shift-register, 10 ms polling, 160 ms debounce (same engine as arm sense, §5.3) |
 
 The key sense circuit reads the key switch NO output — the same node that feeds VBAT+ to the arm relay coil positive terminal (§5.4.4). When the key switch is ON, VBAT+ appears at this node. When OFF, the node is disconnected from VBAT+ and pulled low. The key switch NO output connects to GPIO 42 through a voltage divider (27 kΩ series, 10 kΩ to GND) with a 3.3 V zener diode clamp — identical to the arm sense circuit on GPIO 21.
@@ -827,6 +835,16 @@ The arm key switch and the IRLZ44N MOSFET form a **hardware AND gate**: both mus
 | Green LED + series R | Key switch NC contact to GND | Green | Key switch in SAFE/OFF position |
 | Red LED + series R | Key switch NO contact to GND | Red | Key switch in ARM/ON position |
 | Red LED + series R | Across arm relay coil terminals | Red | Arm relay coil energised (both key AND software active) |
+
+> **AS-BUILT DETAIL (v1.75, from the owner's hand-drawn base schematic of
+> 2026-08-27).** Series resistors: SAFE lamp **220 Ω**, ARM lamp **470 Ω**,
+> HOT lamp (across the coil) **470 Ω**. A **series diode** sits between the key
+> switch NO contact and the arm relay coil (+) node: the ARM lamp hangs on the
+> key side of it; the coil, its flyback diode, the HOT lamp and the GPIO 42
+> divider hang on the coil side. GPIO 42 therefore sees VBAT minus one diode
+> drop — still HIGH across the whole 9.0–12.6 V range. The diode is in the
+> coil-drive path, not the fire path, and changes nothing in the AND gate: with
+> the key at SAFE there is still no source of coil current.
 
 All three LEDs are passive — they operate directly from VBAT through the switch/relay contacts and require no GPIO. They function correctly even if the ESP32-S3 is unpowered or has crashed.
 
@@ -903,7 +921,8 @@ All three LEDs are passive — they operate directly from VBAT through the switc
 > reinstated and extended to both ports.
 >
 > Each channel module reads, top to bottom: **CHn**, `IGN`, the **IGN lens**,
-> `FIRE`, the **FIRE lens**, then the **XT60 socket**. The FIRE lens is
+> `FIRE`, the **FIRE lens**, then the **XT30 socket** (v1.75; earlier revisions
+> said XT60). The FIRE lens is
 > *below* the IGN lens, not beside it (v1.56 said "beside").
 >
 > Cosmetic correction: the key barrel is **chrome with a white face**, not brass
@@ -971,16 +990,17 @@ The following diagram shows the relationship between the arm key switch, arm rel
                                │
                           10 kΩ ── GND
                                │
-                        3.3 V zener ── GND   [NOT FITTED as-built 2026-08-17]
+                        3.3 V zener ── GND   [FITTED — confirmed 2026-10-11]
 
-    ARM RELAY CONTACT SNUBBER: [NOT FITTED as-built 2026-08-17]
+    ARM RELAY CONTACT SNUBBER: [FITTED 2026-08-21 — value not recorded]
     The bug #18 relay-order fix makes the arm relay the sole contact breaking
-    6 A DC. Required: 47 Ω/100 nF RC across the contact + SMBJ18A-class TVS
-    from arm relay COM to GND.
+    6 A DC. Specified: 47 Ω/100 nF RC across the contact (fitted) + SMBJ18A-class
+    TVS from arm relay COM to GND [NOT FITTED].
+    CHANNEL RELAY SNUBBERS: 100 Ω + 100 nF 63 V across NO–COM, all eight [FITTED].
 
     CONTINUITY CIRCUIT (per channel, via channel relay NC contact):
 
-    3.3V ── R_ref1 (1.5kΩ, fusible) ── R_ref2 (1.8kΩ, fusible) ──┬── [220Ω] ── CH RELAY NC ── (COM) ── igniter ── GND
+    3.3V ── R_ref1 (1.5kΩ, fusible) ── R_ref2 (1.8kΩ, fusible) ──┬── 220Ω ── CH RELAY NC ── (COM) ── XT30 ── igniter ── GND
                                                                     │
                                                                     ├── R_pull (100kΩ) ── GND
                                                                     │
@@ -989,12 +1009,12 @@ The following diagram shows the relationship between the arm key switch, arm rel
                                                                     │
                                                                     └── ADC1 pin (GPIO 2–9)
 
-    [220Ω] = sense-branch series resistor, NOT FITTED as-built. Trialled on CH1 and removed
-    (Development_Progress.md, 2026-08-21). Required as protection: it is the only thing limiting
+    220Ω = sense-branch series resistor, FITTED on all 8 channels 2026-08-23 (marked 217 Ω;
+    CONT_R_SENSE_OHM, thresholds re-derived — see §5.4.2). Required as protection: it is the only thing limiting
     the current the 3V3-side clamp injects into the 3.3 V rail during a fault. Must sit between
     the relay NC contact and the pin/clamp junction — on the pin side of the clamps it protects
-    nothing and adds a leakage offset instead. Changes CONT_MARGINAL_UV to ~264000 µV and
-    CONT_OPEN_UV to ~588000 µV; recalibration required.
+    nothing and adds a leakage offset instead. Thresholds now CONT_MARGINAL_UV 261000 µV and
+    CONT_OPEN_UV 586000 µV.
 
     Two series fusible resistors (1.5kΩ + 1.8kΩ = 3.3kΩ total) for defence-in-depth.
     No MOSFET switch required — SPDT relay NC/NO switching provides inherent isolation.
@@ -1195,6 +1215,7 @@ GPIO      (10k)│
 |---|---|
 | Type | WS2812 (NeoPixel) addressable RGB LED strip (8 external pixels) + on-board LED on GPIO 48 |
 | Pin | GPIO 48 (fixed, on-board) |
+| Supply (as built, v1.75) | WS2812B strip VDD from the **+5 V** LM2596S buck output (§5.6.1); DIN driven at 3.3 V logic from GPIO 48 |
 | Pixels | 8 addressable external pixels, one per igniter channel. Pixel 0 also drives the on-board LED in parallel. |
 | Pixel order | **Data-in at the channel-1 end** — channel N is pixel `N-1` (`RLC_STRIP_REVERSED = 0`). Pixel 0, and therefore the on-board LED, is channel 1. |
 | Driver | ESP32-S3 RMT peripheral |
@@ -1426,8 +1447,8 @@ The remote's map is driven from the continuity bands in the cached STATUS_UPDATE
 | Voltage divider ratio | 4.3:1 (33 kΩ + 10 kΩ, giving 0–3.3V ADC range for 0–14.19V battery) |
 | Capacity | 5000 mAh (specified battery) |
 | Discharge rating | 100C continuous (500 A) — far exceeds relay + igniter demand, ensuring stable voltage under all loads |
-| Connector | XT90 (on battery); PCB must mate with XT90 or use XT90 pigtail. |
-| Regulation | 3.3V LDO or DC-DC buck converter for ESP32-S3 and logic. Relay coils driven from battery via IRLZ44N low-side MOSFET switches (§5.4.10). |
+| Connector | **XT60** on the battery lead (as built, v1.75; earlier revisions said XT90). Battery → XT60 → on/off toggle → VBAT+. |
+| Regulation | **LM2596S DC-DC buck module, VBAT → 5.0 V** (as built, v1.75), feeding the DevKit **5V0** pin and the WS2812B strip VDD. The 3.3 V logic rail is the DevKit's own on-board LDO — its 3V3 pin is an *output*, which also supplies the continuity R_ref chains and the 3V3-side clamps. Relay coils and the siren are driven from VBAT via IRLZ44N low-side MOSFET switches (§5.4.10). |
 
 #### 5.6.2 Remote Unit Power Supply
 

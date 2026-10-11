@@ -2809,6 +2809,36 @@ buys linearity, only current buys resolution.**
 ~14.5 counts separation. It was declined because it cuts the no-fire margin from
 50× to 15× for a purely informational band that never blocked arming.
 
+### As-Built Reconciliation (2026-10-11) — hand-drawn base schematic
+
+Source: the owner's hand-drawn base schematic, `IMG_20260827_143820_001.jpg` in
+netwerkdrive `Rocketry/ESP32 Rocket Launch Controller/`, cross-checked with the
+owner. Rendered as `docs/reference/RLC_base_schematic.{svg,png}` from
+`tools/base_schematic.py`. FSD → v1.75; README and RLC-OPS-001 conformed.
+Documentation-only.
+
+| Item | As built | Previously documented |
+|---|---|---|
+| 3.3 V zener, GPIO 21 and GPIO 42 | **FITTED** (owner-confirmed) | "not fitted" (2026-08-17 entry under bug #18) |
+| Igniter sockets | **XT30** (owner-confirmed) | yellow XT60 |
+| Battery connector | XT60 | XT90 (FSD §5.6.1) |
+| Base power | **LM2596S buck, VBAT → 5.0 V** → DevKit 5V0 + WS2812B VDD; 3.3 V = DevKit LDO | "3.3 V LDO or buck" |
+| Lamp resistors | SAFE 220 Ω; ARM, HOT, FIRE 470 Ω | not documented |
+| FIRE lamp | 470 Ω + LED across each channel relay coil | "relay indicator", wiring not documented |
+| Key → K_ARM coil | **series diode** between key NO and coil (+); GPIO 42 divider on the coil side | not documented |
+| Channel relay snubbers | 100 Ω + 100 nF 63 V | "fitted", spec value 47 Ω / 100 nF |
+| Continuity R_ref | **1.5 kΩ + 1.8 kΩ — unchanged** | — |
+
+**R_ref was checked, not taken from the photo.** The drawing's top resistor reads
+like "1k3", and the owner first confirmed 1.3 k + 1.5 k. The 2026-08-23
+known-load data rules that out: 14.9 Ω read 215–219 mV and 74.3 Ω read
+269–271 mV; with `V = 3.3·Rx / (R_ref + Rx)`, `Rx = 217 Ω + R_load` (∥ 100 k),
+R_ref = 3.3 k predicts 216 / 268 mV, R_ref = 2.8 k predicts 252 / 311 mV. The
+"1k3" is a 1k8, and `CONT_R_REF_OHM = 3300` stands. The owner agreed.
+
+Still open: TVS from arm relay COM to GND; TL431 3.3 V rail clamp (bug #24);
+hardware undervoltage cut-off (bug #25); arm relay snubber values unrecorded.
+
 ### As-Built Hardware Update (2026-08-21)
 
 | Item | Status |

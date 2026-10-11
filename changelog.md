@@ -1,5 +1,29 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-10-11 — Base schematic + as-built reconciliation (FSD v1.75, docs only)
+
+- New base unit schematic, `docs/reference/RLC_base_schematic.{svg,png}`, generated
+  by `tools/base_schematic.py` (needs `cairosvg` for the PNG). Same style as the
+  CRIG node schematic: lettered sections (A power, B MCU, C arm interlock + fire
+  bus, D typical igniter channel, E siren + pixels), functional wire colours,
+  channel map, notes. Wire colours show function; the real cable colours are not
+  documented.
+- Reconciled against the owner's hand-drawn base schematic
+  (`IMG_20260827_143820_001.jpg` on the netwerkdrive). Owner-confirmed: igniter
+  sockets are **XT30** (not XT60); **3.3 V zeners on GPIO 21/42 are fitted**;
+  base power is an **LM2596S buck to 5 V** into the DevKit 5V0 and the WS2812B
+  strip, with 3.3 V from the DevKit LDO; battery connector XT60 (not XT90).
+  Newly documented: lamp resistors (SAFE 220 Ω, ARM/HOT/FIRE 470 Ω), FIRE lamp
+  across each channel relay coil, a series diode between the key switch and the
+  K_ARM coil, channel snubbers 100 Ω + 100 nF 63 V.
+- **R_ref unchanged at 1.5 k + 1.8 k.** The drawing's "1k3" is a 1k8: the
+  2026-08-23 known-load readings fit 3.3 kΩ within 2 mV and 2.8 kΩ not at all
+  (Development_Progress.md, "As-Built Reconciliation (2026-10-11)").
+- FSD v1.74 → v1.75 (§5.4.1, §5.4.3, §5.4.3b, §5.4.4, §5.4.5, §5.4.11, §5.6.1);
+  README and RLC-OPS-001 conformed (XT30). §5.4.5 also caught up with the
+  2026-08-21/23 as-built record (arm snubber and 217 Ω sense resistors fitted).
+  No firmware change; fw stays 1.2.21.
+
 ## 2026-09-29 — Igniter connect/disconnect chirps unified + remote mirror (fw 1.2.20 → 1.2.21, FSD v1.74)
 
 Operator request. The pad-side audible connection cues were a *band*
