@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.76
-**Date:** 2026-10-11
+**Version:** 1.77
+**Date:** 2026-11-03
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -90,6 +90,7 @@
 | 1.74 | 2026-09-29 | **Igniter connect/disconnect chirps unified into a direction pair; remote mirror added; firmware 1.2.20 → 1.2.21.** Operator request. The v1.57/v1.58 pad-side connection blips were a *band* discriminator — one blip CONNECTED, two MARGINAL, silence for SUSPECT and for every disconnection — and the remote sounded nothing, so the LCO at the firing point learned nothing by ear while igniters were wired at the pad. Now the base sounds **two 100 ms blips whenever a band crosses OPEN into any firing-capable band** (CONNECTED, MARGINAL and SUSPECT alike — which band it is stays on the display) and **one 300 ms burst when a band crosses out to OPEN**; band changes that do not cross OPEN are silent (the v1.58 re-seat loop is retired with the discrimination it existed for). The 300 ms burst is three blip-lengths in one breath: both signals read as one voice at two tempos, and stay clear of `SIREN_ERROR`/`SIREN_CONTINUITY_LOST` (three *separate* 200 ms blasts, which mean *stop*). The **remote mirrors both on its buzzer** — `BEEP_IGNITER_CONNECT` (100/100/100) and `BEEP_IGNITER_DISCONNECT` (one 300 ms burst, deliberately not `BEEP_LONG`'s 500 ms "disarmed") — derived from `continuity_bands` edges in the STATUS_UPDATE stream the base already sends on change: no protocol change. The mirror gate matches the base's own (remote IDLE **and** base BOOT/IDLE; the band snapshot re-seeds silently after link loss/relink and after any status received outside the gate, so invisible changes are never replayed as news), with the same per-channel direction-neutral 2 s anti-chatter window. Every v1.57/v1.58 gate and suppression carries over to both directions — BOOT and IDLE only, initial classifications seed silently, and the POST_FIRE → IDLE inhibit now also covers the burned-through OPEN reading. §7.3.1 step 5, §12.1, §12.2, §14.1, §15.2 (T-A21/T-A22 rewritten for the new patterns + remote cases) updated; host T-FSM10 rewritten. Both units must be flashed together. |
 | 1.75 | 2026-10-11 | **Base as-built reconciliation against the owner's hand-drawn base schematic** (`IMG_20260827_143820_001.jpg`, netwerkdrive `Rocketry/ESP32 Rocket Launch Controller/`) and a new generated schematic, `docs/reference/RLC_base_schematic.{svg,png}` (source `tools/base_schematic.py`). Owner-confirmed corrections: **(1) igniter sockets are XT30**, not XT60 (§5.4.4 panel note; README and RLC-OPS-001 conformed). **(2) The 3.3 V zeners on GPIO 21 and GPIO 42 are fitted** — the 2026-08-17 "not fitted" deviation (§5.4.3, §5.4.3b, §5.4.5) is superseded. **(3) Base power is an LM2596S buck, VBAT → 5.0 V**, into the DevKit 5V0 pin and the WS2812B strip; the 3.3 V rail is the DevKit's own LDO (§5.6.1, §5.4.11). **(4) Battery connector is XT60**, not XT90 (§5.6.1). Newly documented from the drawing: lamp resistors (SAFE 220 Ω, ARM / HOT / FIRE 470 Ω); the **FIRE lamp is 470 Ω + LED across each channel relay coil** (§5.4.1); a **series diode between the key switch NO contact and the arm relay coil**, with the GPIO 42 divider on the coil side (§5.4.4); channel relay snubbers **100 Ω + 100 nF 63 V** (§5.4.5). Also brought §5.4.5 up to the as-built record it lagged: the arm-relay snubber and the 217 Ω sense resistors were fitted 2026-08-21/23. **Not changed:** R_ref stays 1.5 kΩ + 1.8 kΩ — the drawing's "1k3" is a 1k8; the 2026-08-23 known-load data (14.9 Ω → 216 mV, 74.3 Ω → 270 mV) fits 3.3 kΩ within 2 mV and 2.8 kΩ not at all. Documentation-only; no firmware change (fw stays 1.2.21). |
 | 1.76 | 2026-10-11 | **Remote power corrected to as-built (owner-confirmed) and remote schematic added**, `docs/reference/RLC_remote_schematic.{svg,png}` (source `tools/remote_schematic.py`; drawing primitives shared with the base in `tools/schematic_svg.py`). **§5.6.2 regulation was wrong:** the remote does not use a 3.3 V buck (MP1584EN) — like the base, a **buck module makes 5 V into the DevKit 5V0 pin**, and 3.3 V is the DevKit's own LDO. **Display VCC is on 3.3 V** (§5.5.6, was "3V3 or 5V rail"); **the WS2812 strip is on 5 V** (§5.5.8). Still unrecorded: the buck module type, the battery connector (T-plug per the spec, not verified) and the encoder supply. **Open question added to §5.5.7:** a plain BC547 NPN low-side stage is on when the GPIO is HIGH, yet the firmware drives the buzzer active LOW and it works — the fitted driver does not match the description. The remote schematic follows this specification, which §5.5 notes has not been verified against the built unit. Documentation-only; no firmware change (fw stays 1.2.21). |
+| 1.77 | 2026-11-03 | **Camera rig (CRIG) interface added to the base; firmware 1.2.21 → 1.2.22.** Implements change request `RLC_change_request_CRIG.md` (CRIG project, spec v0.18 §8 / App. A). The CRIG is a Nikon D3000 rig that photographs liftoffs; its handheld remote sits next to the base and takes two signals over a short 3-core cable: **TRIG** (GPIO 39), a steady HIGH from T−2 s until 3 s after the fire pulse, which makes the camera shoot a burst; and **ARM** (GPIO 41), a heartbeat — 1 Hz "base connected, not armed", 10 Hz "base armed" — without which the CRIG ignores TRIG. New **§5.4.12** (hardware: 5-pin DIN 180° panel socket, Gotron AD322; pin 1 TRIG+, pin 2 COM−, pin 3 ARM+, 4/5 NC; 470 Ω series + 10 kΩ pull-down per line, about 4–5 mA into the CRIG's PC817s), new **§7.5** (behaviour, timing and FSM hooks), new **§9.14** (safety argument: outputs only, optically isolated, no power drawn, timer-callback-only GPIO writes, no failure of it is a base ERROR). Owner decisions recorded in §7.5: once FIRING is entered TRIG always ends through its post timer (or the 10 s hard cap), whatever ends FIRING — the igniter may already have lit; an abort before FIRING drops TRIG at once; ARM shows the armed pattern while `armed || TRIG asserted`, so it stays at 10 Hz for the ~1 s TRIG outlasts POST_FIRE. §9.1, §9.13 step 1, §14.1, §14.3, §15.5 (host T-FSM11, T-CAM01–10), new §15.6 (bench T-C01–T-C07 = CRIG T-21–T-27) and App. C.1 (24 GPIOs used, GPIO 38 the only spare) updated; base schematic gains frame F. **Not yet verified on the built unit:** the socket is not fitted (panel location open, CRIG O-9) and nothing on GPIO 39/41 has been continuity-checked (CRIG O-8). No protocol change, no change to the remote or to any fire-path element; both units flashed together per the version rule. |
 
 ## Table of Contents
 
@@ -929,6 +930,13 @@ All three LEDs are passive — they operate directly from VBAT through the switc
 > Cosmetic correction: the key barrel is **chrome with a white face**, not brass
 > (v1.54's "brass-barrel" wording, carried into RLC-OPS-001 and README, is
 > corrected in both).
+>
+> **Camera rig socket (v1.77, NOT YET FITTED):** one **5-pin DIN 180° female
+> chassis socket** (Gotron AD322) for the CRIG camera-rig interface (§5.4.12).
+> Its location on the panel is still to be decided (CRIG open item O-9) and
+> will be recorded here once fitted. It is deliberately a connector type used
+> nowhere else on the base — igniters are XT30, the battery XT60 — so a camera
+> cable cannot be plugged into a fire output or the other way round.
 
 Both this switch AND the remote arm switch must be in the armed position for any channel to be armed.
 
@@ -1238,6 +1246,44 @@ GPIO      (10k)│
 > connected, which is `RLC_COLOR_CONT_OPEN` on all eight channels — the expected
 > resting display, and incidental confirmation that the strip and its per-channel
 > mapping are working end to end.
+
+#### 5.4.12 Camera Rig (CRIG) Interface (GPIO 39, GPIO 41) — added v1.77
+
+Two **output-only**, optically isolated signal lines to the CRIG remote, the
+handheld unit of a camera rig that photographs liftoffs (CRIG spec v0.18 §8,
+App. A; change request `RLC_change_request_CRIG.md`). Behaviour and timing are
+in §7.5, the safety argument in §9.14.
+
+| Parameter | Value |
+|---|---|
+| Panel connector | **5-pin DIN 180° female chassis socket, Gotron AD322.** A type used nowhere else on the base (igniters XT30, battery XT60). Location on the panel: to be decided (CRIG O-9). |
+| Pin 1 — TRIG+ | GPIO 39 → 470 Ω → pin 1. 10 kΩ pull-down to GND at the GPIO. |
+| Pin 2 — COM− (centre pin) | Base GND. Shared return for both CRIG optocoupler LEDs. |
+| Pin 3 — ARM+ | GPIO 41 → 470 Ω → pin 3. 10 kΩ pull-down to GND at the GPIO. |
+| Pins 4, 5 | Not connected. (DIN pin order along the arc: 1 – 4 – 2 – 5 – 3.) |
+| Load (CRIG side) | PC817 optocoupler LED per line, Vf ≈ 1.2 V: (3.3 − 1.2) / 470 Ω ≈ **4.5 mA** per line. |
+| Short circuit | Pin 1 or 3 shorted to pin 2: 3.3 V / 470 Ω ≈ **7 mA**, within the ESP32-S3 GPIO drive rating. |
+| Cable | ≤ 1 m, 3-core, AD302 male plug both ends, straight through. Built and supplied by the CRIG side. |
+| Polarity | Both lines active HIGH (`PIN_CAM_TRIG_ACTIVE`, `PIN_CAM_ARM_ACTIVE` = 1). |
+| Power | **None.** The base supplies no power to the CRIG and reads nothing from it. |
+
+**Pin choice.** GPIO 39 and 41 are the S3's JTAG pad pins MTCK and MTDI, unused
+here because debugging goes over the USB-Serial-JTAG port; neither is a
+strapping pin (0, 3, 45, 46), USB (19, 20), UART0 (43, 44), flash (26–32) or
+octal-PSRAM (35–37) pin. **GPIO 38 stays spare on purpose**: on a DevKitC-1
+**v1.1** it drives the on-board RGB LED. This base is a v1.0 board (on-board LED
+on GPIO 48), but a replacement board could be a v1.1.
+
+**Boot state.** Before `cam_trig_init()` runs, the pins are in their reset
+state, which for these JTAG pads is not confirmed. It is harmless either way:
+even an internal weak pull-up (about 45 kΩ) against the 10 kΩ pull-down holds
+the line near 0.6 V, below the PC817 LED threshold, and a boot glitch is
+neither the 1 Hz nor the 10 Hz pattern. T-C06 measures it.
+
+> **NOT YET VERIFIED ON THE BUILT UNIT (v1.77).** The socket and its four
+> resistors are not fitted, and nothing on GPIO 39/41 has been
+> continuity-checked against the soldered base (CRIG open item O-8). Until both
+> are done this section is a design, not an as-built record.
 
 ### 5.5 Remote Unit I/O
 
@@ -2207,6 +2253,103 @@ The exact sequence within the FIRING state:
 
 The fire pulse shall be driven by a hardware timer interrupt, NOT a software delay, to guarantee precise timing even under software load.
 
+### 7.5 Camera Rig (CRIG) Interface — added v1.77
+
+The base drives two output lines to the CRIG remote (hardware §5.4.12, safety
+§9.14). The module is `rlc_cam_trig.c` (`components/rlc_base/`). It calls only
+`gpio_set_level()` and the `esp_timer` API; it reads no input, never touches
+the radio, and never changes FSM state.
+
+#### 7.5.1 Signals
+
+- **TRIG (pin 1):** steady HIGH from `CAM_TRIG_LEAD_MS` (2 s) before ignition
+  until `CAM_TRIG_POST_MS` (3 s) after the fire pulse ends. The CRIG fires a
+  camera burst for as long as it is HIGH.
+- **ARM (pin 3):** a heartbeat in `CAM_ARM_TICK_MS` (50 ms) steps.
+  **Idle pattern** 100 ms HIGH / 900 ms LOW (1 Hz) = "base connected, not
+  armed". **Armed pattern** 50 ms HIGH / 50 ms LOW (10 Hz) = "base armed". The
+  armed pattern is shown while **`armed || TRIG asserted`**. The CRIG uses the
+  armed pattern to switch the camera on and wake it before TRIG, and accepts
+  TRIG **only** while ARM shows the armed pattern.
+
+A pattern change always starts at the beginning of the new pattern's LOW phase,
+so the last pulse of one pattern never merges with the first of the next. The
+armed pattern's first rise therefore follows `cam_arm_set(true)` within two
+ticks (≤ 100 ms); the idle pattern's first rise comes about 950 ms after the
+switch.
+
+**CRIG decoder (for reference):** connected = rising edges 0.7–1.3 s apart;
+armed = three consecutive periods of 70–130 ms; not connected = no edge for
+2.5 s, whether stuck HIGH or stuck LOW. Tolerance ±30 %, well beyond
+`esp_timer` jitter.
+
+#### 7.5.2 Timing
+
+| Base | ARM (pin 3) | TRIG (pin 1) |
+|---|---|---|
+| Power-on / reset, before init | LOW (pull-down) | LOW (pull-down) |
+| IDLE, LINK_LOST, ERROR | 1 Hz | LOW |
+| ARMED, PRE_FIRE, FIRING, POST_FIRE, and any time TRIG is HIGH | 10 Hz | — |
+| PRE_FIRE + (`PRE_FIRE_DELAY_MS` − `CAM_TRIG_LEAD_MS`) = PRE_FIRE + 3000 ms, still in PRE_FIRE | 10 Hz | **HIGH** |
+| Fire pulse end + `CAM_TRIG_POST_MS` | 10 Hz, then 1 Hz | LOW |
+| Any abort / disarm / ERROR / LINK_LOST **before FIRING** | 1 Hz | LOW **at once** |
+| **Any exit from FIRING** (normal pulse end, pulse completed on link loss, CEASE_FIRE, key off, disarm, arm sense lost, ERROR) | 10 Hz while TRIG is HIGH, then 1 Hz | HIGH until exit + 3000 ms |
+| `CAM_TRIG_MAX_MS` (10 s) of continuous HIGH | — | LOW (hard cap) |
+
+Nominal TRIG assertion: 2 s lead + 1 s pulse + 3 s post = **6 s**. Because
+`POST_FIRE_COOLDOWN_MS` (2 s) is shorter than `CAM_TRIG_POST_MS` (3 s), TRIG
+outlasts POST_FIRE by about 1 s and ARM stays at 10 Hz through that second.
+This is intended: the CRIG would otherwise discard the end of the TRIG window.
+
+**Owner decision (2026-11-03): keep shooting once FIRING has been entered.**
+The igniter may already have lit whatever ended FIRING, so from FIRING entry
+on, TRIG ends only through the post timer (started once, at the first exit) or
+the hard cap. Aborts before FIRING cut TRIG at once — nothing has been lit.
+
+#### 7.5.3 Rules
+
+1. **TRIG only from PRE_FIRE.** The lead timer asserts TRIG only if the FSM
+   is still in PRE_FIRE when it expires (CRIG F-5) — checked independently of
+   the cancel hooks, which already clear the pending lead on every PRE_FIRE
+   exit.
+2. **Hard cap.** TRIG is deasserted after `CAM_TRIG_MAX_MS` of continuous
+   assertion, whatever the FSM state (CRIG F-6). A cap timer that cannot be
+   armed drops TRIG immediately rather than leave a line with no guaranteed
+   end.
+3. **New countdown, new cycle.** If a PRE_FIRE begins while the previous
+   shot's TRIG is still HIGH, that TRIG is ended and the new one starts on its
+   own lead timer.
+4. **Stale callbacks do nothing.** `esp_timer_stop()` does not recall a
+   callback that has already been dispatched, so each callback re-checks a
+   deadline held in the module's state and acts only if it is still set and
+   reached (the same stale-callback hazard as the siren driver's N2 fix in
+   `rlc_siren.c`).
+5. **Failure is never an ERROR (CRIG F-8).** A timer that cannot be created
+   or started is logged and its line left LOW. ARM LOW reads "not connected"
+   at the CRIG, which then ignores TRIG: the photos are lost, the launch is
+   unaffected.
+6. **Init.** `cam_trig_init()` runs in §9.13 step 1, directly after the relay
+   and siren outputs, drives both lines LOW and starts the ARM heartbeat with
+   the idle pattern (CRIG F-7).
+
+#### 7.5.4 FSM hooks
+
+| Transition / event | Hook | Where (`rlc_base_fsm.c`) |
+|---|---|---|
+| IDLE → ARMED (immediate and sense-verified) | `cam_arm_set(true)` | both ARMED entry points |
+| ARMED → PRE_FIRE | `cam_trig_on_prefire_enter()` — starts the lead timer | `CMD_FIRE` in ARMED |
+| PRE_FIRE → FIRING | `cam_trig_on_firing_enter()` — sets `fired` | `check_timers()` |
+| `EVT_FIRE_PULSE_DONE`, including a pulse completed under `COMPLETE_PULSE_ON_LINK_LOSS` | `cam_trig_on_fire_pulse_end()` — starts the post timer | FIRING handler |
+| Every other exit, and every entry into IDLE / LINK_LOST / ERROR | `cam_trig_cancel()` + `cam_arm_set(false)` | `do_disarm()`, `do_enter_link_lost()`, `do_enter_error()`, `firing_exit()` |
+| POST_FIRE → IDLE | `cam_arm_set(false)` only — the post timer finishes TRIG | `check_timers()` |
+
+`cam_trig_cancel()` drops TRIG at once before FIRING; once `fired` is set it
+behaves like `cam_trig_on_fire_pulse_end()` (post timer started once, never
+early). That is what lets every exit path call it unconditionally. The four
+helper functions cover every exit from PRE_FIRE and FIRING (abort, CEASE_FIRE,
+link lost, key off, disarm, arm sense lost, continuity lost, dead-man, arm
+timeout, weld fault, battery critical).
+
 ---
 
 ## 8. Remote Unit Functional Specification
@@ -2523,6 +2666,7 @@ These requirements are non-negotiable and shall take precedence over all other f
 | Channel change while armed (encoder rotation) | Immediate disarm, return to IDLE |
 | Arm switch sense fault at arm time | Refuse to arm (NACK 0x0B) |
 | Arm relay contact welding detected | Set ERR_RELAY_FAULT, refuse all arming |
+| Camera rig (CRIG) line fault or timer failure (v1.77) | Log only; the affected line is left LOW. **Never a base ERROR** and never an arming guard — the worst outcome is lost photos (§7.5.3 rule 5, §9.14) |
 
 ### 9.2 Dual-Key Arming
 
@@ -2635,7 +2779,7 @@ Both units SHALL execute the following initialisation sequence in order. If any 
 | Step | Action | Mandatory | Notes |
 |------|--------|-----------|-------|
 | 0 | **Reconfigure the TWDT to `WATCHDOG_TIMEOUT_S`** — before any task is created | Yes | §9.6. See the ordering requirement below. |
-| 1 | Configure all channel SPDT relay output GPIOs and arm relay output GPIO (GPIO 47) to safe (inactive / de-energised) state | Yes | §9.7 — before any other peripheral |
+| 1 | Configure all channel SPDT relay output GPIOs and arm relay output GPIO (GPIO 47) to safe (inactive / de-energised) state | Yes | §9.7 — before any other peripheral. **Base, directly after (v1.77):** siren off, then `cam_trig_init()` drives the camera-rig lines (GPIO 39/41) LOW and starts the ARM heartbeat — not mandatory, never fatal (§7.5.3) |
 | 2 | Verify packed struct field offsets (`offsetof()` checks) | Yes | §9.9 |
 | 3 | Verify CRC32-C test vector | Yes | §6.2.2 |
 | 4 | Initialise ADC calibration | Yes | §5.4.7, §5.4.2 |
@@ -2680,6 +2824,32 @@ implementation the encoder and its button come up before step 4, and the
 display (step 6) comes up before the ADC/ESP-NOW steps that precede it in the
 table. The mandatory-failure semantics of each step are unchanged; only the
 sequence differs, and it differs for the base as specified.
+
+### 9.14 Camera Rig Interface Isolation (v1.77)
+
+The camera rig (CRIG) interface (§5.4.12, §7.5) SHALL NOT be able to affect
+the fire path or the FSM:
+
+- **Outputs only.** The base reads nothing from the CRIG. No CRIG signal is
+  connected to any input, so nothing the CRIG does can reach the FSM or any
+  arming or firing decision.
+- **Isolation.** Each line drives an optocoupler LED inside the CRIG remote;
+  the base supplies the CRIG no power. The only shared conductor is base GND
+  on pin 2, the LED return.
+- **No new fire-path element.** Neither break in the fire path (arm relay,
+  channel relay — §5.4.4) is touched; the radio protocol and the remote are
+  unchanged.
+- **Timer callbacks only, never blocking.** GPIO writes come from the FSM
+  hooks (a critical section of a few instructions) or from `esp_timer`
+  callbacks; the periodic ARM callback reads only the module's own flags. The
+  fire pulse runs on its own GPTimer (§7.4.2) and is unaffected (T-C04).
+- **Shorts.** Each line is limited to about 7 mA by its 470 Ω series
+  resistor; a short at the CRIG end cannot disturb the base (T-C05).
+- **Failure affects only the photos.** A stuck, open or shorted line, or a
+  timer that will not start, costs the photos. The CRIG ignores TRIG unless
+  ARM shows the armed pattern, so a stuck-HIGH TRIG without the armed pattern
+  does nothing. No CRIG failure raises an error flag, refuses an arm or
+  aborts a fire.
 
 ---
 
@@ -3618,6 +3788,12 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `FIRE_PULSE_DURATION_MS` | 1000 | Igniter current duration. **Safety-relevant parameter** — keep as short as practical. |
 | `COMPLETE_PULSE_ON_LINK_LOSS` | true | If true, base completes fire pulse on link loss during FIRING. If false, base immediately cuts fire pulse. See §7.2.5. **Safety-relevant parameter — RSO/operator should choose.** |
 | `POST_FIRE_COOLDOWN_MS` | 2000 | Cooldown before returning to IDLE |
+| `CAM_TRIG_LEAD_MS` | 2000 | Camera rig TRIG goes HIGH this long before ignition, i.e. at PRE_FIRE + (`PRE_FIRE_DELAY_MS` − this) (§7.5). `_Static_assert` < `PRE_FIRE_DELAY_MS`. Not a fire-path constant. |
+| `CAM_TRIG_POST_MS` | 3000 | TRIG stays HIGH this long after the fire pulse ends, or after any other exit from FIRING (§7.5). |
+| `CAM_TRIG_MAX_MS` | 10000 | Hard cap on one continuous TRIG assertion, whatever the FSM state (§7.5.3). `_Static_assert` > lead + pulse + post. |
+| `CAM_ARM_TICK_MS` | 50 | Step of the ARM heartbeat timer; every pattern phase is a whole number of ticks (`_Static_assert`). |
+| `CAM_ARM_IDLE_ON_MS` / `_OFF_MS` | 100 / 900 | ARM idle pattern (1 Hz): base connected, not armed. |
+| `CAM_ARM_ARMED_ON_MS` / `_OFF_MS` | 50 / 50 | ARM armed pattern (10 Hz): shown while `armed \|\| TRIG asserted`. |
 | `FIRE_PULSE_BACKSTOP_MARGIN_MS` | 250 | Grace beyond `FIRE_PULSE_DURATION_MS` before the FSM's max-duration backstop synthesises pulse completion. Defence in depth: if the GPTimer notification is ever lost the FSM would otherwise sit in FIRING with the relay energised, and the task watchdog would not catch it (the task keeps feeding). |
 | `SIREN_LINK_LOST_DURATION_MS` | 4000 | Siren duration on link loss. Since v1.31 the cycle count is **derived** from this and the 500 ms half-period (4 cycles); it was previously a bare literal, so editing this constant had no effect. |
 | `ARM_SWITCH_DISAGREE_MS` | 1000 | How long the remote's two arm-key contacts may disagree before ARM KEY SWITCH FAULT is raised (v1.59, §5.5.2). The key is break-before-make, so "both open" is normal *during* a turn — this must stay well above any human turn of a key, and well above the 160 ms per-contact debounce so the two engines settling at different moments cannot trip it. |
@@ -3673,6 +3849,8 @@ All tuneable parameters shall be defined in a single header file (`rlc_config.h`
 | `RLC_STRIP_BREATHE_MS` / `_CURSOR_MS` / `_CHASE_MS` / `_FRAME_MS` | 250 / 500 / 120 / 50 |
 | `RLC_COLOR_ALARM_LINK` / `_BATT` / `_FAULT` | `#FFB400` / `#FF00FF` / `#FFFFFF` |
 | `RLC_COLOR_STRIP_BOOT` | `#00FFFF` |
+| `PIN_CAM_TRIG` / `PIN_CAM_ARM` | 39 / 41 — camera rig TRIG and ARM outputs, base only (§5.4.12) |
+| `PIN_CAM_TRIG_ACTIVE` / `PIN_CAM_ARM_ACTIVE` | 1 / 1 — active HIGH |
 
 ### 14.4 Display Configuration
 
@@ -3880,9 +4058,35 @@ Tests include the real production sources directly rather than mirroring their l
 | T-FSM08 | §7.2.9a: ERROR answers all four commands with `NACK_BASE_ERROR` and acts on none; link recovery does not clear it |
 | T-FSM09 | `ARM_TIMEOUT_MS` auto-disarm; link loss while ARMED and recovery never re-entering ARMED |
 | T-FSM10 | §12.2 igniter-connection blips: CONNECTED sounds one and MARGINAL two, in IDLE and BOOT; OPEN silent; silent for an `initial` classification and inside the post-fire inhibit window; the per-channel **per-band** rate limit suppresses a repeat but lets a MARGINAL→CONNECTED re-seat sound inside the window; eight channels still give eight signals; **both patterns gated out of ARMED (with the continuous tone asserted still sounding), PRE_FIRE, FIRING, LINK_LOST, ERROR and POST_FIRE** |
+| T-FSM11 | §7.5.4 camera rig hooks: armed on both ARMED entries; PRE_FIRE and FIRING entry hooked once each; pulse end hooked, including the pulse completed on link loss; cancel + disarmed on PRE_FIRE aborts (key off, dead-man), FIRING aborts (CEASE_FIRE), LINK_LOST, DISARM, arm timeout and ERROR; POST_FIRE → IDLE clears armed **without** cancelling TRIG |
+| T-CAM01–10 | `tests/host/test_cam_trig.c` — the production `rlc_cam_trig.c` against a simulated `esp_timer` wheel and a GPIO edge recorder: boot LOW and idle heartbeat; armed pattern and its return; full-cycle TRIG edges at PRE_FIRE + 3000 and pulse end + 3000 with ARM held at 10 Hz until TRIG drops; abort before FIRING (TRIG drops at the abort instant, or never rises); abort after FIRING (TRIG runs out its post window, a later cancel neither cuts nor extends it); lead expiry outside PRE_FIRE; 10 s hard cap; a stale lead callback from a cancelled cycle; a new countdown inside the previous post window; timer create/start failures leave the lines LOW and nothing fatal; balanced critical sections and no timer API call inside one |
 | T-U14 | CRC32-C test vector | Verify CRC32-C (Castagnoli) of ASCII `"123456789"` = `0xE3069283`. Verify that CRC input includes header + payload (excluding CRC field) + integrity key. |
 | T-U15 | Sequence number overflow | Verify that when sender sequence reaches `0xFFFFFFFF`, system initiates re-link rather than wrapping to 0. |
 | T-U16 | update_sequence wrap-around | Verify that `update_sequence` wrap from 65535 to 0 is not treated as a gap. Verify modular gap detection. **COVERED (v1.44)** — `tests/host/test_seqgap.c` T-U16. |
+
+### 15.6 Camera Rig Interface Tests (v1.77)
+
+Bench tests on the built base with a logic analyser or scope on DIN pins 1–3,
+or with the CRIG remote connected. The CRIG project's test IDs are given in
+brackets. Use an inert igniter tester on the fired channel.
+
+| ID | Test | Expected Result |
+|---|---|---|
+| T-C01 [T-21] | Full sequence: arm, hold fire, let the pulse complete | ARM goes to 10 Hz on ARMED and back to 1 Hz about 1 s after POST_FIRE → IDLE. TRIG HIGH at PRE_FIRE + 3000 ± 50 ms, LOW at pulse end + 3000 ± 50 ms. |
+| T-C02 [T-22] | Abort during PRE_FIRE: (a) release the fire button, (b) key off | TRIG LOW within 20 ms of the abort; ARM returns to 1 Hz. |
+| T-C03 [T-23] | Base powered off while TRIG is HIGH | Both lines go LOW. |
+| T-C04 [T-24] | Measure PRE_FIRE and fire-pulse durations with the CRIG lines loaded and unloaded | Both unchanged within ± 5 ms. |
+| T-C05 [T-25] | Short pin 1, then pin 3, to pin 2 (COM−) | About 7 mA per line; the base keeps operating normally (link, continuity, arm/fire). |
+| T-C06 [T-26] | Power on, capture both lines from reset | No pulses on either line during boot; 1 Hz ARM within 2 s. |
+| T-C07 [T-27] | Arm, disarm, arm timeout, key off, ERROR (fault injection) | On arm: first 10 Hz pulse within 100 ms. On each return to idle: line LOW within one 50 ms tick, first 1 Hz pulse about 950 ms later (§7.5.1). |
+| T-C08 | Abort during FIRING (CEASE_FIRE / key off mid-pulse) | TRIG stays HIGH until abort + 3000 ± 50 ms (owner decision, §7.5.2); ARM at 10 Hz until TRIG drops. |
+| — | Regression | T-F and T-S fire-path safety tests pass unchanged. |
+
+**T-C07 deviation from CRIG T-27 (noted for the CRIG side).** CRIG T-27 asks
+that ARM "follows ... within 100 ms". Entering the armed pattern meets it
+(first rise ≤ 100 ms). The return to the idle pattern drops the line within
+one tick, but by design (§7.5.1) the first 1 Hz pulse comes ~950 ms later —
+the CRIG decoder needs a full 0.7–1.3 s period to call it 1 Hz in any case.
 
 ---
 
@@ -4113,8 +4317,10 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm
 | Arm relay output | 47 | Digital output, via IRLZ44N MOSFET (§5.4.9). Arm relay coil driven through physical key switch AND MOSFET (hardware AND gate). Primary fire path interlock. |
 | Siren output | 40 | Digital output, via IRLZ44N MOSFET (§5.4.10) |
 | RGB LED strip (status) | 48 | WS2812 8-pixel LED strip via RMT |
+| Camera rig TRIG output | 39 | Digital output (v1.77, §5.4.12). 470 Ω to DIN pin 1 (TRIG+), 10 kΩ pull-down. JTAG pad MTCK, unused. Active HIGH. |
+| Camera rig ARM output | 41 | Digital output (v1.77, §5.4.12). 470 Ω to DIN pin 3 (ARM+), 10 kΩ pull-down. JTAG pad MTDI, unused. Active HIGH. |
 
-**Total: 22 GPIOs used. 3 spare GPIOs (38, 39, 41). GPIO 3 deliberately unused (strapping pin).**
+**Total: 24 GPIOs used. 1 spare GPIO (38). GPIO 3 deliberately unused (strapping pin).**
 
 **Notes:**
 - GPIO 1–9 plus GPIO 10 are allocated to ADC1 (1 battery + 8 continuity). All 10 ADC1 pins are used; no spare ADC1 pins remain.
@@ -4127,7 +4333,8 @@ Based on ESP32-S3-DevKitC-1 with N16R8 module. 8 channels with SPDT relays + arm
 - GPIO 40 is the siren output, driven via IRLZ44N MOSFET (§5.4.10).
 - GPIO 47 is the arm relay output, driven via IRLZ44N MOSFET (§5.4.9). Arm relay coil positive terminal connected through physical key switch (§5.4.4) — hardware AND gate. Active HIGH. Primary fire path interlock.
 - GPIO 48 has the WS2812 8-pixel RGB LED strip for status indication.
-- Spare GPIOs 38, 39, 41 available for future expansion.
+- GPIO 39 and 41 are the camera rig (CRIG) TRIG and ARM outputs (v1.77, §5.4.12, §7.5). Not yet continuity-checked on the built unit (CRIG O-8).
+- GPIO 38 is the only spare, and is **kept spare on purpose**: on an ESP32-S3-DevKitC-1 **v1.1** it drives the on-board RGB LED (this base is a v1.0, LED on GPIO 48), so it is only safe to use if a replacement board is known to be a v1.0.
 
 ### C.2 Remote Unit Pin Assignment
 

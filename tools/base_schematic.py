@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """RLC base unit schematic -> SVG (+ PNG via cairosvg), in the style of the CRIG node schematic.
 
-Source: FSD RLC-FSPEC-001 v1.75 §5.4 / §5.6 / App. C.1, the as-built tables in
+Source: FSD RLC-FSPEC-001 v1.75 §5.4 / §5.6 / App. C.1 (frame F: v1.77 §5.4.12, camera rig), the as-built tables in
 Development_Progress.md, and the hand-drawn base schematic
 (netwerkdrive Rocketry/ESP32 Rocket Launch Controller/IMG_20260827_143820_001.jpg)
 as confirmed by the owner on 2026-10-11 (zeners fitted, XT30 igniter sockets). The
@@ -18,13 +18,15 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from schematic_svg import *  # noqa: E402,F401,F403
 
+C_CAM = '#5c940d'      # camera rig (CRIG) opto outputs — base-only colour
+
 OUT = sys.argv[1] if len(sys.argv) > 1 else 'RLC_base_schematic'
-W, H = 1910, 1270
+W, H = 1910, 1560
 
 # =================================================================== canvas
 begin(W, H, 'RLC base unit — schematic',
-      'ESP32 Rocket Launch Controller · as built 2026-10-11 · fw 1.2.21 · '
-      'FSD v1.75 §5.4/§5.6/App. C.1 + as-built tables + hand-drawn base schematic (2026-08-27)')
+      'ESP32 Rocket Launch Controller · as built 2026-10-11 + camera rig (F, not yet fitted) 2026-11-03 · fw 1.2.22 · '
+      'FSD v1.77 §5.4/§5.6/App. C.1 + as-built tables + hand-drawn base schematic (2026-08-27)')
 
 # =================================================================== A · POWER
 frame(20, 60, 600, 430, 'A · POWER, 5 V BUCK, BATTERY SENSE')
@@ -85,7 +87,7 @@ rect(BX, BY, BW, BH)
 text(BX + BW / 2, 420, 'U1', 18, 'middle', True)
 lines(BX + BW / 2, 442, ['ESP32-S3-', 'DevKitC-1', 'WROOM-1', 'N16R8'], 11, 'middle', dy=14)
 lines(BX + BW / 2, 514, ['2.4 GHz ext. ant.', '(U.FL)', 'USB, USB-JTAG', '(case open)'], 10, 'middle', fill=GREY, dy=13)
-lines(BX + BW / 2, 586, ['spare:', 'IO38 IO39 IO41'], 10, 'middle', fill=GREY, dy=13)
+lines(BX + BW / 2, 668, ['spare:', 'IO38'], 10, 'middle', fill=GREY, dy=13)
 
 left = [('IO1', 'VBAT_ADC', C_SENSE), ('IO2', 'ADC_CH1', C_SENSE), ('IO10', 'ADC_CH2', C_SENSE),
         ('IO4', 'ADC_CH3', C_SENSE), ('IO5', 'ADC_CH4', C_SENSE), ('IO6', 'ADC_CH5', C_SENSE),
@@ -95,8 +97,9 @@ left = [('IO1', 'VBAT_ADC', C_SENSE), ('IO2', 'ADC_CH1', C_SENSE), ('IO10', 'ADC
 right = [('IO11', 'RLY_CH1', C_GATE), ('IO12', 'RLY_CH2', C_GATE), ('IO13', 'RLY_CH3', C_GATE),
          ('IO14', 'RLY_CH4', C_GATE), ('IO15', 'RLY_CH5', C_GATE), ('IO16', 'RLY_CH6', C_GATE),
          ('IO17', 'RLY_CH7', C_GATE), ('IO18', 'RLY_CH8', C_GATE), ('IO47', 'ARM_RLY', C_GATE),
-         ('IO40', 'SIREN', C_GATE), ('IO48', 'WS2812_DIN', C_DATA), ('GND', 'GND', INK)]
-step = 50
+         ('IO40', 'SIREN', C_GATE), ('IO48', 'WS2812_DIN', C_DATA),
+         ('IO39', 'CAM_TRIG', C_CAM), ('IO41', 'CAM_ARM', C_CAM), ('GND', 'GND', INK)]
+step = 46
 for i, (pin, netname, c) in enumerate(left):
     y = BY + 40 + i * step
     wire([(660, y), (BX, y)], c, 2)
@@ -387,6 +390,7 @@ legend = [(C_VBAT, 2.5, None, 'VBAT+ — battery after SW1'),
           (C_SENSE, 2.5, None, 'analogue / sense input to U1'),
           (C_GATE, 2.5, None, 'U1 output → MOSFET gate'),
           (C_DATA, 2.5, None, 'WS2812 data'),
+          (C_CAM, 2.5, None, 'camera rig (CRIG) opto outputs'),
           (NF, 1.5, '4 3', 'specified, NOT fitted')]
 for i, (c, w, d, s) in enumerate(legend):
     lx = 1060 + (i % 2) * 400
@@ -442,7 +446,7 @@ rect(20, 860, 1000, 390, FRAME, 1.5, rx=8)
 text(32, 884, 'NOTES', 15, bold=True, fill=GREY)
 notes = [
     '1. All GPIO are 3.3 V logic. Not used: IO0/IO3/IO45/IO46 (strapping), IO19/20 (USB), IO33–37 (octal PSRAM),',
-    '    IO43/44 (UART0). Spare: IO38, IO39, IO41.',
+    '    IO43/44 (UART0). Spare: IO38 only — kept spare (drives the on-board LED on a DevKitC-1 v1.1). IO39/41: frame F.',
     '2. Every IRLZ44N (8 × channel, K_ARM, siren): 150 Ω gate series + 10 kΩ gate pull-down, so all outputs stay off while',
     '    U1 boots or resets; flyback diode cathode to VBAT+ (1N4007 or 1N5819 per FSD; siren: 1N5819 fitted).',
     '3. Fire path: VBAT+ → K_ARM NO/COM → FIRE_BUS → K_CHn NO/COM → XT30 → igniter → GND. Two breaks.',
@@ -458,5 +462,75 @@ notes = [
     '9. Base 3S pack: arming blocked below 10.5 V, ERROR below 9.0 V (firmware only).',
 ]
 lines(32, 910, notes, 11, dy=21)
+
+# =================================================================== F · CAMERA RIG (CRIG)
+FY = 1270
+frame(20, FY, 1870, 270, 'F · CAMERA RIG (CRIG) INTERFACE — FSD v1.77 §5.4.12 · outputs only · NOT YET FITTED')
+JX = 760    # DIN socket pins column
+
+
+def cam_line(y, net, gpio, pin, label):
+    tag(40, y - 6, net, C_CAM, size=12)
+    text(40, y + 14, '← ' + gpio, 10, fill=C_CAM)
+    wire([(40, y), (240, y)], C_CAM, 2.5)
+    dot(240, y, C_CAM)
+    # 10 k pull-down at the GPIO
+    res(240, y, 240, y + 70, NF, dash='4 3')
+    gnd(240, y + 70, NF, '4 3')
+    text(252, y + 40, '10 k', 10)
+    # 470 R series to the socket
+    wire([(240, y), (380, y)], NF, 2, '4 3')
+    res(380, y, 520, y, NF, dash='4 3')
+    text(450, y - 12, '470 Ω', 10, 'middle')
+    wire([(520, y), (JX - 5, y)], NF, 2, '4 3')
+    ocirc(JX, y, NF, 4.5)
+    text(JX + 12, y + 4, 'pin ' + pin + '  ' + label, 11, bold=True)
+
+
+cam_line(FY + 60, 'CAM_TRIG', 'IO39', '1', 'TRIG+')
+cam_line(FY + 140, 'CAM_ARM', 'IO41', '3', 'ARM+')
+# COM- = base GND
+ocirc(JX, FY + 220, NF, 4.5)
+text(JX + 12, FY + 224, 'pin 2  COM− (centre)', 11, bold=True)
+wire([(JX - 5, FY + 220), (660, FY + 220)], NF, 2, '4 3')
+gnd(660, FY + 220, NF, '4 3')
+text(560, FY + 250, 'pins 4, 5: not connected', 10, fill=GREY)
+text(JX - 20, FY + 36, 'J_CRIG', 12, 'end', True)
+text(JX - 20, FY + 50, '5-pin DIN 180° female, AD322', 10, 'end', fill=GREY)
+
+# socket face: pins 1-4-2-5-3 along the arc
+DX, DY, DR = 1110, FY + 150, 70
+out.append(f'<circle cx="{DX}" cy="{DY}" r="{DR}" fill="none" stroke="{NF}" stroke-width="2" stroke-dasharray="4 3"/>')
+import math as _m
+for ang, num, lab in [(180, '1', 'TRIG+'), (135, '4', 'nc'), (90, '2', 'COM−'), (45, '5', 'nc'), (0, '3', 'ARM+')]:
+    a = _m.radians(ang)
+    px, py = DX + 36 * _m.cos(a), DY + 36 * _m.sin(a)
+    out.append(f'<circle cx="{px:.1f}" cy="{py:.1f}" r="6" fill="white" stroke="{INK}" stroke-width="2"/>')
+    lx, ly = DX + 56 * _m.cos(a), DY + 56 * _m.sin(a)
+    text(lx, ly + 4, num, 11, 'middle', True)
+text(DX, DY - DR - 14, 'DIN-5 180°: pins along one arc', 10, 'middle', fill=GREY)
+text(DX, DY + DR + 18, 'order 1 – 4 – 2 – 5 – 3 (wire by the moulded numbers)', 10, 'middle', fill=GREY)
+
+# CRIG side (not part of the base)
+CXo = 1290
+rect(CXo, FY + 40, 300, 190, NF, 1.5, rx=6, dash='6 4')
+text(CXo + 150, FY + 64, 'CRIG remote (not part of the base)', 12, 'middle', True, GREY)
+lines(CXo + 16, FY + 92, ['via ≤ 1 m 3-core cable, AD302 plugs,',
+                          'straight through (built by the CRIG side)',
+                          'pin 1 → PC817 LED → pin 2   (TRIG)',
+                          'pin 3 → PC817 LED → pin 2   (ARM)',
+                          '≈ (3.3 − 1.2) V / 470 Ω ≈ 4.5 mA per line',
+                          'short to pin 2: ≈ 7 mA, base unaffected',
+                          'no power drawn from the base'], 10, fill=GREY, dy=17)
+
+lines(1610, FY + 60, ['TRIG: HIGH from T−2 s to pulse end + 3 s',
+                      '(cap 10 s); after FIRING never early.',
+                      'ARM: 1 Hz = connected, not armed',
+                      '(100/900 ms); 10 Hz = armed or TRIG',
+                      'HIGH (50/50 ms). CRIG ignores TRIG',
+                      'unless ARM shows 10 Hz.',
+                      '',
+                      'Panel location: TBD (CRIG O-9).',
+                      'IO39/41 continuity: TBD (CRIG O-8).'], 10, fill=GREY, dy=17, italic=True)
 
 finish(OUT, W)

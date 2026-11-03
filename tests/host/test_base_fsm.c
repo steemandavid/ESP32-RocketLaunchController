@@ -62,6 +62,14 @@ static struct {
 
     int     status_triggers;
 
+    /* §7.5 camera rig hooks (the module itself is tested in test_cam_trig.c;
+     * here only that the FSM calls it at the right transitions) */
+    bool    cam_armed;
+    int     cam_prefire_calls;
+    int     cam_firing_calls;
+    int     cam_pulse_end_calls;
+    int     cam_cancel_calls;
+
     /* Last ACK / NACK the FSM emitted */
     int     ack_count, nack_count;
     uint8_t last_ack_type, last_ack_channel;
@@ -104,6 +112,14 @@ void siren_off(void)                   { hw.siren_off_calls++; hw.siren_on = fal
  * the driver's own belt-and-braces guard. */
 void siren_chirp_connect(void)         { hw.siren_chirp_calls++; }
 void siren_chirp_disconnect(void)      { hw.siren_disconnect_calls++; }
+
+/* camera rig (§7.5) */
+void cam_trig_init(void) {}
+void cam_trig_on_prefire_enter(void)  { hw.cam_prefire_calls++; }
+void cam_trig_on_firing_enter(void)   { hw.cam_firing_calls++; }
+void cam_trig_on_fire_pulse_end(void) { hw.cam_pulse_end_calls++; }
+void cam_trig_cancel(void)            { hw.cam_cancel_calls++; }
+void cam_arm_set(bool a)              { hw.cam_armed = a; }
 
 /* fire timer */
 void fire_timer_init(void) {}
@@ -313,6 +329,106 @@ static void fire_now(uint8_t ch)
 }
 
 /* ── Tests ───────────────────────────────────────────────────────── */
+
+/* §7.5 / CRIG F-4: the FSM calls the camera rig hooks at every transition
+ * the change request lists. Signal timing is test_cam_trig.c's job. */
+static void t_cam_hooks(void)
+{
+    printf("T-FSM11 camera rig hooks (FSD 7.5)\n");
+
+    /* Normal cycle: ARMED -> PRE_FIRE -> FIRING -> POST_FIRE -> IDLE */
+    reset_world();
+    arm_now(1);
+    expect("ARMED sets CRIG armed", hw.cam_armed);
+    expect("no TRIG hook on arm", hw.cam_prefire_calls == 0);
+    fire_now(1);
+    expect_state("reached FIRING", STATE_FIRING);
+    expect("PRE_FIRE entry hooked once", hw.cam_prefire_calls == 1);
+    expect("FIRING entry hooked once", hw.cam_firing_calls == 1);
+    expect("still armed through FIRING", hw.cam_armed);
+    post(EVT_FIRE_PULSE_DONE);
+    expect_state("POST_FIRE", STATE_POST_FIRE);
+    expect("pulse end hooked", hw.cam_pulse_end_calls == 1);
+    expect("still armed in POST_FIRE", hw.cam_armed);
+    int cancels = hw.cam_cancel_calls;
+    advance_ms(POST_FIRE_COOLDOWN_MS + 10);
+    check_timers();
+    expect_state("back to IDLE", STATE_IDLE);
+    expect("POST_FIRE -> IDLE clears armed", !hw.cam_armed);
+    expect("POST_FIRE -> IDLE does not cancel TRIG", hw.cam_cancel_calls == cancels);
+
+    /* Abort in PRE_FIRE: key off */
+    reset_world();
+    arm_now(1);
+    post_cmd(EVT_CMD_FIRE, 1);
+    expect_state("PRE_FIRE", STATE_PRE_FIRE);
+    in.key_sense = false;
+    post_bool(EVT_KEY_SWITCH_CHANGED, false);
+    expect_state("key off aborts PRE_FIRE", STATE_IDLE);
+    expect("PRE_FIRE abort cancels TRIG", hw.cam_cancel_calls >= 1);
+    expect("PRE_FIRE abort clears armed", !hw.cam_armed);
+    expect("no FIRING hook on abort", hw.cam_firing_calls == 0);
+
+    /* Abort in PRE_FIRE: dead-man (no repeated CMD_FIRE) */
+    reset_world();
+    arm_now(1);
+    post_cmd(EVT_CMD_FIRE, 1);
+    advance_ms(PRE_FIRE_DELAY_MS + 10);    /* guard runs at countdown end */
+    check_timers();
+    expect("dead-man abort leaves PRE_FIRE", s_state != STATE_PRE_FIRE);
+    expect("dead-man abort cancels TRIG", hw.cam_cancel_calls >= 1);
+    expect("dead-man abort clears armed", !hw.cam_armed);
+
+    /* Abort in FIRING: CEASE_FIRE goes through cancel (module keeps TRIG) */
+    reset_world();
+    arm_now(1);
+    fire_now(1);
+    post_cmd(EVT_CMD_CEASE_FIRE, 1);
+    expect_state("CEASE_FIRE -> IDLE", STATE_IDLE);
+    expect("FIRING abort cancels (post-timer path)", hw.cam_cancel_calls >= 1);
+    expect("FIRING abort clears armed", !hw.cam_armed);
+
+    /* Link lost in FIRING, pulse completed: pulse end, then LINK_LOST */
+    reset_world();
+    arm_now(1);
+    fire_now(1);
+    post(EVT_LINK_LOST);
+    post(EVT_FIRE_PULSE_DONE);
+    if (COMPLETE_PULSE_ON_LINK_LOSS) {
+        expect("completed pulse on link loss hooks pulse end",
+               hw.cam_pulse_end_calls == 1);
+    }
+    expect_state("-> LINK_LOST", STATE_LINK_LOST);
+    expect("LINK_LOST clears armed", !hw.cam_armed);
+
+    /* Link lost in ARMED */
+    reset_world();
+    arm_now(1);
+    post(EVT_LINK_LOST);
+    expect_state("ARMED -> LINK_LOST", STATE_LINK_LOST);
+    expect("LINK_LOST entry cancels", hw.cam_cancel_calls >= 1);
+    expect("LINK_LOST entry clears armed", !hw.cam_armed);
+
+    /* DISARM and arm timeout */
+    reset_world();
+    arm_now(1);
+    post_cmd(EVT_CMD_DISARM, 0);
+    expect("DISARM clears armed", !hw.cam_armed);
+    reset_world();
+    arm_now(1);
+    advance_ms(ARM_TIMEOUT_MS + 10);
+    check_timers();
+    expect_state("arm timeout -> IDLE", STATE_IDLE);
+    expect("arm timeout clears armed", !hw.cam_armed);
+
+    /* ERROR entry */
+    reset_world();
+    arm_now(1);
+    post(EVT_ARM_SENSE_FAULT);
+    expect_state("weld -> ERROR", STATE_ERROR);
+    expect("ERROR entry cancels", hw.cam_cancel_calls >= 1);
+    expect("ERROR entry clears armed", !hw.cam_armed);
+}
 
 /* T-U04 / FSD §7.2.2: every arming guard, in the order the spec lists them. */
 static void t_arm_guards(void)
@@ -1002,6 +1118,7 @@ int main(void)
     t_weld_fault();
     t_error_is_terminal();
     t_timeouts_and_recovery();
+    t_cam_hooks();
 
     printf("\n%d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;

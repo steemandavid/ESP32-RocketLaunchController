@@ -3,6 +3,7 @@ if(CONFIG_RLC_UNIT_BASE)
         "src/rlc_base_main.c"
         "src/rlc_relay.c"
         "src/rlc_siren.c"
+        "src/rlc_cam_trig.c"
         "src/rlc_base_state.c"
         "src/rlc_base_fsm.c"
         "src/rlc_fire_timer.c"

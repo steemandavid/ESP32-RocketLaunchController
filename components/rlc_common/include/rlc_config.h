@@ -87,6 +87,37 @@
 #define FIRE_PULSE_BACKSTOP_MARGIN_MS  250
 #define POST_FIRE_COOLDOWN_MS          2000
 
+/* Camera rig (CRIG) interface — FSD §5.4.12 / §7.5. None of these is a
+ * fire-path constant: they only time two isolated output lines.
+ *
+ * TRIG goes HIGH CAM_TRIG_LEAD_MS before ignition (i.e. PRE_FIRE_DELAY_MS -
+ * CAM_TRIG_LEAD_MS after PRE_FIRE entry) and drops CAM_TRIG_POST_MS after the
+ * fire pulse ends. CAM_TRIG_MAX_MS is a hard cap on one continuous assertion,
+ * whatever the FSM does (nominal assertion: 2 + 1 + 3 = 6 s).
+ *
+ * ARM is a heartbeat generated in CAM_ARM_TICK_MS steps: the idle pattern
+ * (1 Hz) means "base connected, not armed", the armed pattern (10 Hz) means
+ * "base armed". The CRIG decoder accepts periods within ±30 %. */
+#define CAM_TRIG_LEAD_MS               2000
+#define CAM_TRIG_POST_MS               3000
+#define CAM_TRIG_MAX_MS                10000
+#define CAM_ARM_TICK_MS                50
+#define CAM_ARM_IDLE_ON_MS             100
+#define CAM_ARM_IDLE_OFF_MS            900
+#define CAM_ARM_ARMED_ON_MS            50
+#define CAM_ARM_ARMED_OFF_MS           50
+
+_Static_assert(CAM_TRIG_LEAD_MS < PRE_FIRE_DELAY_MS,
+               "CRIG TRIG lead must fall inside the PRE_FIRE countdown");
+_Static_assert(CAM_TRIG_LEAD_MS + FIRE_PULSE_DURATION_MS + CAM_TRIG_POST_MS
+               < CAM_TRIG_MAX_MS,
+               "CRIG TRIG hard cap would cut a nominal assertion short");
+_Static_assert(CAM_ARM_IDLE_ON_MS % CAM_ARM_TICK_MS == 0 &&
+               CAM_ARM_IDLE_OFF_MS % CAM_ARM_TICK_MS == 0 &&
+               CAM_ARM_ARMED_ON_MS % CAM_ARM_TICK_MS == 0 &&
+               CAM_ARM_ARMED_OFF_MS % CAM_ARM_TICK_MS == 0,
+               "CRIG ARM pattern phases must be whole ticks");
+
 /* How long the remote holds the FIRE COMPLETE screen (FSD §10.2.4a).
  *
  * Deliberately SEPARATE from POST_FIRE_COOLDOWN_MS above, which is a fire-path

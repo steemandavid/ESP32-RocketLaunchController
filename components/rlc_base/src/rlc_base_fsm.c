@@ -16,6 +16,7 @@
 #include "rlc_protocol.h"
 #include "rlc_relay.h"
 #include "rlc_siren.h"
+#include "rlc_cam_trig.h"
 #include "rlc_fire_timer.h"
 #include "rlc_arm_sense.h"
 #include "rlc_continuity.h"
@@ -249,6 +250,8 @@ static void do_disarm(void)
 {
     relay_all_safe();
     siren_off();
+    cam_trig_cancel();          /* §7.5: before FIRING drops TRIG; after, lets it finish */
+    cam_arm_set(false);
     s_armed_channel = 0;
     s_firing_channel = 0;
     s_arm_time_ms = 0;
@@ -277,6 +280,8 @@ static void do_enter_link_lost(void)
 {
     relay_all_safe();
     siren_start_link_lost();
+    cam_trig_cancel();          /* §7.5 */
+    cam_arm_set(false);
     s_armed_channel = 0;
     s_firing_channel = 0;
     s_arm_time_ms = 0;
@@ -294,6 +299,8 @@ static void do_enter_error(uint8_t err_flag)
     relay_all_safe();
     fire_timer_stop();          /* belt-and-braces: ensure no pulse outlives ERROR */
     siren_start_error();
+    cam_trig_cancel();          /* §7.5 */
+    cam_arm_set(false);
     s_error_flags |= err_flag;
     s_armed_channel = 0;
     s_firing_channel = 0;
@@ -326,6 +333,10 @@ static void do_enter_error(uint8_t err_flag)
  * without re-reading that requirement. */
 static void firing_exit(rlc_state_t safe_state)
 {
+    /* §7.5: every abort exit from FIRING. FIRING was entered, so cancel lets
+     * TRIG run out its post window (the igniter may already have lit). */
+    cam_trig_cancel();
+    cam_arm_set(false);
     if (s_error_flags & ERR_VBAT_CRITICAL) {
         ESP_LOGE(TAG, "battery critical latched during FIRING — terminal ERROR");
         do_enter_error(0);  /* Flag already set */
@@ -628,6 +639,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 send_ack(MSG_CMD_ARM, evt->data.cmd.seq_number, ch);
                 status_update_trigger();
                 ESP_LOGI(TAG, "IDLE -> ARMED (ch %u)", ch);
+                cam_arm_set(true);      /* §7.5: CRIG ARM -> 10 Hz */
                 s_state = STATE_ARMED;
             } else {
                 /* Start non-blocking verify: wait for EVT_ARM_SENSE_CHANGED or timeout.
@@ -680,6 +692,7 @@ static void process_event(const rlc_fsm_event_t *evt)
                 send_ack(MSG_CMD_ARM, s_arm_verify_seq, ch);
                 status_update_trigger();
                 ESP_LOGI(TAG, "IDLE -> ARMED (ch %u, sense verified)", ch);
+                cam_arm_set(true);      /* §7.5: CRIG ARM -> 10 Hz */
                 s_state = STATE_ARMED;
             }
 
@@ -781,6 +794,7 @@ static void process_event(const rlc_fsm_event_t *evt)
             send_ack(MSG_CMD_FIRE, evt->data.cmd.seq_number, s_armed_channel);
             status_update_trigger();
             ESP_LOGI(TAG, "ARMED -> PRE_FIRE (ch %u)", s_armed_channel);
+            cam_trig_on_prefire_enter();    /* §7.5: TRIG at T-CAM_TRIG_LEAD_MS */
             s_state = STATE_PRE_FIRE;
 
         } else if (evt->type == EVT_CMD_DISARM) {
@@ -873,6 +887,9 @@ static void process_event(const rlc_fsm_event_t *evt)
             siren_off();
             s_firing_channel = 0;
             s_armed_channel = 0;
+            /* §7.5: pulse complete (including under COMPLETE_PULSE_ON_LINK_LOSS)
+             * — TRIG stays HIGH for CAM_TRIG_POST_MS more. */
+            cam_trig_on_fire_pulse_end();
 
             /* C1: If link was lost during pulse, transition to LINK_LOST now */
             if (s_link_lost_pending) {
@@ -1208,6 +1225,7 @@ static void check_timers(void)
             rlc_rgb_led_set_pattern(LED_PATTERN_FIRING);
             status_update_trigger();
             ESP_LOGI(TAG, "PRE_FIRE -> FIRING (ch %u)", s_armed_channel);
+            cam_trig_on_firing_enter();     /* §7.5: TRIG now ends via post timer only */
             s_state = STATE_FIRING;
         }
     }
@@ -1254,6 +1272,9 @@ static void check_timers(void)
              * Suppress chirps across the re-read window. */
             s_chirp_inhibit_until_ms = t + SIREN_CONNECT_CHIRP_INHIBIT_MS;
             ESP_LOGI(TAG, "POST_FIRE -> IDLE");
+            /* §7.5: ARM pattern stays 10 Hz until the post timer drops TRIG
+             * (~1 s later) — no cancel here. */
+            cam_arm_set(false);
             s_state = STATE_IDLE;
         }
     }

@@ -11,6 +11,7 @@
 #include "rlc_base.h"
 #include "rlc_relay.h"
 #include "rlc_siren.h"
+#include "rlc_cam_trig.h"
 #include "rlc_base_state.h"
 #include "rlc_base_fsm.h"
 #include "rlc_espnow.h"
@@ -162,6 +163,10 @@ void base_app_main(void)
     relay_init();
     siren_init();
     ESP_LOGI(TAG, "safety outputs initialised — all relays safe");
+    /* §5.4.12 / §9.13: camera rig lines driven LOW next to the safety
+     * outputs; the ARM heartbeat starts here with the idle pattern. Outputs
+     * only — never fatal (CRIG F-8). */
+    cam_trig_init();
 
     /* The strip comes up before the self-tests so a self-test failure can
      * actually be signalled on it. Previously the halt below set

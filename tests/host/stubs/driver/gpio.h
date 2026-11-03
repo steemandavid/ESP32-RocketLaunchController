@@ -3,6 +3,8 @@
 typedef int esp_err_t;
 #define ESP_OK 0
 #define GPIO_MODE_INPUT 1
+#define GPIO_MODE_OUTPUT 2
+#define GPIO_PULLUP_DISABLE 0
 #define GPIO_PULLUP_ENABLE 1
 #define GPIO_PULLDOWN_DISABLE 0
 #define GPIO_INTR_DISABLE 0
@@ -16,3 +18,5 @@ static inline int gpio_get_level(int pin) { return g_gpio_level[pin & 63]; }
 static inline esp_err_t gpio_install_isr_service(int f) { (void)f; return ESP_OK; }
 static inline esp_err_t gpio_isr_handler_add(int p, void (*fn)(void*), void *a)
 { (void)p;(void)fn;(void)a; return ESP_OK; }
+/* CRIG module: defined by test_cam_trig.c only. */
+esp_err_t gpio_set_level(int pin, uint32_t level);

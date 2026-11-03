@@ -56,6 +56,16 @@
 #define PIN_SIREN                  40
 #define PIN_SIREN_ACTIVE           1    /* 1 = active HIGH, 0 = active LOW */
 
+/* Camera rig (CRIG) interface — FSD §5.4.12. Outputs only, each via 470 Ω to
+ * a PC817 LED in the CRIG remote (DIN-5 socket: pin 1 TRIG+, pin 3 ARM+,
+ * pin 2 COM−), 10 kΩ pull-down at the GPIO. GPIO 39/41 are the JTAG pads
+ * MTCK/MTDI, unused (debug is over USB-JTAG). GPIO 38 is left spare on
+ * purpose: on a DevKitC-1 v1.1 it drives the on-board RGB LED. */
+#define PIN_CAM_TRIG               39   /* TRIG: steady HIGH = shoot */
+#define PIN_CAM_TRIG_ACTIVE        1    /* 1 = active HIGH */
+#define PIN_CAM_ARM                41   /* ARM: 1 Hz idle / 10 Hz armed heartbeat */
+#define PIN_CAM_ARM_ACTIVE         1    /* 1 = active HIGH */
+
 #endif /* CONFIG_RLC_UNIT_BASE */
 
 /* ══════════════════════════════════════════════════════════════════
