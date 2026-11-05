@@ -758,14 +758,14 @@
 <text x="40" y="1344" font-size="10" text-anchor="start" font-weight="normal" fill="#5c940d">← IO39</text>
 <line x1="40" y1="1330" x2="240" y2="1330" stroke="#5c940d" stroke-width="2.5" stroke-linecap="round"/>
 <circle cx="240" cy="1330" r="3.5" fill="#5c940d"/>
-<line x1="240" y1="1330" x2="240.0" y2="1345.0" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
-<line x1="240.0" y1="1385.0" x2="240" y2="1400" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
-<rect x="233.0" y="1345.0" width="14" height="40" rx="0" fill="white" stroke="#9aa3b2" stroke-width="2" stroke-dasharray="4 3"/>
-<line x1="240" y1="1400" x2="240" y2="1408" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
-<line x1="230" y1="1408" x2="250" y2="1408" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
-<line x1="234" y1="1412" x2="246" y2="1412" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
-<line x1="238" y1="1416" x2="242" y2="1416" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
-<text x="252" y="1370" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">10 k</text>
+<line x1="240" y1="1330" x2="240.0" y2="1332.0" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
+<line x1="240.0" y1="1372.0" x2="240" y2="1374" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
+<rect x="233.0" y="1332.0" width="14" height="40" rx="0" fill="white" stroke="#9aa3b2" stroke-width="2" stroke-dasharray="4 3"/>
+<line x1="240" y1="1374" x2="240" y2="1382" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
+<line x1="230" y1="1382" x2="250" y2="1382" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
+<line x1="234" y1="1386" x2="246" y2="1386" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
+<line x1="238" y1="1390" x2="242" y2="1390" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
+<text x="252" y="1356" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">10 k</text>
 <line x1="240" y1="1330" x2="380" y2="1330" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
 <line x1="380" y1="1330" x2="430.0" y2="1330.0" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
 <line x1="470.0" y1="1330.0" x2="520" y2="1330" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
@@ -778,14 +778,14 @@
 <text x="40" y="1424" font-size="10" text-anchor="start" font-weight="normal" fill="#5c940d">← IO41</text>
 <line x1="40" y1="1410" x2="240" y2="1410" stroke="#5c940d" stroke-width="2.5" stroke-linecap="round"/>
 <circle cx="240" cy="1410" r="3.5" fill="#5c940d"/>
-<line x1="240" y1="1410" x2="240.0" y2="1425.0" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
-<line x1="240.0" y1="1465.0" x2="240" y2="1480" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
-<rect x="233.0" y="1425.0" width="14" height="40" rx="0" fill="white" stroke="#9aa3b2" stroke-width="2" stroke-dasharray="4 3"/>
-<line x1="240" y1="1480" x2="240" y2="1488" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
-<line x1="230" y1="1488" x2="250" y2="1488" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
-<line x1="234" y1="1492" x2="246" y2="1492" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
-<line x1="238" y1="1496" x2="242" y2="1496" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
-<text x="252" y="1450" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">10 k</text>
+<line x1="240" y1="1410" x2="240.0" y2="1412.0" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
+<line x1="240.0" y1="1452.0" x2="240" y2="1454" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
+<rect x="233.0" y="1412.0" width="14" height="40" rx="0" fill="white" stroke="#9aa3b2" stroke-width="2" stroke-dasharray="4 3"/>
+<line x1="240" y1="1454" x2="240" y2="1462" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
+<line x1="230" y1="1462" x2="250" y2="1462" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
+<line x1="234" y1="1466" x2="246" y2="1466" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
+<line x1="238" y1="1470" x2="242" y2="1470" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round"/>
+<text x="252" y="1436" font-size="10" text-anchor="start" font-weight="normal" fill="#1f2430">10 k</text>
 <line x1="240" y1="1410" x2="380" y2="1410" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
 <line x1="380" y1="1410" x2="430.0" y2="1410.0" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>
 <line x1="470.0" y1="1410.0" x2="520" y2="1410" stroke="#9aa3b2" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"/>

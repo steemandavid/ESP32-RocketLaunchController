@@ -475,9 +475,9 @@ def cam_line(y, net, gpio, pin, label):
     wire([(40, y), (240, y)], C_CAM, 2.5)
     dot(240, y, C_CAM)
     # 10 k pull-down at the GPIO
-    res(240, y, 240, y + 70, NF, dash='4 3')
-    gnd(240, y + 70, NF, '4 3')
-    text(252, y + 40, '10 k', 10)
+    res(240, y, 240, y + 44, NF, dash='4 3')
+    gnd(240, y + 44, NF, '4 3')
+    text(252, y + 26, '10 k', 10)
     # 470 R series to the socket
     wire([(240, y), (380, y)], NF, 2, '4 3')
     res(380, y, 520, y, NF, dash='4 3')
