@@ -1,5 +1,80 @@
 # ESP32 Rocket Launch Controller — Changelog
 
+## 2026-11-03 / 2026-11-06 — Camera rig (CRIG) interface on the base (fw 1.2.22, FSD v1.77–v1.78)
+
+Implements `D3000-rocket-photography/docs/RLC_change_request_CRIG.md` (CRIG spec v0.18).
+The CRIG is a Nikon D3000 rig that photographs liftoffs; its remote takes two
+signals from the base over a short 3-core cable.
+
+### 1. Hardware (soldered by the owner 2026-11-06)
+
+| Line | GPIO | Circuit | DIN-5 180° pin (Gotron AD322) |
+|---|---|---|---|
+| TRIG+ | 39 (MTCK) | 470 Ω series, 10 kΩ pull-down at the GPIO | 1 |
+| COM− | GND | — | 2 (centre) |
+| ARM+ | 41 (MTDI) | 470 Ω series, 10 kΩ pull-down at the GPIO | 3 |
+| — | — | not connected | 4, 5 |
+
+About 4.5 mA into each CRIG PC817 LED (≈7 mA into a short). GPIO 38 is now the
+only spare (DevKitC-1 v1.1 drives its on-board LED from it). The pull-downs keep
+both lines below the opto threshold before `cam_trig_init()` and through resets,
+even against a possible ~45 kΩ internal pull-up on the JTAG pads.
+
+### 2. Firmware 1.2.22 (both units flashed together; change is base-only)
+
+- New `components/rlc_base/src/rlc_cam_trig.c` + `include/rlc_cam_trig.h`.
+- **TRIG:** HIGH at PRE_FIRE + 3000 ms (`PRE_FIRE_DELAY_MS` 5000 − `CAM_TRIG_LEAD_MS` 2000),
+  only if still in PRE_FIRE; LOW at fire-pulse end + `CAM_TRIG_POST_MS` 3000; hard cap
+  `CAM_TRIG_MAX_MS` 10 s. After FIRING is entered TRIG never ends early; an abort before
+  FIRING drops it at once.
+- **ARM:** 50 ms tick; idle 100/900 ms (1 Hz), armed 50/50 ms (10 Hz) while `armed || TRIG`.
+- FSM hooks in `rlc_base_fsm.c` (disarm, link lost, error, firing exit, IDLE→ARMED,
+  ARMED→PRE_FIRE, PRE_FIRE→FIRING, fire pulse done, POST_FIRE→IDLE). Outputs only;
+  no failure here is a base ERROR.
+- Constants + `_Static_assert`s in `rlc_config.h`; pins in `pin_config.h`.
+- Host tests: T-FSM11 in `test_base_fsm.c`, new `test_cam_trig.c` (T-CAM01–10), new
+  stubs for esp_timer/gpio/portMUX. Suite: 583 checks, 0 failures.
+- **Recorded deviation from CRIG T-27:** a pattern change starts in the new pattern's
+  LOW phase (avoids a merged 150 ms pulse), so the first idle pulse comes ~950 ms
+  after disarm.
+
+### 3. Documentation
+
+- FSD v1.77: new §5.4.12, §7.5, §9.14, §15.6 (T-C01–T-C08); §5.4.4, §9.1, §9.13,
+  §14.1, §14.3, §15.5, App. C.1 updated.
+- FSD v1.78 (2026-11-06): socket marked fitted, not yet bench-verified.
+- Base schematic frame F (`tools/base_schematic.py` → `docs/reference/RLC_base_schematic.{svg,png}`):
+  added on 11-03; on 11-06 the CAM_TRIG pull-down was shortened (it looked as if it
+  ran into the CAM_ARM wire) and the frame is now drawn as fitted.
+- Development_Progress version table and README Phase-5 line brought to 1.2.22.
+
+### 4. Flash + link check (2026-11-06)
+
+| Unit | by-id | MAC |
+|---|---|---|
+| Base | `usb-1a86_USB_Single_Serial_5B5E042156-if00` | 44:1b:f6:81:f1:70 |
+| Remote | `usb-Espressif_USB_JTAG_serial_debug_unit_AC:A7:04:E2:F2:8C-if00` (COM adapter not plugged in) | ac:a7:04:e2:f2:8c |
+
+```
+./build_base.sh flash
+./build_remote.sh flash -p /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_AC:A7:04:E2:F2:8C-if00
+```
+
+Base boot log: `RLC Base Unit v1.2.22`, `rlc_cam: camera rig interface up (TRIG GPIO 39, ARM GPIO 41)`,
+12/12 self-tests PASS. First check on USB power only, no antennas: base ERROR
+(VBAT 0 mV) and link dropping at rssi −88…−96. After the owner connected antennas
+and batteries: both IDLE, rssi −17, 0 missed pings, base 12.35 V, remote 8.26 V.
+
+### Notes / follow-up
+
+- **Open:** CRIG O-8 (continuity GPIO 39/41 → socket), O-9 (record the panel location),
+  bench tests T-C01–T-C08 (FSD §15.6), then report pins, location, fw and the T-27
+  deviation back to the CRIG side.
+- Optional: add the AD322 to `docs/Gotron_Shopping_List.md`.
+- Two unidentified 1a86 adapters (`5CCC062258`, `5CCC062602`) were on the bus 2026-11-06; not RLC units.
+- Running `tools/base_schematic.py` with no argument writes into the cwd; pass
+  `docs/reference/RLC_base_schematic` as the output stem.
+
 ## 2026-10-11 — Remote schematic + remote power corrected (FSD v1.76, docs only)
 
 - New remote unit schematic, `docs/reference/RLC_remote_schematic.{svg,png}`,

@@ -25,8 +25,8 @@ W, H = 1910, 1560
 
 # =================================================================== canvas
 begin(W, H, 'RLC base unit — schematic',
-      'ESP32 Rocket Launch Controller · as built 2026-10-11 + camera rig (F, not yet fitted) 2026-11-03 · fw 1.2.22 · '
-      'FSD v1.77 §5.4/§5.6/App. C.1 + as-built tables + hand-drawn base schematic (2026-08-27)')
+      'ESP32 Rocket Launch Controller · as built 2026-10-11 + camera rig (F) fitted 2026-11-06 · fw 1.2.22 · '
+      'FSD v1.78 §5.4/§5.6/App. C.1 + as-built tables + hand-drawn base schematic (2026-08-27)')
 
 # =================================================================== A · POWER
 frame(20, 60, 600, 430, 'A · POWER, 5 V BUCK, BATTERY SENSE')
@@ -465,7 +465,7 @@ lines(32, 910, notes, 11, dy=21)
 
 # =================================================================== F · CAMERA RIG (CRIG)
 FY = 1270
-frame(20, FY, 1870, 270, 'F · CAMERA RIG (CRIG) INTERFACE — FSD v1.77 §5.4.12 · outputs only · NOT YET FITTED')
+frame(20, FY, 1870, 270, 'F · CAMERA RIG (CRIG) INTERFACE — FSD v1.78 §5.4.12 · outputs only · FITTED 2026-11-06 · bench tests pending')
 JX = 760    # DIN socket pins column
 
 
@@ -475,32 +475,32 @@ def cam_line(y, net, gpio, pin, label):
     wire([(40, y), (240, y)], C_CAM, 2.5)
     dot(240, y, C_CAM)
     # 10 k pull-down at the GPIO
-    res(240, y, 240, y + 44, NF, dash='4 3')
-    gnd(240, y + 44, NF, '4 3')
+    res(240, y, 240, y + 44, INK)
+    gnd(240, y + 44, INK)
     text(252, y + 26, '10 k', 10)
     # 470 R series to the socket
-    wire([(240, y), (380, y)], NF, 2, '4 3')
-    res(380, y, 520, y, NF, dash='4 3')
+    wire([(240, y), (380, y)], INK, 2)
+    res(380, y, 520, y, INK)
     text(450, y - 12, '470 Ω', 10, 'middle')
-    wire([(520, y), (JX - 5, y)], NF, 2, '4 3')
-    ocirc(JX, y, NF, 4.5)
+    wire([(520, y), (JX - 5, y)], INK, 2)
+    ocirc(JX, y, INK, 4.5)
     text(JX + 12, y + 4, 'pin ' + pin + '  ' + label, 11, bold=True)
 
 
 cam_line(FY + 60, 'CAM_TRIG', 'IO39', '1', 'TRIG+')
 cam_line(FY + 140, 'CAM_ARM', 'IO41', '3', 'ARM+')
 # COM- = base GND
-ocirc(JX, FY + 220, NF, 4.5)
+ocirc(JX, FY + 220, INK, 4.5)
 text(JX + 12, FY + 224, 'pin 2  COM− (centre)', 11, bold=True)
-wire([(JX - 5, FY + 220), (660, FY + 220)], NF, 2, '4 3')
-gnd(660, FY + 220, NF, '4 3')
+wire([(JX - 5, FY + 220), (660, FY + 220)], INK, 2)
+gnd(660, FY + 220, INK)
 text(560, FY + 250, 'pins 4, 5: not connected', 10, fill=GREY)
 text(JX - 20, FY + 36, 'J_CRIG', 12, 'end', True)
 text(JX - 20, FY + 50, '5-pin DIN 180° female, AD322', 10, 'end', fill=GREY)
 
 # socket face: pins 1-4-2-5-3 along the arc
 DX, DY, DR = 1110, FY + 150, 70
-out.append(f'<circle cx="{DX}" cy="{DY}" r="{DR}" fill="none" stroke="{NF}" stroke-width="2" stroke-dasharray="4 3"/>')
+out.append(f'<circle cx="{DX}" cy="{DY}" r="{DR}" fill="none" stroke="{INK}" stroke-width="2"/>')
 import math as _m
 for ang, num, lab in [(180, '1', 'TRIG+'), (135, '4', 'nc'), (90, '2', 'COM−'), (45, '5', 'nc'), (0, '3', 'ARM+')]:
     a = _m.radians(ang)

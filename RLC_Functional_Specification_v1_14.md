@@ -1,8 +1,8 @@
 # ESP32 Wireless Rocket Launch Controller — Functional Specification
 
 **Document ID:** RLC-FSPEC-001
-**Version:** 1.77
-**Date:** 2026-11-03
+**Version:** 1.78
+**Date:** 2026-11-06
 **Author:** David Steeman & Claude Code / Opus 4.6
 **Status:** Draft for Development
 **Target Platform:** ESP32-S3 (ESP-IDF framework)
@@ -91,6 +91,7 @@
 | 1.75 | 2026-10-11 | **Base as-built reconciliation against the owner's hand-drawn base schematic** (`IMG_20260827_143820_001.jpg`, netwerkdrive `Rocketry/ESP32 Rocket Launch Controller/`) and a new generated schematic, `docs/reference/RLC_base_schematic.{svg,png}` (source `tools/base_schematic.py`). Owner-confirmed corrections: **(1) igniter sockets are XT30**, not XT60 (§5.4.4 panel note; README and RLC-OPS-001 conformed). **(2) The 3.3 V zeners on GPIO 21 and GPIO 42 are fitted** — the 2026-08-17 "not fitted" deviation (§5.4.3, §5.4.3b, §5.4.5) is superseded. **(3) Base power is an LM2596S buck, VBAT → 5.0 V**, into the DevKit 5V0 pin and the WS2812B strip; the 3.3 V rail is the DevKit's own LDO (§5.6.1, §5.4.11). **(4) Battery connector is XT60**, not XT90 (§5.6.1). Newly documented from the drawing: lamp resistors (SAFE 220 Ω, ARM / HOT / FIRE 470 Ω); the **FIRE lamp is 470 Ω + LED across each channel relay coil** (§5.4.1); a **series diode between the key switch NO contact and the arm relay coil**, with the GPIO 42 divider on the coil side (§5.4.4); channel relay snubbers **100 Ω + 100 nF 63 V** (§5.4.5). Also brought §5.4.5 up to the as-built record it lagged: the arm-relay snubber and the 217 Ω sense resistors were fitted 2026-08-21/23. **Not changed:** R_ref stays 1.5 kΩ + 1.8 kΩ — the drawing's "1k3" is a 1k8; the 2026-08-23 known-load data (14.9 Ω → 216 mV, 74.3 Ω → 270 mV) fits 3.3 kΩ within 2 mV and 2.8 kΩ not at all. Documentation-only; no firmware change (fw stays 1.2.21). |
 | 1.76 | 2026-10-11 | **Remote power corrected to as-built (owner-confirmed) and remote schematic added**, `docs/reference/RLC_remote_schematic.{svg,png}` (source `tools/remote_schematic.py`; drawing primitives shared with the base in `tools/schematic_svg.py`). **§5.6.2 regulation was wrong:** the remote does not use a 3.3 V buck (MP1584EN) — like the base, a **buck module makes 5 V into the DevKit 5V0 pin**, and 3.3 V is the DevKit's own LDO. **Display VCC is on 3.3 V** (§5.5.6, was "3V3 or 5V rail"); **the WS2812 strip is on 5 V** (§5.5.8). Still unrecorded: the buck module type, the battery connector (T-plug per the spec, not verified) and the encoder supply. **Open question added to §5.5.7:** a plain BC547 NPN low-side stage is on when the GPIO is HIGH, yet the firmware drives the buzzer active LOW and it works — the fitted driver does not match the description. The remote schematic follows this specification, which §5.5 notes has not been verified against the built unit. Documentation-only; no firmware change (fw stays 1.2.21). |
 | 1.77 | 2026-11-03 | **Camera rig (CRIG) interface added to the base; firmware 1.2.21 → 1.2.22.** Implements change request `RLC_change_request_CRIG.md` (CRIG project, spec v0.18 §8 / App. A). The CRIG is a Nikon D3000 rig that photographs liftoffs; its handheld remote sits next to the base and takes two signals over a short 3-core cable: **TRIG** (GPIO 39), a steady HIGH from T−2 s until 3 s after the fire pulse, which makes the camera shoot a burst; and **ARM** (GPIO 41), a heartbeat — 1 Hz "base connected, not armed", 10 Hz "base armed" — without which the CRIG ignores TRIG. New **§5.4.12** (hardware: 5-pin DIN 180° panel socket, Gotron AD322; pin 1 TRIG+, pin 2 COM−, pin 3 ARM+, 4/5 NC; 470 Ω series + 10 kΩ pull-down per line, about 4–5 mA into the CRIG's PC817s), new **§7.5** (behaviour, timing and FSM hooks), new **§9.14** (safety argument: outputs only, optically isolated, no power drawn, timer-callback-only GPIO writes, no failure of it is a base ERROR). Owner decisions recorded in §7.5: once FIRING is entered TRIG always ends through its post timer (or the 10 s hard cap), whatever ends FIRING — the igniter may already have lit; an abort before FIRING drops TRIG at once; ARM shows the armed pattern while `armed || TRIG asserted`, so it stays at 10 Hz for the ~1 s TRIG outlasts POST_FIRE. §9.1, §9.13 step 1, §14.1, §14.3, §15.5 (host T-FSM11, T-CAM01–10), new §15.6 (bench T-C01–T-C07 = CRIG T-21–T-27) and App. C.1 (24 GPIOs used, GPIO 38 the only spare) updated; base schematic gains frame F. **Not yet verified on the built unit:** the socket is not fitted (panel location open, CRIG O-9) and nothing on GPIO 39/41 has been continuity-checked (CRIG O-8). No protocol change, no change to the remote or to any fire-path element; both units flashed together per the version rule. |
+| 1.78 | 2026-11-06 | **CRIG socket fitted; both units on fw 1.2.22.** The owner soldered the DIN-5 socket (AD322) and the four resistors (470 Ω series + 10 kΩ pull-down on GPIO 39 and 41) into the base. Both units flashed 1.2.22 and linked (both IDLE, rssi −17, 0 missed pings); the base boot log shows `rlc_cam: camera rig interface up (TRIG GPIO 39, ARM GPIO 41)`. §5.4.4 and §5.4.12 status notes updated; base schematic frame F now drawn as fitted, and its CAM_TRIG pull-down no longer appears to run into the CAM_ARM wire (drawing fix only). **Still open:** the panel location is not yet recorded (CRIG O-9), no continuity check of GPIO 39/41 to the socket has been logged (O-8), and the §15.6 bench tests T-C01–T-C08 have not been run. Documentation-only; no firmware change. |
 
 ## Table of Contents
 
@@ -931,10 +932,10 @@ All three LEDs are passive — they operate directly from VBAT through the switc
 > (v1.54's "brass-barrel" wording, carried into RLC-OPS-001 and README, is
 > corrected in both).
 >
-> **Camera rig socket (v1.77, NOT YET FITTED):** one **5-pin DIN 180° female
+> **Camera rig socket (v1.77; fitted 2026-11-06, v1.78):** one **5-pin DIN 180° female
 > chassis socket** (Gotron AD322) for the CRIG camera-rig interface (§5.4.12).
-> Its location on the panel is still to be decided (CRIG open item O-9) and
-> will be recorded here once fitted. It is deliberately a connector type used
+> It was soldered in on 2026-11-06; its location on the panel is not yet
+> recorded here (CRIG open item O-9). It is deliberately a connector type used
 > nowhere else on the base — igniters are XT30, the battery XT60 — so a camera
 > cable cannot be plugged into a fire output or the other way round.
 
@@ -1280,10 +1281,12 @@ even an internal weak pull-up (about 45 kΩ) against the 10 kΩ pull-down holds
 the line near 0.6 V, below the PC817 LED threshold, and a boot glitch is
 neither the 1 Hz nor the 10 Hz pattern. T-C06 measures it.
 
-> **NOT YET VERIFIED ON THE BUILT UNIT (v1.77).** The socket and its four
-> resistors are not fitted, and nothing on GPIO 39/41 has been
-> continuity-checked against the soldered base (CRIG open item O-8). Until both
-> are done this section is a design, not an as-built record.
+> **FITTED, NOT YET BENCH-VERIFIED (v1.78, 2026-11-06).** The owner soldered
+> the socket and its four resistors in on 2026-11-06, and fw 1.2.22 boots with
+> the interface up. No continuity check of GPIO 39/41 to the socket has been
+> logged (CRIG open item O-8), and the §15.6 bench tests T-C01–T-C08 have not
+> been run. Until they pass, treat this section as fitted to the design, not
+> as a verified as-built record.
 
 ### 5.5 Remote Unit I/O
 
